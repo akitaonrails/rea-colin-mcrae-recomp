@@ -192,11 +192,11 @@ impl StageSceneFrame {
             let batch = crate::c3d_software_raster::preflight_lit_triangle_list(
                 vertices, indices, transforms,
             )?;
-            let mut scratch = self.depth.clone();
+            let depth = &self.depth;
             let pixels = &mut self.pixels;
-            crate::c3d_software_raster::rasterize_c3d_fragments_untextured(
+            crate::c3d_software_raster::rasterize_c3d_fragments_untextured_no_zwrite(
                 &batch,
-                &mut scratch,
+                depth,
                 |fragment| {
                     let [u, v] = fragment.uv();
                     let tx = ((u * MAP as f32) as usize).min(MAP - 1);
@@ -347,12 +347,12 @@ impl StageSceneFrame {
             )?;
             let texture = sprite.texture;
             let (tw, th) = (texture.width as usize, texture.height as usize);
-            let mut scratch = self.depth.clone();
+            let depth = &self.depth;
             let pixels = &mut self.pixels;
             let scale = u32::from(sprite.alpha);
-            crate::c3d_software_raster::rasterize_c3d_fragments_untextured(
+            crate::c3d_software_raster::rasterize_c3d_fragments_untextured_no_zwrite(
                 &batch,
-                &mut scratch,
+                depth,
                 |fragment| {
                     let [u, v] = fragment.uv();
                     let tx = ((u * tw as f32) as usize).min(tw.saturating_sub(1));
@@ -414,7 +414,7 @@ impl StageSceneFrame {
         if width == 0 || height == 0 {
             return;
         }
-        let (pw, ph, zn, zf) = cmr_core::c3d_camera::PROJECTION_BASELINE;
+        let (pw, ph, zn, zf) = cmr_core::c3d_camera::gameplay_projection_default(width, height);
         let m00 = pw * 0.5;
         let m11 = ph * 0.5;
         let w_half = f32::from(width) * 0.5;
@@ -555,11 +555,11 @@ impl StageSceneFrame {
             let batch = crate::c3d_software_raster::preflight_lit_triangle_list(
                 vchunk, &local, transforms,
             )?;
-            let mut scratch = self.depth.clone();
+            let depth = &self.depth;
             let pixels = &mut self.pixels;
-            crate::c3d_software_raster::rasterize_c3d_fragments_untextured(
+            crate::c3d_software_raster::rasterize_c3d_fragments_untextured_no_zwrite(
                 &batch,
-                &mut scratch,
+                depth,
                 |fragment| {
                     let [a, r, g, b] = fragment.diffuse_argb();
                     let to8 = |c: f32| (c * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -699,7 +699,7 @@ where
         extent,
         active_palette,
         quantization,
-        cmr_core::c3d_camera::PROJECTION_BASELINE,
+        cmr_core::c3d_camera::gameplay_projection_default(extent[0], extent[1]),
         resolve_texture,
     )
 }
@@ -751,7 +751,7 @@ where
         extent,
         active_palette,
         quantization,
-        cmr_core::c3d_camera::PROJECTION_BASELINE,
+        cmr_core::c3d_camera::gameplay_projection_default(extent[0], extent[1]),
         Some(color_key),
         resolve_texture,
     )

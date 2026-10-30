@@ -12,12 +12,16 @@
 //!   car, expressed in the car's frame (`FUN_0041a3e0`), so
 //!   `camera_pos = car_pos + car_basis * offset`.
 //! - The camera orientation tracks the car basis; the recovered per-frame
-//!   smoothing filter (`FUN_00435400`) eases the orientation toward the car's
+//!   smoothing filter (`FUN_00435400`, invoked from `FUN_00419e50`) eases and
+//!   Gram-Schmidt re-orthonormalizes the orientation toward the car's
 //!   orientation at the rate `0x1C9210000 / ((1 + pal) * 0x190000)` (`0x190000`
 //!   = 25.0 Q16.16, the 25 fps base; the PAL flag halves it), holding once every
-//!   basis element is within the snap threshold `0x51E`. The translation tracks
-//!   rigidly (rate 1.0), so only the orientation lags - the classic "swing in
-//!   behind" chase feel.
+//!   basis element is within the snap threshold `0x51E`.
+//! - After easing the camera basis, `FUN_0041a3e0` (`0x41a55b..0x41a5c5`) rotates
+//!   the per-mode offset `DAT_004eae98` by the **eased camera basis** and adds
+//!   the car position (`camera_pos = car_pos + camera_basis * offset`), keeping
+//!   the car centered at `-offset` in camera view space so the car rotates around
+//!   its own center while the camera orbits smoothly behind it.
 //!
 //! The car pose here is the race sim's `(position, heading)` (`heading` a 16-bit
 //! BAM yaw on the x/z ground plane, forward `= (cos h, 0, sin h)`, up `= +Y`),
@@ -92,14 +96,6 @@ pub const EASE_RATE_FPS_BASE_Q16: i64 = 0x19_0000;
 pub fn ease_rate_q16(pal: bool) -> i32 {
     let divisor = (1 + i64::from(pal)) * EASE_RATE_FPS_BASE_Q16;
     (EASE_RATE_NUMERATOR / divisor) as i32
-}
-
-/// Ease one matrix element toward its target by the Q16.16 fraction `k`:
-/// `cur + (target - cur) * k >> 16` (the recovered lerp step).
-#[must_use]
-fn ease_element(cur: i32, target: i32, k: i32) -> i32 {
-    let delta = i64::from(target) - i64::from(cur);
-    cur + ((delta * i64::from(k)) >> 16) as i32
 }
 
 /// Whether any of the nine 3x3 basis elements of `cur` differs from `target` by
@@ -189,10 +185,12 @@ impl GameplayCamera {
         }
     }
 
-    /// Advance one frame: compute the chase target for the car pose + preset, snap
-    /// the translation to it, and ease the orientation toward it (or hold, when
-    /// already within [`EASE_SNAP_THRESHOLD_Q16`]). Returns the camera world
-    /// matrix to feed [`crate::c3d_camera::view_matrix_words`].
+    /// Advance one frame: ease and Gram-Schmidt re-orthonormalize the camera's
+    /// 3x3 basis toward the car's basis (`FUN_00419e50` -> `FUN_00435400`, or
+    /// hold when already within [`EASE_SNAP_THRESHOLD_Q16`]), then place the
+    /// camera at `car_pos + eased_camera_basis * offset` (`FUN_0041a3e0` at
+    /// `0x41a55b..0x41a5c5`). Returns the camera world matrix to feed
+    /// [`crate::c3d_camera::view_matrix_words`].
     pub fn update(
         &mut self,
         position: Vec3,
@@ -201,34 +199,27 @@ impl GameplayCamera {
         pal: bool,
     ) -> &[i32; 16] {
         let car = car_world_q16(&self.trig, position, heading);
-        let target = chase_target_world(&car, preset.offset());
 
         if !self.initialized {
-            self.world = target;
+            self.world = chase_target_world(&car, preset.offset());
             self.initialized = true;
             return &self.world;
         }
 
-        if basis_needs_ease(&self.world, &target) {
+        if basis_needs_ease(&self.world, &car) {
             let k = ease_rate_q16(pal);
-            for j in 0..3 {
-                for i in 0..3 {
-                    let idx = 4 * j + i;
-                    self.world[idx] = ease_element(self.world[idx], target[idx], k);
-                }
-            }
+            let blended = crate::camera_crossfade::blend_pose(&self.world, &car, k);
+            self.world[0..12].copy_from_slice(&blended[0..12]);
         } else {
             // Within the snap threshold on all nine basis elements: hold at target.
-            for j in 0..3 {
-                for i in 0..3 {
-                    let idx = 4 * j + i;
-                    self.world[idx] = target[idx];
-                }
-            }
+            self.world[0..12].copy_from_slice(&car[0..12]);
         }
 
-        // The translation tracks rigidly (the recovered position ease rate is 1.0).
-        self.world[12..15].copy_from_slice(&target[12..15]);
+        // Rotate the chase offset by the EASED camera basis and add car_pos
+        // (`FUN_0041a3e0`: `cam_pos = car_pos + cam_basis * offset`), keeping the
+        // car centered at `-offset` in camera view space during turns.
+        self.world[12..15].copy_from_slice(&car[12..15]);
+        self.world = chase_target_world(&self.world, preset.offset());
         &self.world
     }
 
@@ -354,6 +345,61 @@ mod tests {
         }
         let converged = [cam.world()[8], cam.world()[9], cam.world()[10]];
         assert_eq!(converged, target_fwd);
+    }
+
+    #[test]
+    fn turning_car_stays_centered_in_camera_view_space_and_basis_stays_orthonormal() {
+        use crate::c3d_camera::{apply_affine_q16, invert_affine_q16};
+
+        let mut cam = GameplayCamera::new();
+        let car_pos = v(12 * ONE, 2 * ONE, -8 * ONE);
+        cam.update(car_pos, 0, ChasePreset::Near, false);
+
+        // Turn the car 90 degrees and step through the ease transition.
+        // At every intermediate frame:
+        // 1. The camera basis remains orthonormal (Gram-Schmidt via FUN_00435400).
+        // 2. The car's position in camera view space remains at -offset = [0, -1.5, +6.0]
+        //    (no lateral "windshield wiper" swing).
+        let quarter = crate::fixed_point::BAM_QUARTER_TURN;
+        let offset = ChasePreset::Near.offset();
+        let expected_view_car = [-offset[0], -offset[1], -offset[2]];
+
+        for step in 0..32 {
+            let world = *cam.update(car_pos, quarter, ChasePreset::Near, false);
+            for col in [0usize, 4, 8] {
+                let len_sq = ((i64::from(world[col]) * i64::from(world[col]))
+                    + (i64::from(world[col + 1]) * i64::from(world[col + 1]))
+                    + (i64::from(world[col + 2]) * i64::from(world[col + 2])))
+                    >> 16;
+                assert!(
+                    (len_sq - i64::from(ONE)).abs() <= 8,
+                    "step {step} col {col} not unit length: {len_sq:#x}"
+                );
+            }
+            let view = invert_affine_q16(&world);
+            let car_in_view = apply_affine_q16(
+                &view,
+                [car_pos.x.raw(), car_pos.y.raw(), car_pos.z.raw()],
+            );
+            assert!(
+                (car_in_view[0] - expected_view_car[0]).abs() <= 16,
+                "step {step} lateral view swing: got {}, expected {}",
+                car_in_view[0],
+                expected_view_car[0]
+            );
+            assert!(
+                (car_in_view[1] - expected_view_car[1]).abs() <= 16,
+                "step {step} vertical view drift: got {}, expected {}",
+                car_in_view[1],
+                expected_view_car[1]
+            );
+            assert!(
+                (car_in_view[2] - expected_view_car[2]).abs() <= 16,
+                "step {step} longitudinal view drift: got {}, expected {}",
+                car_in_view[2],
+                expected_view_car[2]
+            );
+        }
     }
 
     #[test]

@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use cmr_core::c3d_camera::{
-    PROJECTION_BASELINE, projection_matrix_words, view_matrix_words, world_matrix_words,
+    gameplay_projection_default, projection_matrix_words, view_matrix_words, world_matrix_words,
 };
 use cmr_core::c3d_stage_scene::StageScene;
 use cmr_core::display::DisplayExtent;
@@ -329,7 +329,8 @@ impl PreparedRawStage {
         // Validate the complete cross-resource frame now; the per-frame
         // accessors repeat the cheap borrowed validation and cannot fail unless
         // this type is broken.
-        let (projection_width, projection_height, z_near, z_far) = PROJECTION_BASELINE;
+        let (projection_width, projection_height, z_near, z_far) =
+            gameplay_projection_default(extent.width, extent.height);
         C3dRawFrame::new(
             extent,
             view_matrix_words(&cmr_core::c3d_camera::MATRIX_IDENTITY_Q16),
@@ -417,10 +418,11 @@ impl PreparedRawStage {
         camera_world_q16: &[i32; 16],
         dynamic_worlds: &[&[[i32; 16]]],
     ) -> Result<C3dPreparedFrame<'_>, PreparedRawStageError> {
+        let proj = gameplay_projection_default(self.extent.width, self.extent.height);
         self.prepared_frame_for_worlds_with_projection(
             camera_world_q16,
             dynamic_worlds,
-            PROJECTION_BASELINE,
+            proj,
         )
     }
 
@@ -475,7 +477,8 @@ impl PreparedRawStage {
     }
 
     fn borrow_prepared_frame(&self, camera_world_q16: &[i32; 16]) -> C3dPreparedFrame<'_> {
-        self.borrow_prepared_frame_with_projection(camera_world_q16, PROJECTION_BASELINE)
+        let proj = gameplay_projection_default(self.extent.width, self.extent.height);
+        self.borrow_prepared_frame_with_projection(camera_world_q16, proj)
     }
 
     fn borrow_prepared_frame_with_projection(
@@ -496,7 +499,8 @@ impl PreparedRawStage {
     /// Borrows the synchronous raw frame (resources, draws, palette, camera) for
     /// a backend that still allocates and uploads per call.
     pub fn frame_for(&self, camera_world_q16: &[i32; 16]) -> C3dRawFrame<'_> {
-        let (projection_width, projection_height, z_near, z_far) = PROJECTION_BASELINE;
+        let (projection_width, projection_height, z_near, z_far) =
+            gameplay_projection_default(self.extent.width, self.extent.height);
         C3dRawFrame::new(
             self.extent,
             view_matrix_words(camera_world_q16),

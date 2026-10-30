@@ -163,16 +163,51 @@ pub fn sdl_keycode_to_vk(keycode: Keycode) -> Option<u8> {
     Some(vk)
 }
 
+/// Translates a gamepad button into the menu/UI virtual-key code it drives
+/// (`DPad` -> arrow VKs `0x25..=0x28`, `South` -> `VK_RETURN` `0x0d`,
+/// `East`/`Back`/`Start` -> `VK_ESCAPE` `0x1b`), or `None` when unbound.
+#[must_use]
+pub fn gamepad_button_to_menu_vk(button: Button) -> Option<u8> {
+    let vk = match button {
+        Button::DPadLeft => 0x25,
+        Button::DPadUp => 0x26,
+        Button::DPadRight => 0x27,
+        Button::DPadDown => 0x28,
+        Button::South => 0x0d,
+        Button::East | Button::Back | Button::Start => 0x1b,
+        _ => return None,
+    };
+    Some(vk)
+}
+
+/// Translates a gamepad left-stick axis deflection outside [`AXIS_DEAD_ZONE`]
+/// into the corresponding arrow virtual-key code (`LeftX` -> `0x25`/`0x27`,
+/// `LeftY` -> `0x26`/`0x28`), or `None` inside the dead zone or for other axes.
+#[must_use]
+pub fn gamepad_axis_to_menu_vk(axis: Axis, value: i16) -> Option<u8> {
+    match axis {
+        Axis::LeftX if value <= -AXIS_DEAD_ZONE => Some(0x25),
+        Axis::LeftX if value >= AXIS_DEAD_ZONE => Some(0x27),
+        Axis::LeftY if value <= -AXIS_DEAD_ZONE => Some(0x26),
+        Axis::LeftY if value >= AXIS_DEAD_ZONE => Some(0x28),
+        _ => None,
+    }
+}
+
 /// Tracks which recovered VK codes are currently held, so the in-race keyboard
-/// poll ([`cmr_core::input_poll::DevicePoll::poll_keyboard`]) can be driven from
-/// SDL key-down/up events with a level (`is_down`) probe.
+/// poll ([`cmr_core::input_poll::DevicePoll::poll_keyboard`]) and all menu VK
+/// polls (`front_end_frame`, `pause`, `service`, `school`, `results`) can be
+/// driven from SDL keyboard and gamepad events with a level (`is_down`) probe.
 ///
-/// The recovered poll computes its own rising edges across frames from this
-/// level state, so the host only has to maintain the held set - exactly the
-/// `GetAsyncKeyState` level the shipped poll read.
+/// Keyboard keys and gamepad navigation sources (`DPad`, left stick, `South`,
+/// `East`, `Back`, `Start`) are tracked independently by source so releasing a
+/// stick or D-pad button never clears a held keyboard key (or vice versa), while
+/// [`Self::is_keyboard_down`] exposes the keyboard-only level for the in-race
+/// keyboard driving poll.
 #[derive(Clone, Debug, Default)]
 pub struct KeyboardVkState {
     held: BTreeSet<u8>,
+    gamepad_sources: BTreeMap<InputSource, u8>,
 }
 
 impl KeyboardVkState {
@@ -200,11 +235,61 @@ impl KeyboardVkState {
         }
     }
 
-    /// Whether the given VK code is currently held (the `is_down` probe the
-    /// recovered keyboard poll takes).
+    /// Apply a gamepad button-down (`pressed`) or button-up event for menu and
+    /// pause navigation.
+    pub fn apply_gamepad_button(&mut self, button: Button, pressed: bool) {
+        let source = InputSource::button(button);
+        match (gamepad_button_to_menu_vk(button), pressed) {
+            (Some(vk), true) => {
+                self.gamepad_sources.insert(source, vk);
+            }
+            _ => {
+                self.gamepad_sources.remove(&source);
+            }
+        }
+    }
+
+    /// Apply a gamepad analog-axis motion for menu navigation (`LeftX` ->
+    /// Left/Right VKs, `LeftY` -> Up/Down VKs). Non-navigation axes are ignored.
+    pub fn apply_gamepad_axis(&mut self, axis: Axis, value: i16) {
+        if !matches!(axis, Axis::LeftX | Axis::LeftY) {
+            return;
+        }
+        let source = InputSource::axis(axis);
+        if let Some(vk) = gamepad_axis_to_menu_vk(axis, value) {
+            self.gamepad_sources.insert(source, vk);
+        } else {
+            self.gamepad_sources.remove(&source);
+        }
+    }
+
+    /// Whether the given VK code is currently held on either the keyboard or a
+    /// mapped gamepad navigation control.
     #[must_use]
     pub fn is_down(&self, vk: u8) -> bool {
+        self.held.contains(&vk) || self.gamepad_sources.values().any(|&held_vk| held_vk == vk)
+    }
+
+    /// Whether the given VK code is held on the physical keyboard only (used by
+    /// the in-race keyboard driving poll so gamepad navigation buttons do not
+    /// alias into keyboard driving bindings).
+    #[must_use]
+    pub fn is_keyboard_down(&self, vk: u8) -> bool {
         self.held.contains(&vk)
+    }
+
+    /// Whether an in-race pause trigger (`Escape` on the keyboard, or `Start` /
+    /// `Back` on the gamepad) is currently held. Excludes `Button::East` so
+    /// pressing B/Circle during a race does not pause driving.
+    #[must_use]
+    pub fn is_pause_down(&self) -> bool {
+        self.held.contains(&0x1b)
+            || self
+                .gamepad_sources
+                .contains_key(&InputSource::button(Button::Start))
+            || self
+                .gamepad_sources
+                .contains_key(&InputSource::button(Button::Back))
     }
 }
 
@@ -259,6 +344,10 @@ pub struct GamepadDrivingState {
     throttle: i16,
     brake: i16,
     buttons: u32,
+    dpad_left: bool,
+    dpad_right: bool,
+    dpad_up: bool,
+    dpad_down: bool,
 }
 
 impl GamepadDrivingState {
@@ -280,8 +369,15 @@ impl GamepadDrivingState {
     }
 
     /// Apply a gamepad button-down (`pressed`) or button-up event, setting or
-    /// clearing its recovered action bit.
+    /// clearing its recovered action bit and D-pad steering/pedal fallback.
     pub fn apply_button(&mut self, button: Button, pressed: bool) {
+        match button {
+            Button::DPadLeft => self.dpad_left = pressed,
+            Button::DPadRight => self.dpad_right = pressed,
+            Button::DPadUp => self.dpad_up = pressed,
+            Button::DPadDown => self.dpad_down = pressed,
+            _ => {}
+        }
         let Some(bit) = gamepad_action_bit(button) else {
             return;
         };
@@ -292,15 +388,31 @@ impl GamepadDrivingState {
         }
     }
 
-    /// The steering axis in the recovered WinMM range.
+    /// The steering axis in the recovered WinMM range. When the analog stick is
+    /// inside [`AXIS_DEAD_ZONE`], D-pad Left/Right provide full digital lock.
     #[must_use]
     pub fn steer_axis(&self) -> u32 {
+        if self.steer.saturating_abs() < AXIS_DEAD_ZONE {
+            match (self.dpad_left, self.dpad_right) {
+                (true, false) => return 0,
+                (false, true) => return 0xffff,
+                _ => {}
+            }
+        }
         sdl_axis_to_winmm(self.steer)
     }
 
-    /// The combined pedal axis in the recovered WinMM range.
+    /// The combined pedal axis in the recovered WinMM range. When both analog
+    /// triggers are released, D-pad Up/Down provide digital throttle/brake.
     #[must_use]
     pub fn pedal_axis(&self) -> u32 {
+        if self.throttle <= 0 && self.brake <= 0 {
+            let throttle = if self.dpad_up { i16::MAX } else { 0 };
+            let brake = if self.dpad_down { i16::MAX } else { 0 };
+            if throttle > 0 || brake > 0 {
+                return gamepad_trigger_pedal(throttle, brake);
+            }
+        }
         gamepad_trigger_pedal(self.throttle, self.brake)
     }
 
@@ -799,5 +911,66 @@ mod tests {
         mapper.apply_key(Keycode::Return, true);
         let _ = state.step(mapper.poll(), 4, TransitionResult::Pending, true);
         assert!(state.pending_screen().is_some());
+    }
+
+    #[test]
+    fn gamepad_menu_vks_track_dpad_stick_and_buttons_without_clobbering_keyboard() {
+        let mut keys = KeyboardVkState::new();
+        // Hold Left on the keyboard AND deflect LeftX left on the gamepad.
+        keys.apply_key(Keycode::Left, true);
+        keys.apply_gamepad_axis(Axis::LeftX, -AXIS_DEAD_ZONE);
+        assert!(keys.is_down(0x25));
+        assert!(keys.is_keyboard_down(0x25));
+
+        // Centering the stick must not release the still-held keyboard Left arrow.
+        keys.apply_gamepad_axis(Axis::LeftX, 0);
+        assert!(keys.is_down(0x25));
+        assert!(keys.is_keyboard_down(0x25));
+
+        // Releasing keyboard Left while DPadLeft is held keeps 0x25 active for
+        // menus (`is_down`), while `is_keyboard_down` is false.
+        keys.apply_gamepad_button(Button::DPadLeft, true);
+        keys.apply_key(Keycode::Left, false);
+        assert!(keys.is_down(0x25));
+        assert!(!keys.is_keyboard_down(0x25));
+        keys.apply_gamepad_button(Button::DPadLeft, false);
+        assert!(!keys.is_down(0x25));
+
+        // South maps to Return (0x0d); East/Start/Back map to Escape (0x1b),
+        // while only Start/Back/Escape trigger `is_pause_down`.
+        keys.apply_gamepad_button(Button::South, true);
+        assert!(keys.is_down(0x0d));
+        keys.apply_gamepad_button(Button::South, false);
+        assert!(!keys.is_down(0x0d));
+
+        keys.apply_gamepad_button(Button::East, true);
+        assert!(keys.is_down(0x1b));
+        assert!(!keys.is_pause_down());
+        keys.apply_gamepad_button(Button::East, false);
+
+        keys.apply_gamepad_button(Button::Start, true);
+        assert!(keys.is_down(0x1b));
+        assert!(keys.is_pause_down());
+        keys.apply_gamepad_button(Button::Start, false);
+        assert!(!keys.is_pause_down());
+    }
+
+    #[test]
+    fn gamepad_dpad_provides_digital_steer_and_pedal_fallback() {
+        let mut pad = GamepadDrivingState::new();
+        pad.apply_button(Button::DPadLeft, true);
+        assert_eq!(pad.steer_axis(), 0);
+        assert!(pad.has_driving_input());
+        pad.apply_button(Button::DPadLeft, false);
+        pad.apply_button(Button::DPadRight, true);
+        assert_eq!(pad.steer_axis(), 0xffff);
+        pad.apply_button(Button::DPadRight, false);
+        assert_eq!(pad.steer_axis(), 0x8000);
+
+        pad.apply_button(Button::DPadUp, true);
+        assert!(pad.pedal_axis() < 0x8000);
+        pad.apply_button(Button::DPadUp, false);
+        pad.apply_button(Button::DPadDown, true);
+        assert_eq!(pad.pedal_axis(), 0xffff);
     }
 }

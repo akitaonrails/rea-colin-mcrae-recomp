@@ -2108,7 +2108,17 @@ scenery (`0x01`, `FUN_004a2460`) across software and GPU renderers, the 12
 decorative HUD border/progress-rail bitmaps (`FUN_0045dac0`, `FUN_0045f530`),
 HUD font palette quantization/tinting against the stage palette, uppercase
 default hostname player names, case-insensitive stage sibling lookup, and
-clean State-4 stage-loading interstitial presentation.
+clean State-4 stage-loading interstitial presentation. Interactive gameplay
+verification further reconstructed `FUN_00435d10` gameplay viewport projection
+(`c3d_camera::gameplay_projection_default`, fixing vertical car squishing),
+`FUN_00419e50`/`FUN_0041a3e0` chase-camera basis easing and Gram-Schmidt
+orthonormalization before local-offset rotation (`GameplayCamera::update`,
+keeping the car centered while turning), planar shadow camera-pull scaling
+(`plan_shadow`, keeping the shadow beneath the car), full gamepad navigation
+across all sub-menus/pause/results plus D-pad driving fallback
+(`cmr-platform-sdl3::input`), zero-clone no-zwrite software shadow/sprite
+blending (`rasterize_c3d_fragments_untextured_no_zwrite`), and native 40 Hz
+(`25 ms`) front-end menu pacing (`FRONTEND_SESSION_TICK_INTERVAL`).
 The reset trigger remains an explicit input, and no unsupported position-snap,
 time penalty, or damage-performance mapping is claimed.
 

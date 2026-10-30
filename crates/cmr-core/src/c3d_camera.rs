@@ -47,6 +47,63 @@ pub const HORIZON_Z_FAR: f32 = 25_000.0;
 /// Per-detail-level far-plane multipliers (`FUN_00435d10`, cases 0..6).
 pub const DETAIL_FAR_MULTIPLIERS: [f32; 7] = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
 
+/// Default gameplay chase-camera FOV scalar (`cam+0x54` / `DAT_005507e8[car]`,
+/// set to `0xa000` = `0.625` Q16.16 by `FUN_0041a3e0` at `0x41a5d1`).
+pub const GAMEPLAY_FOV_DEFAULT_Q16: i32 = 0xa000;
+
+/// Per-frame gameplay viewport projection `(w, h, z_near, z_far)` (`FUN_00435d10`
+/// at `0x435d18..0x435d96`).
+///
+/// Whereas [`PROJECTION_BASELINE`] (`2.0, 2.4, 1.0, 250.0`) is the one-time
+/// D3D device initialization before a race (`FUN_004a6950`), `FUN_00435d10`
+/// recomputes the perspective width and height each gameplay frame from the
+/// camera's FOV scalar (`fov_q16`, `0xa000` for chase cameras) and the
+/// viewport aspect (`width / height`):
+/// - `scale_q16 = fmul_q16(fov_q16, 0x275c2)` (`0x18999` = `1.5375` for `0xa000`)
+/// - `aspect_q16 = ((width as f64 / height as f64) * 65536.0) as i32` (`0x15555` for `640x480`)
+/// - `w_q16 = fmul_q16(0x123d7, fmul_q16(scale_q16, aspect_q16))` (`0x25643` = `2.3369598`)
+/// - `h_q16 = fmul_q16(0x2bae1, scale_q16)` (`0x43285` = `4.197342`)
+///
+/// Combined with [`viewport`] (`clip_width = 2.0`, `clip_height = 2.0 * (width / height)`),
+/// this gives a ~1:1 horizontal-to-vertical pixel aspect ratio (`373.9 px/unit` vs
+/// `377.8 px/unit` at `640x480`) instead of squishing the scene vertically to `67.5%`.
+#[must_use]
+pub fn gameplay_projection(
+    width: u16,
+    height: u16,
+    fov_q16: i32,
+    z_near: f32,
+    z_far: f32,
+) -> (f32, f32, f32, f32) {
+    if width == 0 || height == 0 {
+        return (PROJECTION_BASELINE.0, PROJECTION_BASELINE.1, z_near, z_far);
+    }
+    let scale_q16 = fmul_q16(fov_q16, 0x2_75c2);
+    let aspect_q16 = ((f64::from(width) / f64::from(height)) * 65_536.0) as i32;
+    let w_q16 = fmul_q16(0x1_23d7, fmul_q16(scale_q16, aspect_q16));
+    let h_q16 = fmul_q16(0x2_bae1, scale_q16);
+    (
+        w_q16 as f32 / 65_536.0,
+        h_q16 as f32 / 65_536.0,
+        z_near,
+        z_far,
+    )
+}
+
+/// Default gameplay projection `(w, h, z_near, z_far)` for a `width x height`
+/// viewport (`FUN_00435d10` with [`GAMEPLAY_FOV_DEFAULT_Q16`], [`Z_NEAR`], and
+/// [`Z_FAR_DEFAULT`]).
+#[must_use]
+pub fn gameplay_projection_default(width: u16, height: u16) -> (f32, f32, f32, f32) {
+    gameplay_projection(
+        width,
+        height,
+        GAMEPLAY_FOV_DEFAULT_Q16,
+        Z_NEAR,
+        Z_FAR_DEFAULT,
+    )
+}
+
 /// Builds the left-handed D3D perspective matrix (`FUN_004a71b0`) as a row-major
 /// `D3DMATRIX`: `m00 = w/2`, `m11 = h/2`, `m22 = zf/(zf-zn)`, `_34 = 1`,
 /// `_43 = -zn*zf/(zf-zn)`, `_44 = 0`.
@@ -451,6 +508,30 @@ mod tests {
         assert_eq!(m[15], 0.0); // _44
         assert!((m[10] - 250.0 / 249.0).abs() < 1e-6); // zf/(zf-zn)
         assert!((m[14] - (-250.0 / 249.0)).abs() < 1e-6); // -zn*zf/(zf-zn)
+    }
+
+    #[test]
+    fn gameplay_projection_matches_fun_00435d10_q16_formula_and_preserves_pixel_aspect() {
+        let (w, h, zn, zf) = gameplay_projection_default(640, 480);
+        // scale = (0xa000 * 0x275c2) >> 16 = 0x18999
+        // aspect = int((640/480) * 65536) = 0x15555
+        // w_q16 = (0x123d7 * ((0x18999 * 0x15555) >> 16)) >> 16 = 0x25643
+        // h_q16 = (0x2bae1 * 0x18999) >> 16 = 0x43285
+        assert_eq!(w, 0x2_5643 as f32 / 65_536.0);
+        assert_eq!(h, 0x4_3285 as f32 / 65_536.0);
+        assert_eq!(zn, Z_NEAR);
+        assert_eq!(zf, Z_FAR_DEFAULT);
+
+        // Combined with D3DVIEWPORT2 (clip_width = 2.0, clip_height = 2.0 * 640 / 480),
+        // horizontal and vertical screen pixel scales per view unit at z = 1 are ~1:1.
+        let vp = viewport(640, 480);
+        let px_per_unit_x = (w * 0.5) * (vp.width as f32 / vp.clip_width);
+        let px_per_unit_y = (h * 0.5) * (vp.height as f32 / vp.clip_height);
+        let aspect_ratio = px_per_unit_y / px_per_unit_x;
+        assert!(
+            (aspect_ratio - 1.0104).abs() < 0.005,
+            "unexpected pixel aspect ratio: {aspect_ratio}"
+        );
     }
 
     #[test]

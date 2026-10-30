@@ -49,6 +49,10 @@ const INTERACTIVE_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 /// advances exactly one recovered fixed simulation tick.
 const GAME_SESSION_TICK_INTERVAL: Duration = Duration::from_millis(40);
 
+/// Recovered regime-A front-end/menu periodic timer interval (`FUN_004a7790`
+/// registration: `0x19 = 25` ms / 40 Hz; see [`cmr_core::host_loop::menu_timer_period_ms`]).
+const FRONTEND_SESSION_TICK_INTERVAL: Duration = Duration::from_millis(25);
+
 /// Monotonic one-tick deadline used by the SDL game-session host.
 ///
 /// Input events may wake the host before the deadline, but cannot create an
@@ -80,6 +84,10 @@ impl FixedStepDeadline {
             (true, None) => self.next = Some(now.saturating_add(self.interval)),
             _ => {}
         }
+    }
+
+    fn set_interval(&mut self, interval: Duration) {
+        self.interval = interval;
     }
 
     /// Consume at most one due tick and schedule the next deadline.
@@ -910,9 +918,18 @@ where
                         keycode: Some(code),
                         ..
                     } => keys.apply_key(code, false),
-                    Event::GamepadAxisMotion { axis, value, .. } => pad.apply_axis(axis, value),
-                    Event::GamepadButtonDown { button, .. } => pad.apply_button(button, true),
-                    Event::GamepadButtonUp { button, .. } => pad.apply_button(button, false),
+                    Event::GamepadAxisMotion { axis, value, .. } => {
+                        pad.apply_axis(axis, value);
+                        keys.apply_gamepad_axis(axis, value);
+                    }
+                    Event::GamepadButtonDown { button, .. } => {
+                        pad.apply_button(button, true);
+                        keys.apply_gamepad_button(button, true);
+                    }
+                    Event::GamepadButtonUp { button, .. } => {
+                        pad.apply_button(button, false);
+                        keys.apply_gamepad_button(button, false);
+                    }
                     Event::GamepadAdded { which, .. } => {
                         if let Ok(handle) = gamepad.open(which) {
                             open_gamepads.insert(which.raw(), handle);
@@ -952,6 +969,11 @@ where
             audio: game_mixer.as_ref(),
         };
         let frame = step(input);
+        pacing.set_interval(if frame.music_active {
+            FRONTEND_SESSION_TICK_INTERVAL
+        } else {
+            GAME_SESSION_TICK_INTERVAL
+        });
         if frame.stopped {
             break;
         }

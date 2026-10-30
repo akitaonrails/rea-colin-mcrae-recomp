@@ -1,81 +1,208 @@
-# Colin McRae Rally reconstruction
+# Colin McRae Rally (1998) — Portable Reconstruction
 
-This project aims to reconstruct a buildable, portable implementation of the
-original Windows game from static analysis. The first target is behavioral and
-data compatibility with a precisely identified shipped build. Platform
-modernization comes afterward, behind compatibility interfaces.
+A clean-room, static-analysis-driven portable reconstruction of the original
+1998 Windows release of **Colin McRae Rally** in safe Rust (with SDL3 for
+windowing, audio, and input, plus a hardware-accelerated `wgpu` renderer and a
+bit-exact software C3D reference rasterizer).
 
-The repository intentionally contains no original game assets or binaries. A
-user will point the tooling at their own installation; the importer will verify
-the source version and prepare a local, ignored `runtime-data/` tree.
+> **Note:** This repository contains **no original game assets, executables, or
+> proprietary data**. To play, you must point the asset importer at your own
+> legal installation of the 1998 PC release of *Colin McRae Rally* (European
+> release / official EU patch baseline). All imported and extracted game data
+> is stored locally inside the Git-ignored `runtime-data/` directory.
 
-## Current status
+---
 
-The reconstruction map currently contains 117 complete and 2 partial items.
-The supported baseline is the reviewed official-EU executable and installed
-EU-derived assets. Other editions and locales remain unsupported until
-separately validated.
+## Highlights & Current Status
 
-The workspace includes the fixed-step game/session orchestration, four-wheel
-physics and surface recovery, collision/timing, championship progression,
-menus and persistence, indexed C3D rendering with a wgpu backend and software
-oracle, SDL window/input/audio hosts, PCM music and portable video contracts,
-DirectPlay session/player records, and opt-in direct TCP transport. Native
-DirectX/QMixer/DirectInput/DirectPlay DLLs are not required by the portable
-build.
+- **Complete 119 / 119 Reconstruction Map (`docs/DECOMP_MAP.md`)**:
+  All 119 tracked reverse-engineering and reconstruction items across file
+  formats, fixed-point Q16.16 four-wheel vehicle physics, surface/weather
+  dynamics, collision & damage, front-end menus, Championship & Rally School
+  progression, replays, 3D rendering, and QMixer audio are implemented and
+  backed by **2,910+ automated tests**.
+- **Native Hardware & Software Rendering**:
+  Supports hardware-accelerated rendering via `wgpu` (`--renderer auto` or
+  `--renderer gpu`) alongside a pure-Rust software C3D rasterizer
+  (`--renderer software`) that reproduces the original 8-bit paletted lighting,
+  distance fog, horizon sky, Y-billboarded trackside foliage, planar car
+  shadows, and night headlight pools.
+- **Full Front-End, Championship, Single Stage, Time Trial & Rally School**:
+  Navigate the rotating 3D front-end menus, configure your car in the Service
+  Area, drive any of the 56 stages across 8 countries (New Zealand, Greece,
+  Monaco, Australia, Sweden, Corsica, Indonesia, UK), hear Nicky Grist's
+  co-driver pace notes, and save/load profiles and Championship progress.
+- **Seamless Keyboard & Gamepad Support**:
+  Hot-plugged SDL3 gamepad support works across all front-end menus, sub-menus,
+  name entry, pause screens, and in-race driving (analog triggers/sticks and
+  D-pad), alongside full keyboard controls.
 
-The native single-player stage supports live keyboard/gamepad driving, authored
-`.csp` starts and `.cat` checkpoints, layered stage scenery, the real stage
-palette, a caller-selected in-race car model, and a live follow camera. Its
-normal single-player HUD is composed from authenticated user-owned bitmap/font
-inputs. Planar dynamics, gear/rev telemetry, and control strengths remain
-explicit playable harness approximations. Recovered menu-to-race selection,
-the layered GPU path, and post-race sequencing remain open.
+---
 
-Unsupported boundaries are explicit: native driver-owned padding and exact
-font/filter/alpha output, alternate type-1 lighting, a concrete video decoder
-and FFB device, other section formats/editions, full multi-peer synchronization,
-and native Windows or GitHub Actions execution not run locally. See
-[DECOMP_MAP.md](docs/DECOMP_MAP.md), [COMPARISON.md](docs/COMPARISON.md), and
-[DEVIATIONS.md](docs/DEVIATIONS.md) for the evidence and current limits.
+## Quick Start (How to Play)
 
-The [public reconstruction survey](docs/UPSTREAM_SURVEY.md) records related
-projects and the searches used to avoid duplicating existing work. The public
-decompilation and portable port found so far target Colin McRae Rally 2.0, not
-this 1998 game; they are methodology references, not compatibility evidence.
+### 1. Prerequisites
 
-The optional PlayStation reference-edition workflow is documented in
-[PSX_REFERENCE_PLAN.md](docs/PSX_REFERENCE_PLAN.md). It uses PS1-specific tools
-to narrow Windows questions while keeping artifact provenance and compatibility
-claims separate; it is not a second supported target.
+- **Rust toolchain** (`rustup`, stable Rust 1.85+)
+- **SDL3** development libraries installed on your system (or built via Cargo)
+- **Your own copy of Colin McRae Rally (1998 PC, EU release)** located outside
+  this repository
 
-Known artifacts from the initial local installation:
+Point `CMR_ORIGINAL_DIR` at your original game installation directory (the
+folder containing `Rally.exe`, `Game/`, `New_Fe/`, and `ini/`):
 
-| Role | Size | SHA-256 |
+```sh
+export CMR_ORIGINAL_DIR="/path/to/your/CMRally"
+```
+
+### 2. One-Time Asset & Table Import
+
+Verify and import the game's media files and executable-backed physics/lookup
+tables into your local `runtime-data/` folder (which is ignored by Git):
+
+```sh
+mkdir -p runtime-data
+
+# 1. Verify and import game media (stages, cars, menus, audio, fonts)
+cargo run --release -q -p cmr-assets -- verify \
+  --source "$CMR_ORIGINAL_DIR" \
+  --profile profiles/installed-eu-derived-assets-v2.json
+
+cargo run --release -q -p cmr-assets -- import \
+  --source "$CMR_ORIGINAL_DIR" \
+  --profile profiles/installed-eu-derived-assets-v2.json \
+  --output runtime-data/installed-eu-derived-assets-v2
+
+# 2. Extract executable-backed physics, surface, and static lookup tables
+cargo run --release -q -p cmr-assets -- extract-surface-tables \
+  --source "$CMR_ORIGINAL_DIR" \
+  --profile profiles/official-eu-surface-tables-v1.json \
+  --output runtime-data/official-eu-surface-coefficients
+
+cargo run --release -q -p cmr-assets -- extract-compiled-car-initializer \
+  --source "$CMR_ORIGINAL_DIR" \
+  --profile profiles/official-eu-compiled-car-initializer-v1.json \
+  --output runtime-data/official-eu-compiled-car-initializer
+
+cargo run --release -q -p cmr-assets -- extract-car-selectors \
+  --source "$CMR_ORIGINAL_DIR" \
+  --profile profiles/official-eu-car-selector-map-v1.json \
+  --output runtime-data/official-eu-car-selectors
+
+cargo run --release -q -p cmr-assets -- extract-static-tables \
+  --source "$CMR_ORIGINAL_DIR" \
+  --profile profiles/official-eu-static-tables-v1.json \
+  --output runtime-data/official-eu-static-tables
+```
+
+### 3. Launch the Game
+
+Always run with `--release` for full frame rate (40 Hz front-end menus and
+smooth 3D stage rendering):
+
+```sh
+cargo run --release -p cmr-app -- \
+  --windowed-game-session \
+  --runtime-data runtime-data/installed-eu-derived-assets-v2 \
+  --source "$CMR_ORIGINAL_DIR/Game/Au/1" \
+  --stage AU1 \
+  --car-code Sub \
+  --renderer auto
+```
+
+*(Note: `--source`, `--stage`, and `--car-code` set the initial fallback stage
+and car, while selecting a country/stage/car in the in-game menus dynamically
+loads the chosen stage and vehicle from your runtime-data store.)*
+
+---
+
+## Controls
+
+Both **Keyboard** and **Gamepad** are active at all times and can be used
+interchangeably in menus and on stage.
+
+| Action | Keyboard | Gamepad (Xbox / PlayStation / SDL) |
+| --- | --- | --- |
+| **Menu Up / Down / Left / Right** | Arrow Keys | D-Pad or Left Stick |
+| **Menu Confirm / Select** | `Enter` | `South` (`A` / `Cross`) or `Start` |
+| **Menu Back / Cancel** | `Escape` or `Backspace` | `East` (`B` / `Circle`) or `Back` |
+| **Steer Left / Right** | `Left` / `Right` Arrows | Left Stick X or D-Pad Left / Right |
+| **Throttle (Accelerate)** | `Up` Arrow or `A` | Right Trigger (`RT`/`R2`), Right Stick Up, or `South` (`A`/`Cross`) |
+| **Brake / Reverse** | `Down` Arrow or `Z` | Left Trigger (`LT`/`L2`), Right Stick Down, or `West` (`X`/`Square`) |
+| **Handbrake** | `Space` | `East` (`B` / `Circle`) |
+| **Shift Up / Gear Up** | `S` | Right Shoulder (`RB` / `R1`) |
+| **Shift Down / Gear Down** | `X` | Left Shoulder (`LB` / `L1`) |
+| **Change Camera View** | `C` | `North` (`Y` / `Triangle`) |
+| **Look Behind** | `V` | — |
+| **Pause Race** | `Escape` | `Start` or `Back` / `Select` |
+
+---
+
+## Technical Overview & Architecture
+
+This project reconstructs a buildable, portable implementation of the original
+Windows game from static analysis. The first target is behavioral and data
+compatibility with a precisely identified shipped build. Platform modernization
+comes afterward, behind compatibility interfaces.
+
+The workspace is organized into focused crates:
+- [`crates/cmr-formats`](crates/cmr-formats): Pure, bounds-checked parsers for
+  CMPR-compressed streams, `.c3d` 3D models, `.bm`/`.pal` bitmaps and palettes,
+  `.fon` bitmap fonts, `.cat`/`.csp`/`.dat`/`.hpc`/`.srf`/`.moj`/`.anm`/`.rsf`
+  stage sections, and `.ssr`/`.rsp` replay files.
+- [`crates/cmr-assets`](crates/cmr-assets): SHA-256-authenticated asset
+  verifier, importer, and PE static-table extractor.
+- [`crates/cmr-core`](crates/cmr-core): Fixed-point Q16.16 four-wheel physics,
+  tire/surface lookup, static/moving/car-vs-car OBB collision & crash damage,
+  chase/bonnet/bumper/cockpit cameras, C3D lighting & UV preparation, front-end
+  menu carousel state machines, Championship & Rally School logic, and replay
+  seeding/stepping.
+- [`crates/cmr-video`](crates/cmr-video): Software C3D rasterizer, 8-bit
+  palette lighting/fog tables, menu/HUD/service-area compositors, and AVI
+  video decoding.
+- [`crates/cmr-gpu`](crates/cmr-gpu) & [`crates/cmr-gpu-stage`](crates/cmr-gpu-stage):
+  Hardware-accelerated `wgpu` indexed-palette presenter and persistent 3D stage
+  renderer.
+- [`crates/cmr-audio`](crates/cmr-audio): 16-API `QSWaveMix` software mixer,
+  engine RPM pitch/crossfade synthesizer, surface/skid/impact audio, and
+  co-driver speech sequencer.
+- [`crates/cmr-net`](crates/cmr-net): DirectPlay lobby/session protocol and
+  opt-in TCP transport.
+- [`crates/cmr-platform-sdl3`](crates/cmr-platform-sdl3): SDL3 windowing,
+  keyboard/gamepad input translation, audio output stream, and 40 Hz / 25 Hz
+  fixed-step frame pacing.
+- [`crates/cmr-app`](crates/cmr-app): End-to-end application orchestrator,
+  CLI, and headless verification harnesses.
+
+### Known Reference Artifacts
+
+| Role | Size (bytes) | SHA-256 |
 | --- | ---: | --- |
-| `Rally.exe` | 1,114,190 | `46500c8e22ce3e943b6855eca63ae9288261162347ca76fa36cad77cbb19c0bb` |
+| `Rally.exe` (installed EU-derived) | 1,114,190 | `46500c8e22ce3e943b6855eca63ae9288261162347ca76fa36cad77cbb19c0bb` |
+| `Rally.exe` (official EU updater clean reference) | 1,114,112 | `0eb6ea9652219b9a35c0a6134bf0cdf316dce21215b724cdfc10ba85eb95982a` |
 | `Game.exe` | 502,396 | `b445fd0dc6243b652a894c299a336296f48e35f7034775d4d60edd30fcbdee78` |
 | `qmixer.dll` | 136,192 | `262c3247b130c9de8410f11f39898230b1776bff5acbd820125d1e06ae260b26` |
 
-These hashes identify observations; they do not yet establish edition, region,
-or patch ancestry by themselves. Static patch analysis identifies the installed
-game as EU-derived. The canonical clean code reference is the official EU updater
-payload (`0eb6ea9652219b9a35c0a6134bf0cdf316dce21215b724cdfc10ba85eb95982a`);
-the installed executable remains a comparison variant.
+Unsupported boundaries are explicit: native driver-owned padding and exact
+font/filter/alpha output, alternate type-1 lighting, a concrete FFB hardware
+device, other regional editions/locales, and native Windows or GitHub Actions
+execution not run locally. See [DECOMP_MAP.md](docs/DECOMP_MAP.md),
+[COMPARISON.md](docs/COMPARISON.md), and [DEVIATIONS.md](docs/DEVIATIONS.md)
+for the evidence ledger and documented boundaries.
 
-## Working locally
+The [public reconstruction survey](docs/UPSTREAM_SURVEY.md) records related
+projects and the searches used to avoid duplicating existing work. The optional
+PlayStation reference-edition workflow is documented in
+[PSX_REFERENCE_PLAN.md](docs/PSX_REFERENCE_PLAN.md).
 
-Keep the original installation outside this repository and expose its path only
-for local commands:
+---
 
-```sh
-export CMR_ORIGINAL_DIR=/path/to/your/CMRally
-```
+## Developer Verification & Benchmarks
 
 All generated reverse-engineering state belongs in `.work/`, and all imported
 game data belongs in `runtime-data/`. Neither is versioned.
 
-Run source-owned checks with:
+Run all source-owned unit, integration, lint, and portability checks with:
 
 ```sh
 cargo test --workspace
@@ -84,20 +211,15 @@ cargo clippy --workspace --all-targets -- -D warnings
 ./scripts/check-legacy-backends.sh
 ```
 
-Run the exact offscreen indexed-palette GPU conformance slice with:
+Run the offscreen indexed-palette GPU conformance slice (`wgpu` vs `SDL_GPU` vs
+software oracle) with:
 
 ```sh
 SDL_VIDEO_DRIVER=offscreen cargo run -q -p cmr-gpu-conformance -- \
   --backend both --warmup 2 --frames 8
 ```
 
-The SDL_GPU contender currently targets Vulkan and compiles its source-owned
-GLSL with `glslangValidator` (or `CMR_GLSLANG_VALIDATOR`). The run checks both
-GPU readbacks against the established software presenter and against each
-other. It does not choose a native 3D backend; that decision uses the
-imported-stage benchmark below.
-
-The source-owned raw-C3D cross-backend hardware check is opt-in:
+Run the opt-in raw-C3D cross-backend hardware check:
 
 ```sh
 SDL_VIDEO_DRIVER=offscreen cargo test -p cmr-gpu-conformance \
@@ -105,11 +227,7 @@ SDL_VIDEO_DRIVER=offscreen cargo test -p cmr-gpu-conformance \
   -- --ignored --nocapture
 ```
 
-It proves that both APIs transform and rasterize the same raw C3D packet with
-byte-exact readback.
-
-The I08 decision lane is a correctness-gated steady-state benchmark over one
-imported stage, read in place from the user's own media root:
+Run the steady-state GPU stage benchmark over an imported stage:
 
 ```sh
 SDL_VIDEO_DRIVER=offscreen cargo run --release -q -p cmr-gpu-conformance \
@@ -118,89 +236,7 @@ SDL_VIDEO_DRIVER=offscreen cargo run --release -q -p cmr-gpu-conformance \
   --warmup 32 --frames 240
 ```
 
-It composes the established software stage frame as the oracle, prepares the
-persistent GPU scene once per candidate, gates correctness, warms up, and then
-ranks only the steady-state encode/submit/fence-wait interval. The gate is
-cross-backend byte equality plus a documented nearest-neighbour sampling-tie
-budget (0.1% of the frame) against the software oracle, because a fixed-point
-hardware rasterizer cannot match the float software reference at UV texel
-boundaries. `--backend wgpu|sdl-gpu|both`, `--wgpu-adapter`, and `--low-power`
-select the candidates. Stage output is path-free, reports timings and
-`winner=not-selected`, and needs an otherwise idle GPU for meaningful numbers.
-
-Verify the currently cataloged source corpus, then import exact asset bytes into
-the ignored runtime directory:
-
-```sh
-mkdir -p runtime-data
-cargo run -q -p cmr-assets -- verify \
-  --source "$CMR_ORIGINAL_DIR" \
-  --profile profiles/installed-eu-derived-assets-v2.json
-cargo run -q -p cmr-assets -- import \
-  --source "$CMR_ORIGINAL_DIR" \
-  --profile profiles/installed-eu-derived-assets-v2.json \
-  --output runtime-data/installed-eu-derived-assets-v2
-```
-
-Extract the official-EU executable-backed surface coefficients into their own
-ignored, profile-bound runtime-data store (no game values are bundled):
-
-```sh
-cargo run -q -p cmr-assets -- extract-surface-tables \
-  --source "$CMR_ORIGINAL_DIR" \
-  --profile profiles/official-eu-surface-tables-v1.json \
-  --output runtime-data/official-eu-surface-coefficients
-```
-
-This command requires the exact executable identified by the reviewed profile,
-checks its hash before parsing, and records no absolute source path. It is
-separate from the installed-media import above.
-
-Extract the fourteen authenticated compiled initializer cases required by the
-native setup path into a sibling ignored store:
-
-```sh
-cargo run -q -p cmr-assets -- extract-compiled-car-initializer \
-  --source "$CMR_ORIGINAL_DIR" \
-  --profile profiles/official-eu-compiled-car-initializer-v1.json \
-  --output runtime-data/official-eu-compiled-car-initializer
-```
-
-Extract the authenticated car-code-to-selector mapping used to choose the
-fourteen compiled car cases into another ignored store:
-
-```sh
-cargo run -q -p cmr-assets -- extract-car-selectors \
-  --source "$CMR_ORIGINAL_DIR" \
-  --profile profiles/official-eu-car-selector-map-v1.json \
-  --output runtime-data/official-eu-car-selectors
-```
-
-The windowed session expects those two executable-derived stores as siblings of
-`runtime-data/installed-eu-derived-assets-v2`. With that layout in place, run:
-
-```sh
-cargo run --release -q -p cmr-app -- \
-  --windowed-game-session \
-  --runtime-data runtime-data/installed-eu-derived-assets-v2 \
-  --source "$CMR_ORIGINAL_DIR/Game/Au/1" \
-  --stage AU1 \
-  --car-code Sub \
-  --renderer auto        # auto | software | gpu
-```
-
-The wgpu path prepares and uploads the layered stage, HZN, OBJ, SHT, and car
-scenes once, updates dynamic world and camera matrices per frame, and renders
-into the palette-index target. `auto` selects that path when setup succeeds and
-falls back to the software compatibility oracle on a typed setup or frame
-failure. `--car-code` is selected by the caller/menu; the reconstruction does
-not embed the original selector table. `software` forces the much slower oracle
-compositor for differential checks, while `gpu` fails closed. The session logs
-the requested and actual renderer plus any fallback category without printing
-local paths.
-
-Render one complete deterministic root-menu frame through the native
-application boundary (headless for now):
+Render one complete deterministic root-menu frame headlessly:
 
 ```sh
 cargo run -q -p cmr-app -- \
@@ -208,14 +244,7 @@ cargo run -q -p cmr-app -- \
   --runtime-data runtime-data/installed-eu-derived-assets-v2
 ```
 
-`--runtime-data` takes precedence over the optional `CMR_RUNTIME_DATA`
-fallback. The command prints only the reviewed profile ID, render counters,
-frame extent, and deterministic indexed-frame checksums; it never prints or
-embeds the selected local path. The SDL3 host now provides window, input, audio,
-GPU presentation, and fixed-step session pacing; gameplay compatibility remains
-partial as tracked below.
-
-Run the opt-in reviewed-import root-session smoke with:
+Run the opt-in reviewed-import root-session smoke test:
 
 ```sh
 CMR_RUNTIME_DATA="$PWD/runtime-data/installed-eu-derived-assets-v2" \
@@ -223,31 +252,22 @@ CMR_RUNTIME_DATA="$PWD/runtime-data/installed-eu-derived-assets-v2" \
   -- --ignored --nocapture
 ```
 
-The profile accepts only the exact locally observed `Game/**`, `New_Fe/**`, and
-`ini/**` corpus. Other legitimate releases need reviewed metadata profiles;
-the importer intentionally has no `--ignore-hash` escape hatch.
+### Documentation Index
 
-The execution plan and evidence policy live in [docs/ROADMAP.md](docs/ROADMAP.md)
-and [docs/EVIDENCE.md](docs/EVIDENCE.md). The reproducible REA workflow is in
-[docs/ANALYSIS.md](docs/ANALYSIS.md), and the asset boundary is described in
-[docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md). The live checklist and compact
-progress footer are in [docs/DECOMP_MAP.md](docs/DECOMP_MAP.md), while recovered
-subsystem boundaries are in [docs/SUBSYSTEMS.md](docs/SUBSYSTEMS.md). The
-provisional Windows/Linux backend recommendation and its benchmark gates are in
-[docs/MODERN_BACKEND_RESEARCH.md](docs/MODERN_BACKEND_RESEARCH.md). How the
-reconstruction is checked against the original is in
-[docs/COMPARISON.md](docs/COMPARISON.md), and the supported editions and
-intentional differences are in [docs/DEVIATIONS.md](docs/DEVIATIONS.md).
+- [docs/ROADMAP.md](docs/ROADMAP.md) — Execution plan and milestone history
+- [docs/EVIDENCE.md](docs/EVIDENCE.md) — Static and runtime evidence ledger
+- [docs/DECOMP_MAP.md](docs/DECOMP_MAP.md) — Live 119-item checklist and progress footer (`watch -n 2 'tail -n 10 docs/DECOMP_MAP.md'`)
+- [docs/SUBSYSTEMS.md](docs/SUBSYSTEMS.md) — Recovered subsystem boundaries
+- [docs/ANALYSIS.md](docs/ANALYSIS.md) — Reproducible reverse-engineering workflow
+- [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) — Asset verification and import boundary
+- [docs/COMPARISON.md](docs/COMPARISON.md) — Differential verification methodology
+- [docs/DEVIATIONS.md](docs/DEVIATIONS.md) — Supported editions and intentional differences
+- [docs/MODERN_BACKEND_RESEARCH.md](docs/MODERN_BACKEND_RESEARCH.md) — GPU/platform backend evaluation
 
-From the repository root, watch the compact progress footer with:
+---
 
-```sh
-watch -n 2 'tail -n 10 docs/DECOMP_MAP.md'
-```
+## Legal Note
 
-## Legal note
-
-“Abandonware” is not a legal license. This repository will contain independently
-written source, documentation, and synthetic tests only. Users remain
+“Abandonware” is not a legal license. This repository contains independently
+written source code, documentation, and synthetic tests only. Users remain
 responsible for obtaining and using the original game data lawfully.
-

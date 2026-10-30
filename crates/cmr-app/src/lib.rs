@@ -2049,7 +2049,10 @@ impl WgpuStageRenderer {
                     actual: 0,
                 },
             ))?;
-            let (w, h, z_near, _) = cmr_core::c3d_camera::PROJECTION_BASELINE;
+            let (w, h, z_near, _) = cmr_core::c3d_camera::gameplay_projection_default(
+                ROOT_EXTENT.width,
+                ROOT_EXTENT.height,
+            );
             let horizon_frame = horizon_prepared
                 .prepared_frame_for_worlds_with_projection(
                     camera,
@@ -3164,7 +3167,18 @@ impl StageRenderResources {
             return;
         };
         let camera = [camera_world[12], camera_world[13], camera_world[14]];
-        let pulled = camera_pull(&entry, camera, event.split_screen());
+        let mut pulled = camera_pull(&entry, camera, event.split_screen());
+        // In `WgpuStageRenderer`, the car and world are drawn into the shared
+        // GPU depth buffer first and `blend_shadows` depth-tests against that
+        // buffer in `post_blend_gpu_frame`. Scaling the `FUN_0047bee0` camera-pull
+        // delta to 1/16th (`~6.25 cm` instead of `1.0m`) prevents ground z-fighting
+        // while keeping the shadow strictly behind the car's rear bumper, wheels,
+        // and bodywork (`~0.2m..1.5m` closer along the camera ray).
+        for (dst, src) in pulled.points.iter_mut().zip(entry.points.iter()) {
+            for axis in 0..3 {
+                dst[axis] = src[axis] + ((dst[axis] - src[axis]) >> 4);
+            }
+        }
         let vertices = shadow_vertices(&pulled, true)
             .into_iter()
             .map(|v| cmr_video::c3d_software_raster::SoftwareC3dLitVertex {
@@ -3477,7 +3491,10 @@ impl StageRenderResources {
             let horizon_root = horizon_root_world(camera, ars.horizon_y_offset_q16());
             let horizon_scene = StageScene::from_c3d(horizon, &horizon_root, VERTEXTYPE_LVERTEX)
                 .map_err(StageFrameError::Scene)?;
-            let (w, h, z_near, _) = cmr_core::c3d_camera::PROJECTION_BASELINE;
+            let (w, h, z_near, _) = cmr_core::c3d_camera::gameplay_projection_default(
+                ROOT_EXTENT.width,
+                ROOT_EXTENT.height,
+            );
             let background = compose_stage_scene_frame_with_projection(
                 &horizon_scene,
                 camera,
@@ -5489,7 +5506,7 @@ fn advance_game_frame<C: HostClock>(
             true,
         )
     } else {
-        keyboard.poll(|vk| input.keys.is_down(vk), response, true)
+        keyboard.poll(|vk| input.keys.is_keyboard_down(vk), response, true)
     };
     let controls = drive.controls;
     let change_view = drive.car.change_view_fired;
@@ -6306,7 +6323,7 @@ impl PauseHarness {
                 flow.enter_pause = self.controller.driving_tick(
                     DrivingPauseInput {
                         state_id,
-                        escape_down: keys.is_down(0x1b),
+                        escape_down: keys.is_pause_down(),
                         player: 0,
                         any_countdown_75c: car.four_wheel.trigger_walk.penalty_timer_75c != 0,
                         gates: PauseKeyGates {

@@ -539,7 +539,7 @@ impl SoftwareC3dTransformState {
         camera_world_q16: &[i32; 16],
         node_world_q16: &[i32; 16],
     ) -> Result<Self, RootMenuC3dViewportError> {
-        let (w, h, zn, zf) = cmr_core::c3d_camera::PROJECTION_BASELINE;
+        let (w, h, zn, zf) = cmr_core::c3d_camera::gameplay_projection_default(width, height);
         Self::for_gameplay_scene_with_projection(
             width,
             height,
@@ -903,13 +903,100 @@ pub fn preflight_lit_triangle_list(
 /// Visits the depth-passing fragments of an untextured batch (the caller
 /// samples its own texture from the fragment's coordinates). Depth is
 /// written to `depth` as for any batch; a caller drawing with z-write off
-/// passes a scratch copy.
+/// can use [`rasterize_c3d_fragments_untextured_no_zwrite`] to avoid cloning
+/// the depth buffer.
 pub fn rasterize_c3d_fragments_untextured(
     batch: &SoftwareC3dPreparedBatch,
     depth: &mut SoftwareC3dDepthBuffer,
     visit: impl FnMut(SoftwareC3dFragment),
 ) -> Result<SoftwareC3dFragmentOutcome, SoftwareC3dRasterError> {
     rasterize_fragments_extent_only(batch, [1, 1], depth, visit)
+}
+
+/// Visits the depth-passing fragments of an untextured batch with
+/// `ZWRITEENABLE = FALSE` (`depth` is read-only, avoiding a full-frame depth
+/// buffer clone for shadow, lamp-flare, and tyre-mark passes).
+pub fn rasterize_c3d_fragments_untextured_no_zwrite(
+    batch: &SoftwareC3dPreparedBatch,
+    depth: &SoftwareC3dDepthBuffer,
+    mut visit: impl FnMut(SoftwareC3dFragment),
+) -> Result<SoftwareC3dFragmentOutcome, SoftwareC3dRasterError> {
+    validate_prepared_triangles(batch)?;
+    let [target_width, target_height] = depth.extent;
+    let mut outcome = SoftwareC3dFragmentOutcome::default();
+    for triangle in &batch.triangles {
+        let positions = triangle.vertices.map(SoftwareC3dScreenVertex::position);
+        let area = signed_screen_area(triangle.vertices);
+        let Some([minimum_x, maximum_x]) =
+            candidate_axis_bounds(positions.map(|position| position[0]), target_width)
+        else {
+            continue;
+        };
+        let Some([minimum_y, maximum_y]) =
+            candidate_axis_bounds(positions.map(|position| position[1]), target_height)
+        else {
+            continue;
+        };
+
+        for y in minimum_y..=maximum_y {
+            for x in minimum_x..=maximum_x {
+                let sample = [f32::from(x) + 0.5, f32::from(y) + 0.5];
+                let edges = [
+                    edge(positions[1], positions[2], sample),
+                    edge(positions[2], positions[0], sample),
+                    edge(positions[0], positions[1], sample),
+                ];
+                let edge_pairs = [
+                    [positions[1], positions[2]],
+                    [positions[2], positions[0]],
+                    [positions[0], positions[1]],
+                ];
+                if !(0..3).all(|index| edge_accepts(edges[index], edge_pairs[index])) {
+                    continue;
+                }
+                outcome.covered += 1;
+
+                let weights = edges.map(|value| f64::from(value) / f64::from(area));
+                let interpolated_depth =
+                    weighted_scalar(weights, triangle.vertices.map(|vertex| vertex.position[2]))
+                        .clamp(0.0, 1.0) as f32;
+                let target_index = usize::from(y) * usize::from(target_width) + usize::from(x);
+                if interpolated_depth > depth.values[target_index] {
+                    outcome.depth_rejected += 1;
+                    continue;
+                }
+
+                let reciprocal_w = weighted_scalar(
+                    weights,
+                    triangle.vertices.map(SoftwareC3dScreenVertex::reciprocal_w),
+                );
+                let uv_over_w = weighted_pair(
+                    weights,
+                    triangle.vertices.map(SoftwareC3dScreenVertex::uv_over_w),
+                );
+                let uv = [
+                    (uv_over_w[0] / reciprocal_w).clamp(0.0, 1.0) as f32,
+                    (uv_over_w[1] / reciprocal_w).clamp(0.0, 1.0) as f32,
+                ];
+                let diffuse_argb = weighted_quad(
+                    weights,
+                    triangle.vertices.map(SoftwareC3dScreenVertex::diffuse_argb),
+                )
+                .map(|component| component.clamp(0.0, 1.0) as f32);
+
+                outcome.depth_passed += 1;
+                visit(SoftwareC3dFragment {
+                    position: [x, y],
+                    depth: interpolated_depth,
+                    uv,
+                    texture_index: 0,
+                    diffuse_argb,
+                    flat_diffuse: triangle.flat_diffuse,
+                });
+            }
+        }
+    }
+    Ok(outcome)
 }
 
 /// Visits depth-passing fragments for one prepared batch in triangle/scanline
@@ -2412,7 +2499,7 @@ mod tests {
         let state =
             SoftwareC3dTransformState::for_gameplay_scene(640, 480, &camera_world, &identity_q16)
                 .unwrap();
-        let (w, h, zn, zf) = cmr_core::c3d_camera::PROJECTION_BASELINE;
+        let (w, h, zn, zf) = cmr_core::c3d_camera::gameplay_projection_default(640, 480);
         assert_eq!(
             state.world(),
             cmr_core::c3d_camera::world_matrix_words(&identity_q16)
