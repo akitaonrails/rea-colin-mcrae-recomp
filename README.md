@@ -11,6 +11,10 @@ bit-exact software C3D reference rasterizer).
 > release / official EU patch baseline). All imported and extracted game data
 > is stored locally inside the Git-ignored `runtime-data/` directory.
 
+[![Gameplay preview of the native Rust reconstruction of Colin McRae Rally (1998)](https://new-uploads-akitaonrails.s3.us-east-2.amazonaws.com/2026/10/30/colin-mcrae-rally-recomp/showcase-poster.jpg)](https://new-uploads-akitaonrails.s3.us-east-2.amazonaws.com/2026/10/30/colin-mcrae-rally-recomp/showcase-h264.mp4)
+
+*Gameplay preview of the native Rust reconstruction (`cmr-app --windowed-game-session`): front-end menus, stage loading, 3D stage & car rendering, HUD, and co-driver audio. Click to watch (1¼ minutes, with sound).*
+
 ---
 
 ## Highlights & Current Status
