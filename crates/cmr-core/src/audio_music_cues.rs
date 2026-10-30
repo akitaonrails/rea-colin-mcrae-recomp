@@ -213,6 +213,38 @@ pub fn countdown_relative_path(language: SpeechLanguage, filename: &str) -> Stri
     format!("{}{COUNTDOWN_DIR}{filename}", language.dir())
 }
 
+/// Start-of-stage countdown cue (`FUN_00439b50` -> `FUN_0046af10`, `0x439d08` / `0x439d3b`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CountdownCue {
+    Go,
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+}
+
+impl CountdownCue {
+    /// Filename under `<language dir>countdwn\` (`COUNTDOWN_WAVES`).
+    #[must_use]
+    pub const fn filename(self) -> &'static str {
+        match self {
+            Self::Go => COUNTDOWN_WAVES[0],
+            Self::One => COUNTDOWN_WAVES[1],
+            Self::Two => COUNTDOWN_WAVES[2],
+            Self::Three => COUNTDOWN_WAVES[3],
+            Self::Four => COUNTDOWN_WAVES[4],
+            Self::Five => COUNTDOWN_WAVES[5],
+        }
+    }
+
+    /// Relative path under `game\` for the selected speech language.
+    #[must_use]
+    pub fn relative_path(self, language: SpeechLanguage) -> String {
+        countdown_relative_path(language, self.filename())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

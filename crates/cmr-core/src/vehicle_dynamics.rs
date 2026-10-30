@@ -1773,14 +1773,26 @@ pub struct ContactBasisInput {
 #[must_use]
 pub fn build_contact_basis_vectors(input: ContactBasisInput) -> [Vec3; 8] {
     let mut output = [0; 24];
-    for (row_index, row) in input.rows.into_iter().enumerate() {
-        let [f0, f4, f8, f2c, f30, f34] = input.angular;
-        let a = row.x.mul(f4).mul(f34).raw();
-        let b = row.x.mul(f8).mul(f30).raw();
-        let c = row.y.mul(f8).mul(f2c).raw();
-        let d = row.y.mul(f0).mul(f34).raw();
-        let e = row.z.mul(f0).mul(f30).raw();
-        let f = row.z.mul(f4).mul(f2c).raw();
+    let [r0, r1, r2] = input.rows;
+    let columns = [
+        Vec3::new(r0.x, r1.x, r2.x),
+        Vec3::new(r0.y, r1.y, r2.y),
+        Vec3::new(r0.z, r1.z, r2.z),
+    ];
+    let [f0, f4, f8, f2c, f30, f34] = input.angular;
+    let f4_34 = f4.mul(f34);
+    let f8_30 = f8.mul(f30);
+    let f8_2c = f8.mul(f2c);
+    let f0_34 = f0.mul(f34);
+    let f0_30 = f0.mul(f30);
+    let f4_2c = f4.mul(f2c);
+    for (col_index, col) in columns.into_iter().enumerate() {
+        let a = col.x.mul(f4_34).raw();
+        let b = col.x.mul(f8_30).raw();
+        let c = col.y.mul(f8_2c).raw();
+        let d = col.y.mul(f0_34).raw();
+        let e = col.z.mul(f0_30).raw();
+        let f = col.z.mul(f4_2c).raw();
         let primary = [
             c.wrapping_sub(f)
                 .wrapping_sub(e)
@@ -1803,7 +1815,7 @@ pub fn build_contact_basis_vectors(input: ContactBasisInput) -> [Vec3; 8] {
                 .wrapping_add(d)
                 .wrapping_add(b),
         ];
-        let base = row_index * 4;
+        let base = col_index * 4;
         output[base..base + 4].copy_from_slice(&primary);
     }
     let primary = |corner: usize| [output[corner], output[corner + 4], output[corner + 8]];
@@ -3085,6 +3097,32 @@ mod tests {
             }),
             [velocity; 8]
         );
+
+        // `0x40a071..0x40a1d8` reads the three columns `[edi+0, +0x10, +0x20]`,
+        // `[edi+4, +0x14, +0x24]`, `[edi+8, +0x18, +0x28]` of `+0x2a0` so
+        // `omega x r` in body coordinates is projected into world coordinates by
+        // `R^T`, not `R`. Under a 90-degree yaw (`row0 = +Z`, `row2 = -X`) and
+        // pure body yaw `f4 = 1.0`, `f34 = 1.0`, `col2 = (+1, 0, 0)` maps `a = 1.0`
+        // to world `+/-Z` (`primary[0].z = +1.0`, `primary[1].z = -1.0`).
+        let yaw_90 = [
+            raw_v(0, 0, 0x10000),
+            raw_v(0, 0x10000, 0),
+            raw_v(-0x10000, 0, 0),
+        ];
+        let rotated = build_contact_basis_vectors(ContactBasisInput {
+            rows: yaw_90,
+            angular: [
+                Fixed16::ZERO,
+                Fixed16::ONE,
+                Fixed16::ZERO,
+                Fixed16::ZERO,
+                Fixed16::ZERO,
+                Fixed16::ONE,
+            ],
+            velocity: Vec3::ZERO,
+        });
+        assert_eq!(rotated[0], raw_v(0, 0, 0x10000));
+        assert_eq!(rotated[1], raw_v(0, 0, -0x10000));
     }
 
     #[test]

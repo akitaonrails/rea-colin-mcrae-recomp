@@ -4195,10 +4195,16 @@ pub struct CompiledFourWheelConstants {
     pub state_word_4c: i32,
     /// State `+0x50/+0x54/+0x58`, the angular inertia (`0x40aa75..0x40aab4`).
     pub inertia_50_54_58: [i32; 3],
+    /// Control `+0x144`: engine-braking drag response from the post-helper patch.
+    pub control_word_144: i32,
     /// Control `+0x148`: full throttle response.
     pub control_word_148: i32,
+    /// Control `+0x160`: driven-wheel smoothing response from the post-helper patch.
+    pub control_word_160: i32,
     /// Control `+0x16c`: full brake response.
     pub control_word_16c: i32,
+    /// Control `+0x170`: front/rear brake and coasting drag split (`FUN_00404120`, `0x8000` default).
+    pub control_word_170: i32,
     /// Control `+0x158`: the drive split the wheel-force producer and the
     /// drivetrain read (front wheels compare it with `0`, rear with `1.0`).
     pub control_word_158: i32,
@@ -4273,8 +4279,11 @@ pub fn derive_compiled_four_wheel_constants(
         state_word_48: prefix.state_word_48,
         state_word_4c: prefix.state_word_4c,
         inertia_50_54_58: suffix.state_words_50_54_58,
+        control_word_144: post_helper_word(&post_helper, 0x144),
         control_word_148: prefix.control_word_148,
+        control_word_160: post_helper_word(&post_helper, 0x160),
         control_word_16c: words.control_words[2],
+        control_word_170: 0x8000,
         control_word_158: case_control_word(&words, 0x158),
         control_word_150: post_helper_word(&post_helper, 0x150),
         control_word_174: post_helper_word(&post_helper, 0x174),

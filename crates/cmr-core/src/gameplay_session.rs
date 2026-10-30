@@ -201,6 +201,17 @@ pub enum StaticGameplayAdvanceError<E> {
     Collision(LiveStaticCollisionStepError<E>),
 }
 
+/// Camera transitions triggered by the State 5 race-start director (`FUN_00439b50`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartCameraEvent {
+    /// Enter Mode 8 (`FUN_00467630` / `FUN_004678c0` preset 0) for the 75-tick
+    /// start-line camera orbit around the car (`0x439be2..0x439bff`).
+    BeginOrbit,
+    /// Crossfade from the end of the 75-tick Mode 8 orbit into the active
+    /// driving camera over 25 ticks (`FUN_004360a0(0, 1)` at `0x439c88`).
+    CrossfadeToChase,
+}
+
 /// The driven session: the recovered FSM plus the deterministic race sim.
 pub struct GameplaySession<'a> {
     session: GameSession,
@@ -272,6 +283,20 @@ pub struct GameplaySession<'a> {
     last_object_contact_552f68: bool,
     /// `DAT_00558fb0`: the last static or moving-object hit's surface material byte.
     last_contact_material_558fb0: u8,
+    /// Whether the State 5 start-line orbit and 5-4-3-2-1-GO! director
+    /// (`FUN_00439b50`) is enabled for non-school stages.
+    start_sequence_enabled: bool,
+    /// `DAT_0057b0ac[0]` start-sequence state (`0` = uninitialised, `1` = arm
+    /// orbit, `2` = 75-tick orbit, `4` = 100-tick countdown, `5` = 19-tick
+    /// `"GO!"` banner, `100` = normal race running).
+    start_phase_57b0ac: u8,
+    /// `DAT_0057b048[0]` per-phase tick countdown.
+    start_timer_57b048: u8,
+    /// Pending camera mode transition emitted by `FUN_00439b50`.
+    pending_start_camera_event: Option<StartCameraEvent>,
+    /// Pending countdown speech cues (`5.wav`..`1.wav`, `go!.wav`) emitted by
+    /// `FUN_00439b50` (`0x439d08`, `0x439d3b`).
+    pending_countdown_cues: Vec<crate::audio_music_cues::CountdownCue>,
     /// The game's `rand()` (`DAT_0050b690`) as the session draws on it; the
     /// host copies its generator in before an advance and back after.
     rng: crate::game_rng::GameLcg,
@@ -793,6 +818,17 @@ impl<'a> GameplaySession<'a> {
     #[must_use]
     pub fn with_event(mut self, event: EventState) -> Self {
         self.session = GameSession::with_event(event);
+        self.reset_start_sequence();
+        self
+    }
+
+    /// Enable or disable the State 5 race-start sequence (`FUN_00439b50`:
+    /// 75-tick Mode 8 start-line camera orbit followed by the 5-4-3-2-1-GO!
+    /// countdown and `FUN_00407590` launch).
+    #[must_use]
+    pub fn with_start_sequence(mut self, enabled: bool) -> Self {
+        self.start_sequence_enabled = enabled;
+        self.reset_start_sequence();
         self
     }
 
@@ -892,6 +928,11 @@ impl<'a> GameplaySession<'a> {
             moj_slots_initial: Vec::new(),
             last_object_contact_552f68: false,
             last_contact_material_558fb0: 0,
+            start_sequence_enabled: false,
+            start_phase_57b0ac: 100,
+            start_timer_57b048: 0,
+            pending_start_camera_event: None,
+            pending_countdown_cues: Vec::new(),
             rng: crate::game_rng::GameLcg::new(1),
         }
     }
@@ -1353,6 +1394,7 @@ impl<'a> GameplaySession<'a> {
         self.last_trigger_events.clear();
         self.car_760 = false;
         self.stage_dirty = false;
+        self.reset_start_sequence();
     }
 
     /// Note when a race hands back to the menu band.
@@ -1384,7 +1426,8 @@ impl<'a> GameplaySession<'a> {
             self.school_pre_drive(&mut controls);
         }
         let pause = std::mem::take(&mut self.pause_flow);
-        let driving_sample = if self.session.current().id() == 5 && !pause.enter_pause {
+        let mut driving_sample = if self.session.current().id() == 5 && !pause.enter_pause {
+            self.start_sequence_pre_drive(&mut controls);
             Some(if self.wheel.is_some() {
                 let race_before = self.race.clone();
                 let mut sample = self.four_wheel_drive(&controls)?;
@@ -1402,7 +1445,8 @@ impl<'a> GameplaySession<'a> {
         } else {
             None
         };
-        if driving_sample.is_some() {
+        if let Some(sample) = driving_sample.as_mut() {
+            self.start_sequence_after_drive(sample);
             self.wet_tick(&controls);
             self.school_after_drive(&controls, progress);
         } else if !pause.enter_pause {
@@ -1479,7 +1523,8 @@ impl<'a> GameplaySession<'a> {
             self.school_pre_drive(&mut controls);
         }
         let pause = std::mem::take(&mut self.pause_flow);
-        let driving_sample = if self.session.current().id() == 5 && !pause.enter_pause {
+        let mut driving_sample = if self.session.current().id() == 5 && !pause.enter_pause {
+            self.start_sequence_pre_drive(&mut controls);
             let race_before = self.race.clone();
             let previous_center_xz = PreviousCarXz::capture(race_before.car().position);
             let four_wheel = self.wheel.is_some();
@@ -1577,7 +1622,8 @@ impl<'a> GameplaySession<'a> {
         } else {
             None
         };
-        if driving_sample.is_some() {
+        if let Some(sample) = driving_sample.as_mut() {
+            self.start_sequence_after_drive(sample);
             self.wet_tick(&controls);
             self.school_after_drive(&controls, progress);
         } else if !pause.enter_pause {
@@ -1862,6 +1908,150 @@ impl<'a> GameplaySession<'a> {
             cues: Vec::new(),
             marks_out: None,
         });
+        self.reset_start_sequence();
+    }
+
+    fn reset_start_sequence(&mut self) {
+        if self.start_sequence_enabled
+            && !self.session.event().globals.school_d3ca88
+            && self.school.is_none()
+        {
+            self.start_phase_57b0ac = 1;
+            self.start_timer_57b048 = 0;
+        } else {
+            self.start_phase_57b0ac = 100;
+            self.start_timer_57b048 = 0;
+        }
+        self.pending_start_camera_event = None;
+        self.pending_countdown_cues.clear();
+    }
+
+    /// Whether the State 5 race-start sequence (`FUN_00439b50`) is enabled.
+    #[must_use]
+    pub const fn is_start_sequence_enabled(&self) -> bool {
+        self.start_sequence_enabled
+    }
+
+    /// Take any pending camera transition emitted by the State 5 race-start
+    /// sequence (`FUN_00439b50`).
+    pub fn take_start_camera_event(&mut self) -> Option<StartCameraEvent> {
+        self.pending_start_camera_event.take()
+    }
+
+    /// Take any pending countdown speech cues (`5.wav`..`1.wav`, `go!.wav`)
+    /// emitted by the State 5 race-start sequence (`FUN_00439b50`).
+    pub fn take_countdown_cues(&mut self) -> Vec<crate::audio_music_cues::CountdownCue> {
+        std::mem::take(&mut self.pending_countdown_cues)
+    }
+
+    /// Active HUD countdown / `"GO!"` banner state (`FUN_00423570` /
+    /// `FUN_00423700`) for the current State 5 frame.
+    #[must_use]
+    pub const fn hud_countdown(&self) -> Option<crate::race_hud_plan::RaceHudCountdown> {
+        if self.start_phase_57b0ac == 4 && self.start_timer_57b048 < 100 {
+            let digit = (self.start_timer_57b048 / 20) + 1;
+            let ticks_left = self.start_timer_57b048 % 20;
+            Some(crate::race_hud_plan::RaceHudCountdown::Digit { digit, ticks_left })
+        } else if self.start_phase_57b0ac == 5 {
+            Some(crate::race_hud_plan::RaceHudCountdown::Go {
+                ticks_left: self.start_timer_57b048,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// `FUN_00439b50` + `FUN_0040e1f0` pre-step control gate: while the car is
+    /// on the start line (`DAT_0057b0ac[0]` in `1..=4`), only throttle is read
+    /// from the player so the engine can be revved in Neutral while the
+    /// handbrake holds the car at the line.
+    fn start_sequence_pre_drive(&mut self, controls: &mut Controls) {
+        if !self.start_sequence_enabled
+            || self.session.event().globals.school_d3ca88
+            || self.school.is_some()
+        {
+            return;
+        }
+        if self.start_phase_57b0ac == 1 {
+            self.pending_start_camera_event = Some(StartCameraEvent::BeginOrbit);
+            self.start_phase_57b0ac = 2;
+            self.start_timer_57b048 = crate::gameplay_camera::START_ORBIT_TICKS as u8;
+        }
+        if self.start_phase_57b0ac == 2 || self.start_phase_57b0ac == 4 {
+            controls.raw_steer = crate::vehicle_dynamics::RawSteer::default();
+            controls.steer_rate = 0;
+            controls.raw_pedals.brake_308 = 0;
+            controls.handbrake = true;
+            controls.raw_gear_command_314 = 0;
+            controls.forward_force = Fixed16::ZERO;
+            self.race.hold_start_line_neutral();
+        }
+    }
+
+    /// `FUN_00439b50` post-step state machine: advances the 75-tick Mode 8
+    /// camera orbit (`Phase 2`), the 100-tick `5..1` countdown (`Phase 4`),
+    /// fires `FUN_00407590` launch at `timer == 0`, and runs the 19-tick
+    /// `"GO!"` banner (`Phase 5`).
+    fn start_sequence_after_drive(&mut self, sample: &mut crate::race_state::TraceSample) {
+        if !self.start_sequence_enabled
+            || self.session.event().globals.school_d3ca88
+            || self.school.is_some()
+        {
+            return;
+        }
+        match self.start_phase_57b0ac {
+            2 => {
+                self.race.hold_start_line_neutral();
+                sample.centiseconds = 0;
+                sample.car = self.race.car();
+                self.start_timer_57b048 = self.start_timer_57b048.saturating_sub(1);
+                if self.start_timer_57b048 == 0 {
+                    self.pending_start_camera_event = Some(StartCameraEvent::CrossfadeToChase);
+                    self.start_phase_57b0ac = 4;
+                    self.start_timer_57b048 = 100;
+                }
+            }
+            4 => {
+                self.race.hold_start_line_neutral();
+                sample.centiseconds = 0;
+                self.start_timer_57b048 = self.start_timer_57b048.saturating_sub(1);
+                let timer = self.start_timer_57b048;
+                let digit = (timer / 20) + 1;
+                let rem = timer % 20;
+                if rem == 19 {
+                    let cue = match digit {
+                        5 => Some(crate::audio_music_cues::CountdownCue::Five),
+                        4 => Some(crate::audio_music_cues::CountdownCue::Four),
+                        3 => Some(crate::audio_music_cues::CountdownCue::Three),
+                        2 => Some(crate::audio_music_cues::CountdownCue::Two),
+                        1 => Some(crate::audio_music_cues::CountdownCue::One),
+                        _ => None,
+                    };
+                    if let Some(cue) = cue {
+                        self.pending_countdown_cues.push(cue);
+                    }
+                }
+                if timer == 0 {
+                    self.pending_countdown_cues
+                        .push(crate::audio_music_cues::CountdownCue::Go);
+                    if let Some(wheel) = self.wheel.as_ref() {
+                        self.race.launch_from_start_line_407590(wheel);
+                    } else {
+                        self.race.set_gear_43a(1);
+                    }
+                    self.start_phase_57b0ac = 5;
+                    self.start_timer_57b048 = 19;
+                }
+                sample.car = self.race.car();
+            }
+            5 => {
+                self.start_timer_57b048 = self.start_timer_57b048.saturating_sub(1);
+                if self.start_timer_57b048 == 0 {
+                    self.start_phase_57b0ac = 100;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Attach loaded `intro.rsp` (`DAT_005ef444`) and/or `exit.rsp` (`DAT_005ef440`)
@@ -2574,8 +2764,11 @@ mod tests {
             state_word_48: 0x7a_0000,
             state_word_4c: 0x218,
             inertia_50_54_58: [1, 2, 1],
+            control_word_144: 0x83,
             control_word_148: 0x3_0000,
+            control_word_160: 0x2000,
             control_word_16c: 0x2_0000,
+            control_word_170: 0x8000,
             control_word_158: 1,
             control_word_150: 0x0ccc,
             control_word_174: 0x0ccd,
@@ -3308,5 +3501,84 @@ mod tests {
         assert_eq!(stepped_locals.len(), 1);
         assert_eq!(stepped_locals[0].0, 42);
         assert!(stepped_locals[0].1[14] > 0);
+    }
+
+    #[test]
+    fn start_sequence_orbits_counts_down_and_launches_car() {
+        use crate::audio_music_cues::CountdownCue;
+        use crate::race_hud_plan::RaceHudCountdown;
+
+        let mut session = GameplaySession::new(params(), InRaceScript::gameplay_harness())
+            .with_start_sequence(true);
+        let nodes = line();
+        let mut progress = StageProgress::new(&nodes, 0);
+        let mut camera_events = Vec::new();
+        let mut cues = Vec::new();
+        let mut saw_digit_5 = false;
+        let mut saw_digit_1 = false;
+        let mut saw_go = false;
+
+        // Advance through the 75-tick orbit + 100-tick countdown + 19-tick GO! banner.
+        let mut state5_ticks = 0u32;
+        for _ in 0..400 {
+            let frame = session
+                .try_advance(&StationaryClock, frontend_menu(), forward(), &mut progress)
+                .unwrap();
+            if let Some(ev) = session.take_start_camera_event() {
+                camera_events.push((state5_ticks, ev));
+            }
+            cues.extend(session.take_countdown_cues());
+            match session.hud_countdown() {
+                Some(RaceHudCountdown::Digit { digit: 5, .. }) => saw_digit_5 = true,
+                Some(RaceHudCountdown::Digit { digit: 1, .. }) => saw_digit_1 = true,
+                Some(RaceHudCountdown::Go { .. }) => saw_go = true,
+                _ => {}
+            }
+            if frame.stepped {
+                state5_ticks += 1;
+                if state5_ticks == 75 {
+                    assert_eq!(
+                        session.car().position,
+                        CarState::at_rest().position,
+                        "car stays held at start line during 75-tick orbit"
+                    );
+                    assert_eq!(session.stage_clock(), Fixed16::ZERO);
+                }
+                if state5_ticks == 174 {
+                    assert_eq!(
+                        session.car().position,
+                        CarState::at_rest().position,
+                        "car stays held at start line until countdown hits zero"
+                    );
+                }
+                if state5_ticks == 180 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(
+            camera_events,
+            vec![
+                (0, StartCameraEvent::BeginOrbit),
+                (74, StartCameraEvent::CrossfadeToChase),
+            ]
+        );
+        assert_eq!(
+            cues,
+            vec![
+                CountdownCue::Five,
+                CountdownCue::Four,
+                CountdownCue::Three,
+                CountdownCue::Two,
+                CountdownCue::One,
+                CountdownCue::Go,
+            ]
+        );
+        assert!(saw_digit_5 && saw_digit_1 && saw_go);
+        assert_ne!(
+            session.car().position,
+            CarState::at_rest().position,
+            "car launches and moves forward after GO!"
+        );
     }
 }

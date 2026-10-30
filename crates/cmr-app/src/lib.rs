@@ -2188,14 +2188,21 @@ pub struct RaceHudAssets {
     bottom_left_curve: IndexedBitmap,
     vertical_bar: IndexedBitmap,
     progress_bar_top: IndexedBitmap,
+    countdown_digits: IndexedBitmap,
+    countdown_go: IndexedBitmap,
     numbers: BitmapFont,
     time_numbers: BitmapFont,
 }
 
 impl RaceHudAssets {
     fn load(store: &AssetStore) -> Result<Self, StageFrameError> {
+        let common_gauge = load_race_hud_bitmap(store, RaceHudBitmap::CommonGauge640)?;
+        let countdown_digits = load_race_hud_bitmap(store, RaceHudBitmap::CountdownDigits)
+            .unwrap_or_else(|_| common_gauge.clone());
+        let countdown_go = load_race_hud_bitmap(store, RaceHudBitmap::CountdownGo)
+            .unwrap_or_else(|_| common_gauge.clone());
         Ok(Self {
-            common_gauge: load_race_hud_bitmap(store, RaceHudBitmap::CommonGauge640)?,
+            common_gauge,
             progress_red_spot: load_race_hud_bitmap(store, RaceHudBitmap::ProgressRedSpot)?,
             horizontal_bar: load_race_hud_bitmap(store, RaceHudBitmap::HorizontalBar)?,
             horizontal_bar_end: load_race_hud_bitmap(store, RaceHudBitmap::HorizontalBarEnd)?,
@@ -2207,6 +2214,8 @@ impl RaceHudAssets {
             bottom_left_curve: load_race_hud_bitmap(store, RaceHudBitmap::BottomLeftCurve)?,
             vertical_bar: load_race_hud_bitmap(store, RaceHudBitmap::VerticalBar)?,
             progress_bar_top: load_race_hud_bitmap(store, RaceHudBitmap::ProgressBarTop)?,
+            countdown_digits,
+            countdown_go,
             numbers: load_race_hud_font(store, RaceHudFont::Numbers640)?,
             time_numbers: load_race_hud_font(store, RaceHudFont::TimeNumbers640)?,
         })
@@ -2225,6 +2234,8 @@ impl RaceHudAssets {
             RaceHudBitmap::BottomLeftCurve => &self.bottom_left_curve,
             RaceHudBitmap::VerticalBar => &self.vertical_bar,
             RaceHudBitmap::ProgressBarTop => &self.progress_bar_top,
+            RaceHudBitmap::CountdownDigits => &self.countdown_digits,
+            RaceHudBitmap::CountdownGo => &self.countdown_go,
         }
     }
 
@@ -3814,12 +3825,21 @@ impl ViewHarness {
     /// (`FUN_00434210`), then returns the world matrix for the car's current
     /// placement.
     fn update(&mut self, change_view: bool, position: Vec3, heading: u16, pal: bool) -> [i32; 16] {
-        if change_view {
+        if change_view && self.controller.mode() != CameraMode::Helmet {
             self.controller.cycle(Self::GATE, &mut self.rng);
         }
         let world = self.controller.update(position, heading, pal);
         self.last = Some(world);
         world
+    }
+
+    fn begin_start_orbit(&mut self) {
+        self.controller.begin_start_orbit();
+    }
+
+    fn finish_start_orbit(&mut self) {
+        self.controller
+            .finish_start_orbit_to_mode(CameraMode::ChaseNear);
     }
 
     /// The camera record without a driver run: the pause (`0xa`) and hub
@@ -3911,6 +3931,15 @@ fn compose_live_race_hud(
     frame: SoftwarePresentedFrame,
     input: RaceHudPreparedInputs,
 ) -> Result<SoftwarePresentedFrame, StageFrameError> {
+    compose_live_race_hud_with_countdown(resources, frame, input, None)
+}
+
+fn compose_live_race_hud_with_countdown(
+    resources: &StageRenderResources,
+    frame: SoftwarePresentedFrame,
+    input: RaceHudPreparedInputs,
+    countdown: Option<cmr_core::race_hud_plan::RaceHudCountdown>,
+) -> Result<SoftwarePresentedFrame, StageFrameError> {
     let assets = resources
         .race_hud()
         .ok_or(StageFrameError::MissingHudAssets)?;
@@ -3918,6 +3947,12 @@ fn compose_live_race_hud(
         plan_common_gauge_border_fragments(input.viewport).map_err(StageFrameError::HudPlan)?;
     let plan = plan_normal_single_player_race_hud(input).map_err(StageFrameError::HudPlan)?;
     commands.extend_from_slice(plan.commands());
+    if let Some(countdown) = countdown
+        && let Some(cmd) =
+            cmr_core::race_hud_plan::plan_race_countdown_overlay(input.viewport, countdown)
+    {
+        commands.push(cmd);
+    }
     compose_race_hud_commands(
         frame,
         &commands,
@@ -4767,6 +4802,29 @@ fn play_school_cue(
     }
 }
 
+/// Start-of-stage countdown cue (`FUN_0046af10`, `countdwn\5.wav`..`go!.wav`).
+fn play_countdown_cue(
+    mixer: &SharedSoftwareMixer,
+    language: Language,
+    cue: cmr_core::audio_music_cues::CountdownCue,
+) {
+    use cmr_core::audio_music_cues::{COUNTDOWN_WAVE_BITS, COUNTDOWN_WAVE_RATE_HZ};
+    let speech_lang = cmr_core::audio_pacenote::select_speech_language(language as u8, false);
+    let path = format!("game\\{}", cue.relative_path(speech_lang));
+    let slot = mixer.lock().ok().and_then(|mut m| {
+        m.load_wave(&path, COUNTDOWN_WAVE_RATE_HZ, COUNTDOWN_WAVE_BITS, false)
+            .ok()
+    });
+    if let Some(slot) = slot {
+        play_slot_on(
+            mixer,
+            slot,
+            SPEECH_CHANNEL,
+            cmr_core::audio_pacenote::PACENOTE_CHANNEL_VOLUME,
+        );
+    }
+}
+
 /// Stop a channel, play a slot once on it, and set its volume (the cue
 /// helpers' shape).
 fn play_slot_on(
@@ -5536,6 +5594,21 @@ fn advance_game_frame<C: HostClock>(
     if session.last_reset().camera_reset {
         camera.snap();
     }
+    if let Some(event) = session.take_start_camera_event() {
+        match event {
+            cmr_core::gameplay_session::StartCameraEvent::BeginOrbit => {
+                camera.begin_start_orbit();
+            }
+            cmr_core::gameplay_session::StartCameraEvent::CrossfadeToChase => {
+                camera.finish_start_orbit();
+            }
+        }
+    }
+    for cue in session.take_countdown_cues() {
+        if let Some(mixer) = input.audio {
+            play_countdown_cue(mixer, results.language, cue);
+        }
+    }
     // The school task's speech and, at its end, its marks.
     for cue in session.take_school_cues() {
         if let Some(mixer) = input.audio {
@@ -5640,7 +5713,7 @@ fn advance_game_frame<C: HostClock>(
         if session.school_task().is_some_and(|task| !task.race.hud) {
             return Ok(world);
         }
-        compose_live_race_hud(resources, world, hud_input)
+        compose_live_race_hud_with_countdown(resources, world, hud_input, session.hud_countdown())
     })?;
     // The results director's cues: `FUN_00467ef0(0, 0, 1)` (FORWARD) on a
     // page change and `FUN_00467dd0` (UPDOWN) when the menu cursor moved;
@@ -7271,7 +7344,7 @@ impl SessionWheelInputs {
             accumulator: Vec3::ZERO,
         };
         let mut wheel = FourWheelIterationParams {
-            first: [FirstWheelParams {
+            first: std::array::from_fn(|index| FirstWheelParams {
                 split: 0x10000,
                 wheel_constant: 0,
                 wheel_vector: [0; 3],
@@ -7285,8 +7358,8 @@ impl SessionWheelInputs {
                 flag_43b: 10,
                 config_158: 1,
                 gear_ratio: 1,
-                is_front_wheel: true,
-            }; 4],
+                is_front_wheel: index < 2,
+            }),
             second: std::array::from_fn(|_| SecondWheelParams {
                 axis_dot: 0,
                 local_68: [0x10000, 0, 0],
@@ -7929,7 +8002,7 @@ impl SessionCompiledPose {
     /// tyre tables.
     fn compiled_four_wheel_params<'a>(
         &self,
-        inputs: &SessionWheelInputs,
+        inputs: &'a SessionWheelInputs,
         trig: &'a [i32],
         tyre_tables: &'a cmr_formats::pe_tyre_tables::TyreSurfaceTables,
         aux: &SessionAuxControl,
@@ -7957,18 +8030,31 @@ impl SessionCompiledPose {
         wheel.tyre = Some(cmr_core::race_state::TyreSurfaceInputs {
             tables: tyre_tables,
             variant_758: car.variant_758,
+            surface_families: Some(inputs.store.families()),
         });
         // `FUN_0041b160` reads the player's sensitivity option; the session's
         // zero config selects option 0.
         wheel.steering = cmr_core::steering_response::steering_sensitivity(wheel.steering, 0);
-        let [crest_128, crest_12c, travel_11c, limit_120, rate_124] = aux
+        let [
+            crest_128,
+            crest_12c,
+            roll_limit_104,
+            roll_gain_108,
+            load_transfer_118,
+            travel_11c,
+            limit_120,
+            rate_124,
+        ] = aux
             .patch_words(
                 car.constants.state_word_48,
-                [0x128, 0x12c, 0x11c, 0x120, 0x124],
+                [0x128, 0x12c, 0x104, 0x108, 0x118, 0x11c, 0x120, 0x124],
             )
             .map_err(SessionFourWheelError::AuxControl)?;
         wheel.crest_128_12c = [crest_128, crest_12c];
         wheel.suspension = cmr_core::wheel_animation::SuspensionConstants {
+            roll_limit_104,
+            roll_gain_108,
+            load_transfer_118,
             travel_gain_11c: travel_11c,
             limit_120,
             rate_124,
@@ -8713,6 +8799,7 @@ fn reload_changed_stage<'a>(
         stage.start,
         session.event().clone(),
     )
+    .with_start_sequence(session.is_start_sequence_enabled())
     .with_stage_triggers(&stage.statics.trigger_volumes, &stage.statics.cell_centers)
     .map_err(WindowedStageFrameError::StageTriggers)?;
     next.replace_game_session(session.game_session().clone());
@@ -9238,7 +9325,7 @@ fn front_end_event() -> EventState {
 fn windowed_drive_session<'a>(
     compiled_pose: &SessionCompiledPose,
     trig: &'a [i32],
-    wheel_inputs: &Result<SessionWheelInputs, SessionSurfaceInputsError>,
+    wheel_inputs: &'a Result<SessionWheelInputs, SessionSurfaceInputsError>,
     tyre_tables: &'a Result<SessionTyreTables, SessionTyreTablesError>,
     aux: &Result<SessionAuxControl, String>,
     params: SimParams,
@@ -9356,6 +9443,7 @@ pub fn run_windowed_game_session(
         start,
         front_end_event(),
     )
+    .with_start_sequence(true)
     .with_stage_triggers(&statics.trigger_volumes, &statics.cell_centers)
     .map_err(WindowedStageFrameError::StageTriggers)?;
     if let Some(objects) = resources.build_moving_objects() {
@@ -9849,8 +9937,11 @@ const HEADLESS_HARNESS_FOUR_WHEEL_CONSTANTS: CompiledFourWheelConstants =
         state_word_48: 0x1_0000,
         state_word_4c: 0x8000,
         inertia_50_54_58: [0x1_0000; 3],
+        control_word_144: 0,
         control_word_148: 0,
+        control_word_160: 0,
         control_word_16c: 0,
+        control_word_170: 0,
         control_word_158: 1,
         control_word_150: 0,
         control_word_174: 0,
@@ -9877,7 +9968,7 @@ pub fn run_headless_four_wheel_game_session(
 ) -> Result<HeadlessGameSessionOutput, SessionFourWheelError> {
     let inputs = SessionWheelInputs::open(runtime_data)?;
     let trig = cmr_core::fixed_point::build_sine_table();
-    let wheel = inputs.four_wheel_params(
+    let mut wheel = inputs.four_wheel_params(
         &trig,
         families,
         half_state,
@@ -9885,6 +9976,7 @@ pub fn run_headless_four_wheel_game_session(
         &HEADLESS_HARNESS_FOUR_WHEEL_CONSTANTS,
         [0; 4],
     )?;
+    wheel.angular.momentum.time_step = Fixed16::ZERO;
     let params = SimParams {
         inverse_mass: Fixed16::from_raw(0x8000),
         gravity: Vec3::ZERO,
@@ -12048,7 +12140,7 @@ mod tests {
         let first = run_headless_four_wheel_game_session(&temp.0, &families, &half_state).unwrap();
         let second = run_headless_four_wheel_game_session(&temp.0, &families, &half_state).unwrap();
         assert_eq!(first, second);
-        assert!(first.finished);
+        assert!(first.finished, "{first:?}");
         assert!(first.sim_ticks > 0);
     }
 
@@ -12182,8 +12274,12 @@ mod tests {
             let steer_after = std::env::var("CMR_PROBE_STEER_AFTER")
                 .ok()
                 .and_then(|value| value.parse::<i32>().ok());
+            let steer_until = std::env::var("CMR_PROBE_STEER_UNTIL")
+                .ok()
+                .and_then(|value| value.parse::<i32>().ok())
+                .unwrap_or(i32::MAX);
             let mut controls = throttle;
-            if steer_after.is_some_and(|after| tick >= after) {
+            if steer_after.is_some_and(|after| tick >= after && tick < steer_until) {
                 let right = std::env::var("CMR_PROBE_STEER").as_deref() == Ok("right");
                 controls.raw_steer = cmr_core::vehicle_dynamics::RawSteer {
                     left_2fc: if right { 0 } else { 0xfc00 },
@@ -12202,6 +12298,7 @@ mod tests {
             ) {
                 panic!("tick {tick} ground: {error:?}");
             }
+            state.animate_suspension(&wheel);
             let environment = cmr_core::gameplay_session::ResetEnvironment::single_player_harness();
             let dispatch = cmr_core::car_reset::ResetDispatchInput {
                 nodes: progress.nodes(),

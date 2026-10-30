@@ -93,6 +93,8 @@ pub enum RaceHudBitmap {
     BottomLeftCurve,
     VerticalBar,
     ProgressBarTop,
+    CountdownDigits,
+    CountdownGo,
 }
 
 impl RaceHudBitmap {
@@ -108,8 +110,21 @@ impl RaceHudBitmap {
             Self::BottomLeftCurve => "images/osdnew/High/common/curve.bmp",
             Self::VerticalBar => "images/osdnew/High/common/vbar.bmp",
             Self::ProgressBarTop => "images/osdnew/High/common/pbartop.bmp",
+            Self::CountdownDigits => "images/cntdown2.bmp",
+            Self::CountdownGo => "images/go!.bmp",
         }
     }
+}
+
+/// Start-line countdown / `"GO!"` banner state (`FUN_00423570` / `FUN_00423700`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RaceHudCountdown {
+    /// Phase 4 digit `5..=1` shrinking from full screen height over 20 ticks
+    /// (`ticks_left` in `0..=19`).
+    Digit { digit: u8, ticks_left: u8 },
+    /// Phase 5 `"GO!"` banner expanding and fading out over 19 ticks
+    /// (`ticks_left` in `1..=19`).
+    Go { ticks_left: u8 },
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -515,6 +530,70 @@ pub fn plan_common_gauge_border_fragments(
     Ok(commands)
 }
 
+/// Plans the centered start-line countdown digit (`5..=1`, `FUN_00423570`) or
+/// `"GO!"` banner (`FUN_00423700`) for `viewport`.
+#[must_use]
+pub fn plan_race_countdown_overlay(
+    viewport: DisplayExtent,
+    countdown: RaceHudCountdown,
+) -> Option<RaceHudCommand> {
+    if viewport.width == 0 || viewport.height == 0 {
+        return None;
+    }
+    let vw = viewport.width as i32;
+    let vh = viewport.height as i32;
+    match countdown {
+        RaceHudCountdown::Digit { digit, ticks_left } => {
+            let source = match digit {
+                5 => HudRect::new(0, 0, 44, 64),
+                4 => HudRect::new(51, 0, 50, 64),
+                3 => HudRect::new(104, 0, 46, 64),
+                2 => HudRect::new(157, 0, 47, 64),
+                1 => HudRect::new(213, 0, 35, 64),
+                _ => return None,
+            };
+            let ticks = i32::from(ticks_left.min(19));
+            if ticks <= 0 {
+                return None;
+            }
+            let scale_q16 = (ticks << 16) / 20;
+            let dst_h = ((i64::from(scale_q16) * i64::from(vh)) >> 16) as i32;
+            let dst_w =
+                ((((i64::from(scale_q16) * i64::from(source.width)) / 64) * i64::from(vh)) >> 16)
+                    as i32;
+            if dst_w <= 0 || dst_h <= 0 {
+                return None;
+            }
+            let alpha = (((scale_q16 * 255) >> 16) + 1).clamp(0, 255) as u8;
+            Some(RaceHudCommand::TintedBitmap {
+                bitmap: RaceHudBitmap::CountdownDigits,
+                source,
+                destination: HudRect::new((vw - dst_w) / 2, (vh - dst_h) / 2, dst_w, dst_h),
+                color: HudColor::new(0xff, 0xff, 0xff, alpha),
+                legacy: LegacyBitmapArguments::TINTED_CALL,
+            })
+        }
+        RaceHudCountdown::Go { ticks_left } => {
+            let ticks = i32::from(ticks_left.clamp(1, 19));
+            let t_q16 = ((20 - ticks) << 16) / 20;
+            let w_scale_q16 = ((i64::from(t_q16) * 0xcccc) >> 16) as i32;
+            let dst_w = ((i64::from(w_scale_q16) * i64::from(vw)) >> 16) as i32;
+            let dst_h = ((i64::from(t_q16) * i64::from(vh)) >> 16) as i32;
+            if dst_w <= 0 || dst_h <= 0 {
+                return None;
+            }
+            let alpha = (((0x10000 - t_q16) * 255) >> 16).clamp(0, 255) as u8;
+            Some(RaceHudCommand::TintedBitmap {
+                bitmap: RaceHudBitmap::CountdownGo,
+                source: HudRect::new(0, 0, 176, 115),
+                destination: HudRect::new((vw - dst_w) / 2, (vh - dst_h) / 2, dst_w, dst_h),
+                color: HudColor::new(0xff, 0xff, 0xff, alpha),
+                legacy: LegacyBitmapArguments::TINTED_CALL,
+            })
+        }
+    }
+}
+
 fn push_bitmap(
     commands: &mut Vec<RaceHudCommand>,
     viewport: DisplayExtent,
@@ -852,5 +931,49 @@ mod tests {
             }),
             Err(RaceHudPlanError::EmptyViewport)
         );
+    }
+
+    #[test]
+    fn countdown_overlay_plans_digit_and_go_quads() {
+        let viewport = DisplayExtent {
+            width: 640,
+            height: 480,
+        };
+        let Some(RaceHudCommand::TintedBitmap {
+            bitmap,
+            source,
+            destination,
+            color,
+            ..
+        }) = plan_race_countdown_overlay(
+            viewport,
+            RaceHudCountdown::Digit {
+                digit: 5,
+                ticks_left: 19,
+            },
+        )
+        else {
+            panic!("expected countdown digit command");
+        };
+        assert_eq!(bitmap, RaceHudBitmap::CountdownDigits);
+        assert_eq!(source, HudRect::new(0, 0, 44, 64));
+        assert_eq!(destination.height, 455);
+        assert_eq!(color.alpha, 243);
+
+        let Some(RaceHudCommand::TintedBitmap {
+            bitmap: go_bmp,
+            source: go_src,
+            destination: go_dst,
+            color: go_color,
+            ..
+        }) = plan_race_countdown_overlay(viewport, RaceHudCountdown::Go { ticks_left: 1 })
+        else {
+            panic!("expected countdown GO command");
+        };
+        assert_eq!(go_bmp, RaceHudBitmap::CountdownGo);
+        assert_eq!(go_src.width, 176);
+        assert_eq!(go_src.height, 115);
+        assert!(go_dst.width > 176 && go_dst.height > 115);
+        assert!(go_color.alpha > 0);
     }
 }

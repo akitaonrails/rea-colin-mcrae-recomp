@@ -62,6 +62,8 @@ pub struct WheelAnimationState {
     pub bounce_584: [i32; 4],
     /// `+0x594[4]`: the normalized relative travel.
     pub travel_594: [i32; 4],
+    /// `+0x654[4]`: the per-wheel normal load (`FUN_00417cf0`).
+    pub wheel_load_654: [i32; 4],
     /// `+0x604[4]`: the wobble phase.
     pub wobble_phase_604: [u16; 4],
     /// `+0x5e4[4]`: the wobble offsets.
@@ -80,6 +82,7 @@ impl WheelAnimationState {
         vibration_57c: [0; 4],
         bounce_584: [0; 4],
         travel_594: [0; 4],
+        wheel_load_654: [0; 4],
         wobble_phase_604: [0; 4],
         wobble_5e4: [[0; 2]; 4],
         spin: [0; 4],
@@ -95,12 +98,48 @@ fn sine(trig: &[i32], angle: u16) -> i32 {
     trig[usize::from(angle & 0xfff)]
 }
 
-/// The suspension constants `ctl +0x11c/+0x120/+0x124`.
+/// The suspension constants `ctl +0x104/+0x108/+0x118/+0x11c/+0x120/+0x124`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SuspensionConstants {
+    pub roll_limit_104: i32,
+    pub roll_gain_108: i32,
+    pub load_transfer_118: i32,
     pub travel_gain_11c: i32,
     pub limit_120: i32,
     pub rate_124: i32,
+}
+
+/// `FUN_00417cf0` and the `0x417ca7..0x417ce0` tail of `FUN_00416760`:
+/// computes the per-wheel normal loads `car +0x654..+0x660` consumed by
+/// `FUN_004095e0` (`apply_tyre_load_pass`).
+#[must_use]
+pub fn compute_wheel_loads_417cf0(
+    mass_48: i32,
+    count_674: i32,
+    scale_52c: i32,
+    travel_594: [i32; 4],
+    mut corner_roll_c8: [i32; 4],
+    constants: SuspensionConstants,
+) -> [i32; 4] {
+    if count_674 != 4 {
+        return [scale_52c; 4];
+    }
+    let quarter_mass = mass_48 >> 2;
+    let mut max_abs = 0_i32;
+    for &c8 in &corner_roll_c8 {
+        max_abs = max_abs.max(c8.wrapping_abs());
+    }
+    if constants.roll_limit_104 > 0 && max_abs > constants.roll_limit_104 {
+        let scale = ((i64::from(constants.roll_limit_104) << 16) / i64::from(max_abs)) as i32;
+        for c8 in &mut corner_roll_c8 {
+            *c8 = q(*c8, scale);
+        }
+    }
+    std::array::from_fn(|i| {
+        let combined = q(corner_roll_c8[i], constants.roll_gain_108).wrapping_add(travel_594[i]);
+        let transfer = q(constants.load_transfer_118, combined);
+        quarter_mass.wrapping_sub(transfer)
+    })
 }
 
 /// What `FUN_00410350` reads after the ground pass.
@@ -453,6 +492,9 @@ mod tests {
             probe_y: [ONE; 4],
             lane_words: [0; 4],
             constants: SuspensionConstants {
+                roll_limit_104: 0x4000,
+                roll_gain_108: 0x4_0000,
+                load_transfer_118: 0,
                 travel_gain_11c: ONE,
                 limit_120: 0x8000,
                 rate_124: 0x1000,
@@ -624,5 +666,34 @@ mod tests {
         assert_eq!(front[5], ONE);
         // Rotating by nothing keeps the rows.
         assert_eq!(rotate_node_rows(identity, [0; 3], &trig), Some(identity));
+    }
+
+    #[test]
+    fn wheel_loads_417cf0_split_quarter_mass_and_apply_travel_transfer() {
+        let constants = SuspensionConstants {
+            roll_limit_104: 0x4000,
+            roll_gain_108: 0x4_0000,
+            load_transfer_118: 0x046d_c000 >> 3,
+            travel_gain_11c: 0x3_2000,
+            limit_120: 0x28f5,
+            rate_124: 0x47a,
+        };
+        let mass_48 = 0x046d_c000;
+        let rest_loads =
+            compute_wheel_loads_417cf0(mass_48, 4, 0x011b_7000, [0; 4], [0; 4], constants);
+        assert_eq!(rest_loads, [mass_48 >> 2; 4]);
+        let transferred = compute_wheel_loads_417cf0(
+            mass_48,
+            4,
+            0x011b_7000,
+            [0x4000, -0x4000, 0, 0],
+            [0; 4],
+            constants,
+        );
+        assert!(transferred[0] < rest_loads[0]);
+        assert!(transferred[1] > rest_loads[1]);
+        let non_four =
+            compute_wheel_loads_417cf0(mass_48, 2, 0x0236_e000, [0; 4], [0; 4], constants);
+        assert_eq!(non_four, [0x0236_e000; 4]);
     }
 }

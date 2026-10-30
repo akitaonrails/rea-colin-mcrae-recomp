@@ -2119,6 +2119,20 @@ across all sub-menus/pause/results plus D-pad driving fallback
 (`cmr-platform-sdl3::input`), zero-clone no-zwrite software shadow/sprite
 blending (`rasterize_c3d_fragments_untextured_no_zwrite`), and native 40 Hz
 (`25 ms`) front-end menu pacing (`FRONTEND_SESSION_TICK_INTERVAL`).
+Stage start-sequence and four-wheel physics calibration further reconstructed
+the Mode-8 start-line camera orbit (`FUN_00467630`..`FUN_00467c20`,
+`gameplay_camera::start_orbit_camera`), the 5-4-3-2-1-GO! HUD countdown overlay
+(`FUN_00423570`/`FUN_00423700`, `cntdown2.bmp` and `go!.bmp`) and co-driver
+countdown voice cues (`FUN_0046af10`), the 3-phase pre-race state machine
+(`FUN_00439b50` + `FUN_00407590`, revving in neutral with brakes locked before
+launching in 1st gear at `GO!`), static+dynamic quarter-car wheel normal loads
+(`FUN_00417cf0`, `wheel_animation::compute_wheel_loads_417cf0`), compiled
+control constants (`control_word_144 = 0x83`, `control_word_160`,
+`control_word_170 = 0x8000` in `FUN_004079f0`), the `FUN_0040a4a0` `probe < 4`
+wheel-vs-hull force/moment split in `integrator_head::contact_force_and_moment`,
+and the column-major `R^T` angular-velocity contact basis projection in
+`FUN_00409f90` (`vehicle_dynamics::build_contact_basis_vectors`), restoring
+authentic rally acceleration and slide recovery.
 The reset trigger remains an explicit input, and no unsupported position-snap,
 time penalty, or damage-performance mapping is claimed.
 

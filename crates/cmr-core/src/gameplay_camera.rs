@@ -230,6 +230,134 @@ impl GameplayCamera {
     }
 }
 
+/// Duration of the start-line camera orbit (Phase 2 of State 5, `FUN_00439950` /
+/// `FUN_00467630`): 75 ticks at 25 Hz (3.0 seconds).
+pub const START_ORBIT_TICKS: i32 = 75;
+
+/// Preset 0 (`0x4f3d70`) of the Mode 8 start-line orbit camera (`FUN_004678c0`):
+/// starts at `height = 0.0`, `distance = -4.0`, `yaw = 0x6ccc` (~153 degrees,
+/// front-left of the car), with cosine ease cutoff `0xb333` (0.7).
+const ORBIT_PRESET0_HEIGHT_START_Q16: i32 = 0;
+const ORBIT_PRESET0_DIST_START_Q16: i32 = -0x0004_0000;
+const ORBIT_PRESET0_YAW_START_Q16: i32 = 0x0000_6ccc;
+const ORBIT_PRESET0_CUTOFF_Q16: i32 = 0x0000_b333;
+
+/// Reconstructs `FUN_00467c20`: eases a normalized orbit countdown `t_q16` in
+/// `0..=0x10000` against `cutoff_q16` using the double cosine S-curve over
+/// `DAT_0082d380`.
+#[must_use]
+pub fn ease_orbit_param_467c20(
+    t_q16: i32,
+    cutoff_q16: i32,
+    trig: &[i32; TRIG_TABLE_LEN],
+) -> i32 {
+    if t_q16 <= 0 {
+        return 0;
+    }
+    if t_q16 > cutoff_q16 {
+        return Fixed16::ONE.raw();
+    }
+    if cutoff_q16 == Fixed16::ONE.raw() {
+        return ((i64::from(t_q16) * i64::from(t_q16)) >> 16) as i32;
+    }
+    let mut u = if cutoff_q16 == 0 {
+        -1
+    } else {
+        ((i64::from(t_q16) << 16) / i64::from(cutoff_q16)) as i32
+    };
+    for _ in 0..2 {
+        let inv = Fixed16::ONE.raw().wrapping_sub(u);
+        let bam = ((i64::from(inv) * 0x800) >> 16) as i32;
+        let idx = ((0x400 - bam) & 0xfff) as usize;
+        let cos_val = trig[idx].wrapping_add(Fixed16::ONE.raw());
+        u = ((i64::from(cos_val) * 0x8000) >> 16) as i32;
+    }
+    u
+}
+
+/// Reconstructs the Mode 8 start-line orbit camera world matrix (`FUN_004677a0`
+/// and `FUN_004678c0`, Preset 0 at `0x4f3d70`) for `remaining_ticks` in
+/// `0..=START_ORBIT_TICKS`.
+///
+/// At `remaining_ticks == START_ORBIT_TICKS` (start of Phase 2), the camera sits
+/// in front-left of the car looking back at it; as `remaining_ticks` counts down
+/// to `0`, the camera orbits around the side of the car and lands at
+/// `chase_target_world(car_world, ChasePreset::Far.offset())` (`(0, +2.0, -10.0)`
+/// behind the car), ready for the 25-tick crossfade into `ChasePreset::Near`.
+#[must_use]
+pub fn start_orbit_camera(
+    trig: &[i32; TRIG_TABLE_LEN],
+    car_world: &[i32; 16],
+    remaining_ticks: i32,
+) -> [i32; 16] {
+    let clamped = remaining_ticks.clamp(0, START_ORBIT_TICKS);
+    let t_q16 = ((i64::from(clamped) << 16) / i64::from(START_ORBIT_TICKS)) as i32;
+    let eased = ease_orbit_param_467c20(t_q16, ORBIT_PRESET0_CUTOFF_Q16, trig);
+
+    let y_local = 0x0002_0000
+        + (((i64::from(ORBIT_PRESET0_HEIGHT_START_Q16 - 0x0002_0000)) * i64::from(eased)) >> 16)
+            as i32;
+    let z_local = -0x000a_0000
+        + (((i64::from(ORBIT_PRESET0_DIST_START_Q16 + 0x000a_0000)) * i64::from(eased)) >> 16)
+            as i32;
+    let yaw_bam = (((i64::from(ORBIT_PRESET0_YAW_START_Q16) * i64::from(eased) * 4096) >> 16)
+        >> 16) as u16
+        & 0xfff;
+
+    let sin_y = sin_bam(trig, yaw_bam).raw();
+    let cos_y = cos_bam(trig, yaw_bam).raw();
+    let one = Fixed16::ONE.raw();
+
+    // Local orbit basis in car space (`FUN_004678c0`, pitch == 0 for Preset 0):
+    // right = (cos_y, 0, sin_y), up = (0, 1, 0), forward = (-sin_y, 0, cos_y).
+    let local_right = [cos_y, 0, sin_y];
+    let local_up = [0, one, 0];
+    let local_fwd = [-sin_y, 0, cos_y];
+
+    // Local translation `T_local(0, y_local, z_local) * R_orbit`:
+    // pos_local = z_local * local_fwd + y_local * local_up.
+    let local_pos = [
+        ((i64::from(z_local) * i64::from(local_fwd[0])) >> 16) as i32,
+        y_local,
+        ((i64::from(z_local) * i64::from(local_fwd[2])) >> 16) as i32,
+    ];
+
+    // Multiply `car_world * M_orbit` (`0x467bd2: call 0x48ecb0`).
+    let transform_vec = |v: [i32; 3]| -> [i32; 3] {
+        let mut out = [0i32; 3];
+        for i in 0..3 {
+            out[i] = ((i64::from(car_world[i]) * i64::from(v[0])
+                + i64::from(car_world[4 + i]) * i64::from(v[1])
+                + i64::from(car_world[8 + i]) * i64::from(v[2]))
+                >> 16) as i32;
+        }
+        out
+    };
+    let world_right = transform_vec(local_right);
+    let world_up = transform_vec(local_up);
+    let world_fwd = transform_vec(local_fwd);
+    let world_offset = transform_vec(local_pos);
+
+    [
+        world_right[0],
+        world_right[1],
+        world_right[2],
+        0,
+        world_up[0],
+        world_up[1],
+        world_up[2],
+        0,
+        world_fwd[0],
+        world_fwd[1],
+        world_fwd[2],
+        0,
+        car_world[12].wrapping_add(world_offset[0]),
+        car_world[13].wrapping_add(world_offset[1]),
+        car_world[14].wrapping_add(world_offset[2]),
+        one,
+    ]
+}
+
 /// Column-major Q16.16 identity.
 const IDENTITY_Q16: [i32; 16] = {
     let one = 0x0001_0000;
@@ -413,5 +541,34 @@ mod tests {
         assert!(!basis_needs_ease(&a, &b));
         a[0] = ONE + EASE_SNAP_THRESHOLD_Q16 + 1;
         assert!(basis_needs_ease(&a, &b));
+    }
+
+    #[test]
+    fn start_orbit_camera_sweeps_from_front_left_to_far_chase_target() {
+        let trig = build_sine_table();
+        let car_pos = v(5 * ONE, ONE, -3 * ONE);
+        let car = car_world_q16(&trig, car_pos, 0x200);
+
+        let start = start_orbit_camera(&trig, &car, START_ORBIT_TICKS);
+        let end = start_orbit_camera(&trig, &car, 0);
+        let far_target = chase_target_world(&car, ChasePreset::Far.offset());
+
+        // At remaining_ticks == 0, the orbit lands directly on ChasePreset::Far.
+        assert_eq!(end, far_target);
+        assert_ne!(start, end);
+
+        for remaining in (0..=START_ORBIT_TICKS).rev() {
+            let world = start_orbit_camera(&trig, &car, remaining);
+            for col in [0usize, 4, 8] {
+                let len_sq = ((i64::from(world[col]) * i64::from(world[col]))
+                    + (i64::from(world[col + 1]) * i64::from(world[col + 1]))
+                    + (i64::from(world[col + 2]) * i64::from(world[col + 2])))
+                    >> 16;
+                assert!(
+                    (len_sq - i64::from(ONE)).abs() <= 16,
+                    "remaining {remaining} col {col} not unit length: {len_sq:#x}"
+                );
+            }
+        }
     }
 }

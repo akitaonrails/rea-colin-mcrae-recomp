@@ -398,6 +398,7 @@ impl Default for DrivenWheelUpdateParams {
 pub struct TyreSurfaceInputs<'a> {
     pub tables: &'a TyreSurfaceTables,
     pub variant_758: i32,
+    pub surface_families: Option<&'a SurfaceCoefficientFamilies>,
 }
 
 /// Complete per-wheel runtime inputs for one native-order force tick.
@@ -511,6 +512,10 @@ pub fn populate_compiled_four_wheel_constants(
         handbrake_max_184: constants.control_word_184,
     };
     wheel.driven_smoothing.mode_408 = constants.control_word_408;
+    wheel.driven_smoothing.split_170 = constants.control_word_170;
+    wheel.driven_smoothing.time_step = SOLVER_GLOBAL_CONSTANTS.time_step.raw();
+    wheel.driven_smoothing.scalars.redline_15c = constants.control_word_15c;
+    wheel.driven_smoothing.scalars.response_160 = constants.control_word_160;
     // The steering slew multiplies its rate by `DAT_004eac6c`.
     wheel.steering.time_step = SOLVER_GLOBAL_CONSTANTS.time_step.raw();
     wheel.steering.centering_188 = constants.control_word_188;
@@ -518,6 +523,7 @@ pub fn populate_compiled_four_wheel_constants(
     wheel.steering.flags_440 = constants.control_byte_440;
     wheel.engine_smoothing.redline_15c = constants.control_word_15c;
     wheel.engine_force.redline_15c = constants.control_word_15c;
+    wheel.engine_force.engine_brake_144 = constants.control_word_144;
     wheel.postprocess.base_force = gravity_force_51c(
         Fixed16::from_raw(constants.state_word_48),
         Fixed16::from_raw(constants.gravity_c5fc),
@@ -705,6 +711,7 @@ fn driven_smoothing_scalars(
 fn update_driven_wheel_speeds(
     state: &mut FourWheelState,
     first: &[FirstWheelParams; 4],
+    drive_forces_2c8: [i32; 4],
     handbrake: bool,
     params: &DrivenWheelUpdateParams,
     scalars: DrivenSmoothingScalars,
@@ -732,7 +739,7 @@ fn update_driven_wheel_speeds(
                 integrate_driven_wheel_speed(DrivenWheelSmoothingInput {
                     raw,
                     current,
-                    drive_force_2c8: state.first[lane].force,
+                    drive_force_2c8: drive_forces_2c8[lane],
                     slip_gain: scalars.slip_gain,
                     direction_gain: scalars.direction_gain,
                     time_step: params.time_step,
@@ -1422,6 +1429,59 @@ impl RaceState {
     /// (`FUN_00488d60`) rewrites after Mechanics.
     pub fn set_idle_countdown_6ec(&mut self, countdown: i16) {
         self.car.four_wheel.idle_countdown_6ec = countdown;
+    }
+
+    /// Hold the car in Neutral at the start line during the pre-race orbit and
+    /// 5-4-3-2-1 countdown (`FUN_00439950` / `FUN_00439b10`), keeping the stage
+    /// clock frozen at `00:00.00`.
+    pub fn hold_start_line_neutral(&mut self) {
+        self.clock = Fixed16::ZERO;
+        self.start_clock = Fixed16::ZERO;
+        self.car.four_wheel.gearbox.gear_43a = 0;
+        self.car.four_wheel.gearbox.target_43f = 0;
+        self.car.four_wheel.gearbox.shift_40c = false;
+        self.car.four_wheel.gearbox.reverse_mode_408 = false;
+    }
+
+    /// Execute the start-line launch at `"GO!"` (`0x439d4f..0x439d66`,
+    /// `FUN_00407590`): shift into 1st gear, transfer the revved neutral engine
+    /// speed (`+0x2e0`) into the driven wheels via `inverse_1f0[1]`, arm the
+    /// 10-tick launch residual window (`+0x43b = 10`), and start the stage clock
+    /// from zero.
+    pub fn launch_from_start_line_407590(&mut self, wheel: &FourWheelIterationParams<'_>) {
+        self.clock = Fixed16::ZERO;
+        self.start_clock = Fixed16::ZERO;
+        self.car.four_wheel.gearbox.gear_43a = 1;
+        self.car.four_wheel.gearbox.target_43f = 1;
+        self.car.four_wheel.gearbox.shift_40c = false;
+        self.car.four_wheel.gearbox.reverse_mode_408 = false;
+        let response_1f0 = wheel
+            .gearbox
+            .map_or(0x4000, |gb| gb.tables.inverse_1f0[1]);
+        let launched = Fixed16::from_raw(self.car.four_wheel.engine_2e0)
+            .mul(Fixed16::from_raw(response_1f0))
+            .raw();
+        match wheel.first[0].config_158 {
+            0 => {
+                for w in 2..4 {
+                    self.car.four_wheel.first[w].wheel_speed = launched;
+                    self.car.four_wheel.smoothed_wheel_speeds[w] = launched;
+                }
+            }
+            0x10000 => {
+                for w in 0..2 {
+                    self.car.four_wheel.first[w].wheel_speed = launched;
+                    self.car.four_wheel.smoothed_wheel_speeds[w] = launched;
+                }
+            }
+            _ => {
+                for w in 0..4 {
+                    self.car.four_wheel.first[w].wheel_speed = launched;
+                    self.car.four_wheel.smoothed_wheel_speeds[w] = launched;
+                }
+            }
+        }
+        self.car.four_wheel.residual_enable = 10;
     }
 
     /// Resolve one post-integration static-scene pass and atomically publish
@@ -2194,6 +2254,9 @@ impl RaceState {
         let surface_words = ground.lanes.type_words.map(|word| word as i16);
         let wheel_surfaces: [i16; 4] = std::array::from_fn(|wheel| surface_words[wheel]);
         let four_wheel = &mut self.car.four_wheel;
+        if tyre.surface_families.is_some() && four_wheel.wheels.wheel_load_654 == [0; 4] {
+            four_wheel.wheels.wheel_load_654 = [mass_48.raw() >> 2; 4];
+        }
         four_wheel.wheel_terms =
             derive_wheel_surface_terms(wheel_surfaces, tyre.variant_758, tyre.tables)?;
         let effects = apply_tyre_load_pass(
@@ -2206,7 +2269,7 @@ impl RaceState {
                 flags_73a: thresholds.flags_73a,
                 contact_68c: self.car.motion.contact_distance_flags,
                 probe_normal_y: std::array::from_fn(|wheel| ground.lanes.output_vectors[wheel][1]),
-                wheel_load_654: [0; 4],
+                wheel_load_654: four_wheel.wheels.wheel_load_654,
                 surface_words,
                 term_268: [0; 4],
                 term_278: four_wheel.wheel_terms.term_278,
@@ -2235,6 +2298,12 @@ impl RaceState {
             input.config_scale = gains.gain_35c[wheel];
             input.accumulation_limit = gains.gain_35c[wheel];
             input.correction_alternate = gains.gain_36c[wheel];
+            if let Some(families) = &tyre.surface_families
+                && let Ok(index) = usize::try_from(wheel_surfaces[wheel])
+                && let Some(&factor) = families.first.values.get(index)
+            {
+                input.table_factor = Some(factor);
+            }
         }
         Ok(())
     }
@@ -2300,13 +2369,16 @@ impl RaceState {
                 return Err(WheelPostprocessError::ContactVectorIndex { lane, vector_index });
             }
         }
-        self.car.four_wheel.residual_enable = advance_residual_enable(
-            self.car.four_wheel.residual_enable,
-            wheel.first[0].config_158,
-            self.car.four_wheel.first[0].wheel_speed,
-            self.car.four_wheel.first[2].wheel_speed,
-            self.car.four_wheel.speed_ec,
-        );
+        let compiled_live_path = wheel.gearbox.is_some() && wheel.tyre.is_some();
+        if !compiled_live_path {
+            self.car.four_wheel.residual_enable = advance_residual_enable(
+                self.car.four_wheel.residual_enable,
+                wheel.first[0].config_158,
+                self.car.four_wheel.first[0].wheel_speed,
+                self.car.four_wheel.first[2].wheel_speed,
+                self.car.four_wheel.speed_ec,
+            );
+        }
         self.car.four_wheel.start_basis_27c = self.car.motion.basis;
         let start_normal = self.car.motion.projection_axis;
         // With live ground contact, the threshold scan and the contact-distance
@@ -2338,6 +2410,11 @@ impl RaceState {
         // shift request and reversing mode.
         let live_gear = match wheel.gearbox {
             Some(gearbox) => {
+                let wheel_flags_73a = if self.car.ground.is_some() {
+                    std::array::from_fn(|w| thresholds.flags_73a[w])
+                } else {
+                    gearbox.wheel_flags_73a
+                };
                 let state = apply_gearbox(
                     self.car.four_wheel.gearbox,
                     GearboxInputs {
@@ -2346,7 +2423,7 @@ impl RaceState {
                         throttle_304: controls.raw_pedals.throttle_304,
                         brake_308: controls.raw_pedals.brake_308,
                         engine_2e0: self.car.four_wheel.engine_2e0,
-                        wheel_flags_73a: gearbox.wheel_flags_73a,
+                        wheel_flags_73a,
                         gear_two_skip: gearbox.gear_two_skip,
                         player_locked: gearbox.player_locked,
                         residual_43b: self.car.four_wheel.residual_enable,
@@ -2372,6 +2449,26 @@ impl RaceState {
         // Its steering
         // half turns the cut magnitudes into the wheel angle `+0x3e0`, then its
         // pedal half ramps the raw pedals into this tick's responses.
+        let front_surface_factors = match (
+            wheel.tyre.and_then(|t| t.surface_families),
+            &self.car.ground,
+        ) {
+            (Some(families), Some(ground)) => [
+                families
+                    .second
+                    .values
+                    .get(usize::from(ground.lanes.type_words[1]))
+                    .copied()
+                    .unwrap_or(0),
+                families
+                    .second
+                    .values
+                    .get(usize::from(ground.lanes.type_words[0]))
+                    .copied()
+                    .unwrap_or(0),
+            ],
+            _ => wheel.steering_surface_factors,
+        };
         self.car.four_wheel.steering = apply_steering(
             self.car.four_wheel.steering,
             wheel.steering,
@@ -2379,7 +2476,7 @@ impl RaceState {
                 steer,
                 analog_410: steer.analog_410,
                 car_factor_e188: wheel.steering_car_factor_e188,
-                front_surface_factors: wheel.steering_surface_factors,
+                front_surface_factors,
                 forward_axis: self.car.motion.basis[0],
                 velocity: self.car.velocity,
             },
@@ -2537,11 +2634,23 @@ impl RaceState {
         }
         let grounded = self.car.motion.contact_count_674 != 0 && self.car.four_wheel.upright_404;
         let mut prior_speeds = [0; 4];
+        let mut drive_forces_2c8 = [0; 4];
         for index in (0..4).rev() {
             prior_speeds[index] = self.car.four_wheel.first[index].wheel_speed;
             let state = &mut self.car.four_wheel.first[index];
             if grounded && self.car.motion.contact_distance_flags[index] {
-                Self::execute_first_wheel_state(state, controls.handbrake, &first[index]);
+                let inputs = FirstWheelInputs {
+                    force: state.force,
+                    wheel_speed: state.wheel_speed,
+                    handbrake: i32::from(controls.handbrake),
+                    ..first_wheel_inputs(&first[index])
+                };
+                let outcome = execute_first_wheel_iteration(inputs);
+                drive_forces_2c8[index] = outcome.force_at_2d4;
+                *state = FirstWheelState {
+                    force: outcome.force_at_540,
+                    wheel_speed: outcome.wheel_speed,
+                };
                 continue;
             }
             let inputs = FirstWheelInputs {
@@ -2556,6 +2665,7 @@ impl RaceState {
                 derive_alternate_force_pass_factor(wheel.lane_time_step)
             };
             let (force, speed) = spin_free_wheel(inputs, !grounded, factor);
+            drive_forces_2c8[index] = force;
             *state = FirstWheelState {
                 force,
                 wheel_speed: speed,
@@ -2578,6 +2688,10 @@ impl RaceState {
             if !grounded {
                 break;
             }
+            if compiled_live_path && !self.car.motion.contact_distance_flags[index] {
+                lanes[index].accumulator = Vec3::ZERO;
+                continue;
+            }
             populate_derived_second_inputs(
                 &first[index],
                 &mut second[index],
@@ -2585,9 +2699,14 @@ impl RaceState {
                 index,
             );
             self.car.four_wheel.lateral_dot_3c0[index] = second[index].axis_dot;
+            let speed_at_2a8 = if compiled_live_path {
+                self.car.four_wheel.first[index].wheel_speed
+            } else {
+                prior_speeds[index]
+            };
             Self::execute_second_wheel_state(
                 &mut self.car.four_wheel.second[index],
-                prior_speeds[index],
+                speed_at_2a8,
                 self.car.four_wheel.smoothed_wheel_speeds[index],
                 &first[index],
                 &second[index],
@@ -2623,6 +2742,18 @@ impl RaceState {
             contact_update_inputs,
             self.car.four_wheel.contact_updates,
         );
+        if compiled_live_path {
+            // `FUN_00407690` (`0x407a9c..0x407aee`) decays `ctl + 0x43b` at the
+            // end of the first car loop, after `FUN_0040d810` and `FUN_00415d20`
+            // have consumed it and before `FUN_0040a4a0` updates `speed_ec`.
+            self.car.four_wheel.residual_enable = advance_residual_enable(
+                self.car.four_wheel.residual_enable,
+                wheel.first[0].config_158,
+                self.car.four_wheel.first[0].wheel_speed,
+                self.car.four_wheel.first[2].wheel_speed,
+                self.car.four_wheel.speed_ec,
+            );
+        }
         // `FUN_004095e0` replaces the driver's gravity base force with its
         // ground projection while a probe touches, using the slope grip of
         // the start-of-tick normal (`FUN_00408f50`).
@@ -2698,10 +2829,13 @@ impl RaceState {
                 wheel.hull_contact_offsets[probe - 4]
             }
         });
+        let hull_accumulators =
+            std::array::from_fn(|hull| self.car.four_wheel.contact_updates[hull + 4]);
         let (contact_force, contact_moment) = contact_force_and_moment(&ContactSumInput {
             base_force,
             support_3fc: self.car.four_wheel.support_3fc,
             lane_accumulators,
+            hull_accumulators,
             count_742: thresholds.count_742,
             touching_744: thresholds.indices_744,
             contact_68c: self.car.motion.contact_distance_flags,
@@ -2777,17 +2911,35 @@ impl RaceState {
         self.car.four_wheel.engine_2e0 = rev_limit.rpm.raw();
         self.car.four_wheel.limiter_444 = rev_limit.active;
         self.car.four_wheel.limiter_cut_448 = rev_limit.cut.raw();
-        let driven_scalars =
-            driven_smoothing_scalars(&self.car.four_wheel, &first[0], &wheel.driven_smoothing);
-        let driven_smoothing = DrivenWheelUpdateParams {
+        let mut driven_smoothing = DrivenWheelUpdateParams {
             mode_408,
             throttle_304: pedal_inputs.throttle_304,
             brake_308: pedal_inputs.brake_308,
             ..wheel.driven_smoothing
         };
+        if let Some(gearbox) = &wheel.gearbox {
+            let gear_idx = usize::try_from(first[0].gear).unwrap_or(0).min(7);
+            driven_smoothing.scalars.suspension_298 = self.car.four_wheel.wheel_terms.term_298;
+            driven_smoothing.scalars.longitudinal = self
+                .car
+                .velocity
+                .dot(self.car.motion.basis[2])
+                .raw()
+                .wrapping_abs();
+            driven_smoothing.scalars.gear_ratio_190 = gearbox.tables.upper_190[gear_idx];
+            driven_smoothing.scalars.response_1f0 = gearbox.tables.inverse_1f0[gear_idx];
+        }
+        let driven_scalars =
+            driven_smoothing_scalars(&self.car.four_wheel, &first[0], &driven_smoothing);
+        let smoothing_forces_2c8 = if compiled_live_path {
+            drive_forces_2c8
+        } else {
+            std::array::from_fn(|index| self.car.four_wheel.first[index].force)
+        };
         update_driven_wheel_speeds(
             &mut self.car.four_wheel,
             &first,
+            smoothing_forces_2c8,
             controls.handbrake,
             &driven_smoothing,
             driven_scalars,
@@ -2947,7 +3099,7 @@ impl RaceState {
         );
     }
 
-    /// `FUN_00410350`, the last step of the ground pass.
+    /// `FUN_00410350` and `FUN_00417cf0`, the last step of the ground pass.
     pub fn animate_suspension(&mut self, wheel: &FourWheelIterationParams<'_>) {
         let Some(ground) = self.car.ground else {
             return;
@@ -2969,6 +3121,17 @@ impl RaceState {
                 contact_vectors: std::array::from_fn(|i| car.four_wheel.contact_vectors_4bc[i]),
             },
             &self.trig,
+        );
+        let mass_48 = wheel.angular.momentum.moment_scale;
+        let count_u8 = u8::try_from(car.motion.contact_count_674).unwrap_or(0);
+        let scale_52c = contact_count_scale(mass_48, count_u8);
+        car.four_wheel.wheels.wheel_load_654 = crate::wheel_animation::compute_wheel_loads_417cf0(
+            mass_48.raw(),
+            car.motion.contact_count_674,
+            scale_52c.raw(),
+            car.four_wheel.wheels.travel_594,
+            [0; 4],
+            wheel.suspension,
         );
     }
 
@@ -3613,7 +3776,8 @@ mod tests {
         assert_eq!(scalars.slip_gain, 0x9999);
         assert_eq!(scalars.direction_gain, 0x10000);
         assert_eq!(scalars.signed_speed_limit, 0x20000);
-        update_driven_wheel_speeds(&mut state, &first, false, &params, scalars);
+        let forces = std::array::from_fn(|index| state.first[index].force);
+        update_driven_wheel_speeds(&mut state, &first, forces, false, &params, scalars);
         assert!(
             state
                 .smoothed_wheel_speeds
@@ -3625,6 +3789,7 @@ mod tests {
         update_driven_wheel_speeds(
             &mut state,
             &first,
+            forces,
             false,
             &DrivenWheelUpdateParams {
                 throttle_304: 0,
@@ -3638,7 +3803,7 @@ mod tests {
             gear_ratio: 0,
             ..first[0]
         }; 4];
-        update_driven_wheel_speeds(&mut state, &neutral, false, &params, scalars);
+        update_driven_wheel_speeds(&mut state, &neutral, forces, false, &params, scalars);
         assert_eq!(state.smoothed_wheel_speeds, [0; 4]);
     }
 
@@ -4605,6 +4770,7 @@ mod tests {
         tyred.tyre = Some(TyreSurfaceInputs {
             tables: &tables,
             variant_758: 1,
+            surface_families: None,
         });
         let mut ground_car = car;
         ground_car.ground = Some(GroundContact {

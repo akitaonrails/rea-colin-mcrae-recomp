@@ -27,7 +27,9 @@ use crate::camera_mode::{
 };
 use crate::fixed_point::{TRIG_TABLE_LEN, Vec3, build_sine_table};
 use crate::game_rng::GameLcg;
-use crate::gameplay_camera::{ChasePreset, GameplayCamera, car_world_q16};
+use crate::gameplay_camera::{
+    ChasePreset, GameplayCamera, START_ORBIT_TICKS, car_world_q16, start_orbit_camera,
+};
 
 /// Q16.16 one.
 const ONE: i32 = 0x1_0000;
@@ -45,6 +47,7 @@ struct ViewSlot {
     mode: CameraMode,
     chase: GameplayCamera,
     cinematic_offset: [i32; 3],
+    orbit_remaining: i32,
 }
 
 impl ViewSlot {
@@ -53,6 +56,7 @@ impl ViewSlot {
             mode,
             chase: GameplayCamera::new(),
             cinematic_offset: cinematic_offset_fixed(),
+            orbit_remaining: 0,
         }
     }
 }
@@ -158,6 +162,25 @@ impl ViewController {
         }
     }
 
+    /// Enter the 75-tick Mode 8 start-line camera orbit (`FUN_00439920` ->
+    /// `FUN_00434060(0, 8, 0, 0)`).
+    pub fn begin_start_orbit(&mut self) {
+        self.slots[self.active].mode = CameraMode::Helmet;
+        self.slots[self.active].orbit_remaining = START_ORBIT_TICKS;
+        self.counter = -1;
+        self.duration = 0;
+    }
+
+    /// Crossfade from the completed start-line orbit into `target` over 25
+    /// ticks (`FUN_00439a55` -> `FUN_004360a0(0, 1)`).
+    pub fn finish_start_orbit_to_mode(&mut self, target: CameraMode) {
+        let other = self.active ^ 1;
+        self.slots[other] = ViewSlot::new(target);
+        self.slots[self.active].orbit_remaining = 0;
+        self.counter = 25;
+        self.duration = 25;
+    }
+
     /// The camera world matrix for this frame (`FUN_004343a0`). When no blend is
     /// running the active slot is placed directly; during a blend both slots are
     /// re-evaluated live from the car pose and blended by the recovered weight,
@@ -216,8 +239,14 @@ impl ViewController {
                 };
                 cinematic_camera(car_pos, self.slots[slot].cinematic_offset, up_ref)
             }
+            CameraMode::Helmet => {
+                let car = car_world_q16(&self.trig, position, heading);
+                let remaining = self.slots[slot].orbit_remaining;
+                self.slots[slot].orbit_remaining = (remaining - 1).max(0);
+                start_orbit_camera(&self.trig, &car, remaining)
+            }
             _ => {
-                // Helmet / trackside / showroom / sentinels: no self-contained
+                // Trackside / showroom / sentinels: no self-contained
                 // placement here - fall back to the near chase.
                 *self.slots[slot]
                     .chase

@@ -362,6 +362,7 @@ pub struct ContactSumInput {
     pub base_force: Vec3,
     pub support_3fc: [Vec3; 8],
     pub lane_accumulators: [Vec3; 4],
+    pub hull_accumulators: [Vec3; 4],
     /// `+0x742` and the touching-probe list `+0x744..`.
     pub count_742: u8,
     pub touching_744: [u8; 8],
@@ -380,8 +381,7 @@ pub fn contact_force_and_moment(input: &ContactSumInput) -> (Vec3, Vec3) {
     if input.count_742 == 0 || input.count_742 > 8 {
         return (force, moment);
     }
-    let mut add = |term: Vec3, offset: Vec3| {
-        force = force.add(term);
+    let mut add_moment = |term: Vec3, offset: Vec3| {
         moment = moment.add(cross(
             transform_contact_force(input.published, term),
             offset,
@@ -392,16 +392,20 @@ pub fn contact_force_and_moment(input: &ContactSumInput) -> (Vec3, Vec3) {
         let Some(&support) = input.support_3fc.get(probe) else {
             continue;
         };
-        let term = if probe < 4 {
-            support.add(input.lane_accumulators[probe])
+        let term = if probe >= 4 {
+            let hull = input.hull_accumulators[probe - 4];
+            force = force.add(hull);
+            support.add(hull)
         } else {
             support
         };
-        add(term, input.offsets[probe]);
+        add_moment(term, input.offsets[probe]);
     }
     for wheel in (0..4).rev() {
         if input.contact_68c[wheel] {
-            add(input.lane_accumulators[wheel], input.offsets[wheel]);
+            let lane = input.lane_accumulators[wheel];
+            force = force.add(lane);
+            add_moment(lane, input.offsets[wheel]);
         }
     }
     (force, moment)
@@ -425,6 +429,7 @@ mod tests {
             base_force: v(0, -0x1_0000, 0),
             support_3fc: [v(0, 0x100, 0); 8],
             lane_accumulators: [v(0x10, 0, 0), v(0x20, 0, 0), v(0x40, 0, 0), v(0x80, 0, 0)],
+            hull_accumulators: [v(0, 0, 0), v(0x08, 0, 0), v(0, 0, 0), v(0, 0, 0)],
             count_742: 2,
             touching_744: [0, 5, 0, 0, 0, 0, 0, 0],
             contact_68c: [true, false, false, true],
@@ -432,8 +437,9 @@ mod tests {
             published: identity(),
         };
         let (force, moment) = contact_force_and_moment(&input);
-        // Base, probe 0 (support + lane), probe 5 (support), wheels 0 and 3.
-        assert_eq!(force, v(0x10 + 0x10 + 0x80, -0x1_0000 + 0x200, 0));
+        // Base, probe 5 hull accumulator (`+0x498`), and flagged wheels 0 and 3;
+        // `support_3fc` contributes to moments only (`0x40a578..0x40a5bc`).
+        assert_eq!(force, v(0x08 + 0x10 + 0x80, -0x1_0000, 0));
         assert_ne!(moment, Vec3::ZERO);
         let clear = ContactSumInput {
             count_742: 0,
