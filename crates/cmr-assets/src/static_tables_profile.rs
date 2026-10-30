@@ -606,6 +606,7 @@ pub(crate) mod tests {
                 ("tyre_mark_surfaces", 0x004ec800, Block { len: 960 }),
                 ("school_score_offsets", 0x004f4f80, Block { len: 288 }),
                 ("school_score_scales", 0x004f50a0, Block { len: 288 }),
+                ("car_lamp_tables", 0x004ef5d8, Block { len: 0x1730 }),
             ]
         );
         // Same executable identity as the reviewed stage-weather profile.

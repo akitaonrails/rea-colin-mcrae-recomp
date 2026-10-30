@@ -213,8 +213,9 @@ pub struct GameplaySession<'a> {
     last_reset: ResetOutcome,
     stage_triggers: Option<StageTriggers<'a>>,
     last_trigger_events: Vec<TriggerEvent>,
-    /// `ctl +0x304` as the last four-wheel tick read it.
+    /// `ctl +0x304` and `ctl +0x308` as the last four-wheel tick read them.
     last_throttle_304: i32,
+    last_brake_308: i32,
     /// The static scenery impacts of the last stepped tick.
     last_static_impacts: Vec<crate::race_state::StaticMaterialImpact>,
     /// The pause words for the next frame ([`Self::set_pause_flow`]).
@@ -740,6 +741,7 @@ impl<'a> GameplaySession<'a> {
             stage_triggers: None,
             last_trigger_events: Vec::new(),
             last_throttle_304: 0,
+            last_brake_308: 0,
             last_static_impacts: Vec::new(),
             pause_flow: PauseFlow::default(),
             results: ResultsHold::default(),
@@ -1061,6 +1063,7 @@ impl<'a> GameplaySession<'a> {
         self.last_reset = ResetOutcome::default();
         self.last_trigger_events.clear();
         self.last_throttle_304 = controls.raw_pedals.throttle_304;
+        self.last_brake_308 = controls.raw_pedals.brake_308;
         if let Some(triggers) = self.stage_triggers.as_mut() {
             let events = self
                 .race
@@ -1676,6 +1679,70 @@ impl<'a> GameplaySession<'a> {
                 .max()
                 .unwrap_or(0)
         })
+    }
+
+    /// Build the car pose and state input for [`crate::car_headlights`]
+    /// (`FUN_0041b5b0`, `FUN_0044a950`, `FUN_0044bbc0`).
+    #[must_use]
+    pub fn lamp_pose_input(
+        &self,
+        body_local_94: [i32; 16],
+        body_world_d4: [i32; 16],
+        container_matrix_94: [i32; 16],
+        lights_on_6f8: bool,
+        night_stage: bool,
+    ) -> crate::car_headlights::CarLampPoseInput {
+        let car = self.race.car();
+        let four = &car.four_wheel;
+        let event = self.session.event();
+        let raw = |v: Vec3| [v.x.raw(), v.y.raw(), v.z.raw()];
+        let mode_408 = self.wheel.as_ref().is_some_and(|w| {
+            if w.gearbox.is_some() {
+                four.gearbox.reverse_mode_408
+            } else {
+                w.driven_smoothing.mode_408 != 0
+            }
+        });
+        let delorean = event.cfg.effects_026 & 2 != 0;
+        let braking_6f4 = delorean
+            || if mode_408 {
+                self.last_throttle_304 != 0
+            } else {
+                self.last_brake_308 != 0
+            };
+        let reverse_6fc = four.gearbox.gear_43a < 0;
+        let (detached_lights_lr, broken_pod_lamps_ca8) =
+            self.car_damage.as_ref().map_or(([false; 2], [false; 6]), |d| {
+                (d.detached_lights_lr(), d.broken_pod_lamps_ca8)
+            });
+        crate::car_headlights::CarLampPoseInput {
+            body_local_94,
+            body_world_d4,
+            container_matrix_94,
+            live_forward_258: raw(car.motion.basis[0]),
+            live_up_264: raw(car.motion.basis[1]),
+            frozen_up_228: raw(self.stage_start.motion.basis[1]),
+            braking_6f4,
+            lights_on_6f8,
+            reverse_6fc,
+            detached_lights_lr,
+            broken_pod_lamps_ca8,
+            electrics_damage_810: self.car_setup.setup_800[4],
+            night_stage,
+            low_detail_828e28: false,
+            borrowers: event.cfg.options_025 & 4 != 0,
+            aliengoo: event.cfg.effects_026 & 1 != 0,
+            delorean,
+            out_of_bounds_75c: four.trigger_walk.penalty_timer_75c != 0,
+            penalty_760: self.car_760,
+            special_event_514478: event.globals.special_514478,
+        }
+    }
+
+    /// The car's out-of-bounds timer `car + 0x75c` (`FUN_004853e0`).
+    #[must_use]
+    pub fn out_of_bounds_timer_75c(&self) -> i32 {
+        i32::from(self.race.car().four_wheel.trigger_walk.penalty_timer_75c)
     }
 
     /// The school task, if one runs.

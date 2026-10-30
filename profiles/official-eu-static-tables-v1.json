@@ -129,9 +129,10 @@
       { "name": "stage_lengths", "kind": "block", "va": 5196000, "len": 63 },
       { "name": "tyre_mark_surfaces", "kind": "block", "va": 5163008, "len": 960 },
       { "name": "school_score_offsets", "kind": "block", "va": 5197696, "len": 288 },
-      { "name": "school_score_scales", "kind": "block", "va": 5197984, "len": 288 }
+      { "name": "school_score_scales", "kind": "block", "va": 5197984, "len": 288 },
+      { "name": "car_lamp_tables", "kind": "block", "va": 5174744, "len": 5936 }
     ],
-    "payload_sha256": "8fed1ce4bca1b91bdad15812c1763325f927e9172cfcc099ea9e5924a98111f9",
+    "payload_sha256": "8ff459482c34e2b9127e14458580dcb0c045fa7287f901059eb678a4bde260e5",
     "output_encoding": "cmr-static-tables-v1"
   }
 }

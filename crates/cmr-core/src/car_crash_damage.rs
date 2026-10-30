@@ -19,8 +19,9 @@
 //!
 //! Not modelled, because nothing observable reads them: the normal arrays
 //! (the draw path does not read them), the per-part bounds `+0x8dc/+0xa44`
-//! and `+0x784`. The night headlight lamps (`FUN_0044a770`) are not
-//! reconstructed. A description of disassembly, not original source.
+//! and `+0x784`. The night headlight pod-lamp breakage (`FUN_0044a770`) is
+//! reconstructed in [`CarDamage::break_pod_lamp_44a770`]. A description of
+//! disassembly, not original source.
 //! Evidence: `rea.official-eu.car-crash-damage`, `.work/car-damage-notes.md`,
 //! `.work/car-parts-notes.md`.
 
@@ -205,6 +206,14 @@ pub struct CarDamage {
     pub layout: DamageLayout,
     /// `DAT_00828e28`: the low-detail car models.
     low_detail: bool,
+    /// `S + 0xca8[6]`: broken night pod-lamp latches (`FUN_0044a770`).
+    pub broken_pod_lamps_ca8: [bool; 6],
+    /// `S + 0xcc0`: number of broken night pod lamps (`0..=2`).
+    pub broken_pod_count_cc0: u8,
+    /// Body-frame offsets of the model's night pod lamps (`0x4f0738`).
+    pub pod_lamp_offsets: Vec<[i32; 3]>,
+    /// `FUN_0046b240() == 8`: night stage gate for `FUN_0044a770`.
+    pub night_stage: bool,
 }
 
 impl CarDamage {
@@ -253,7 +262,27 @@ impl CarDamage {
             detached_bb8: [false; MAX_PARTS],
             layout: DamageLayout::new(low_detail, model),
             low_detail,
+            broken_pod_lamps_ca8: [false; 6],
+            broken_pod_count_cc0: 0,
+            pod_lamp_offsets: Vec::new(),
+            night_stage: false,
         }
+    }
+
+    /// Configure the night stage gate and breakable pod-lamp offsets for `FUN_0044a770`.
+    pub fn set_night_pod_lamps(&mut self, night_stage: bool, pod_lamp_offsets: Vec<[i32; 3]>) {
+        self.night_stage = night_stage;
+        self.pod_lamp_offsets = pod_lamp_offsets;
+        self.broken_pod_lamps_ca8 = [false; 6];
+        self.broken_pod_count_cc0 = 0;
+    }
+
+    /// `FUN_0041d710`: `[L, R]` detached latches (`S+0xbb8[S.ccc]`, `S+0xbb8[S.ccd]`).
+    #[must_use]
+    pub fn detached_lights_lr(&self) -> [bool; 2] {
+        self.layout
+            .lights_ccc
+            .map(|idx| self.detached_bb8.get(usize::from(idx)).copied().unwrap_or(false))
     }
 
     /// Build the parts from a car `.C3D`: the direct children of its body
@@ -295,8 +324,11 @@ impl CarDamage {
     }
 
     /// `FUN_0041f880(car, sev)`: dent the live meshes around the car-local
-    /// contact `car +0x3f0`.
+    /// contact `car +0x3f0`. At night (`0x41f7be`), if the front part
+    /// deformation `S+0x788[S+0xcc1]` grew, runs [`Self::break_pod_lamp_44a770`].
     pub fn dent(&mut self, contact: [i32; 3], severity: i32) {
+        let front_idx = usize::from(self.layout.handling_cc1[0]);
+        let old_front_deform = self.deform_788.get(front_idx).copied().unwrap_or(0);
         let mut cnt = [0u16; 4];
         let mut g = [0i32; 4];
         let mut sp: isize = -1;
@@ -392,6 +424,40 @@ impl CarDamage {
                     *slot = value;
                 }
             }
+        }
+        let new_front_deform = self.deform_788.get(front_idx).copied().unwrap_or(0);
+        if self.night_stage && new_front_deform > old_front_deform {
+            self.break_pod_lamp_44a770(contact);
+        }
+    }
+
+    /// `FUN_0044a770(car)`: break the nearest intact night pod lamp when the
+    /// front-part deformation crosses `0x3333` (first lamp) or `0x6666` (second lamp).
+    pub fn break_pod_lamp_44a770(&mut self, contact: [i32; 3]) {
+        let front_idx = usize::from(self.layout.handling_cc1[0]);
+        let v = self.deform_788.get(front_idx).copied().unwrap_or(0);
+        let eligible = (v > 0x3333 && self.broken_pod_count_cc0 == 0)
+            || (v > 0x6666 && self.broken_pod_count_cc0 == 1);
+        if !eligible {
+            return;
+        }
+        let mut best = 0x2710_0000;
+        let mut chosen = None;
+        for (k, &o) in self.pod_lamp_offsets.iter().enumerate().take(6) {
+            if self.broken_pod_lamps_ca8[k] {
+                continue;
+            }
+            let d: [i32; 3] = std::array::from_fn(|ax| contact[ax].wrapping_sub(o[ax]));
+            let sum = d.iter().fold(0i32, |s, &c| s.wrapping_add(qmul(c, c)));
+            let dist = crate::legacy_math::sqrt_q16(sum as u32) as i32;
+            if dist < best {
+                best = dist;
+                chosen = Some(k);
+            }
+        }
+        if let Some(k) = chosen {
+            self.broken_pod_count_cc0 = self.broken_pod_count_cc0.wrapping_add(1);
+            self.broken_pod_lamps_ca8[k] = true;
         }
     }
 
@@ -611,5 +677,30 @@ mod tests {
         assert!(damage.impact_864[7] > 0);
         assert!(damage.impact_864[5] > 0);
         assert_eq!(damage.impact_864[8], 0);
+    }
+
+    #[test]
+    fn night_pod_lamps_break_nearest_first_above_thresholds() {
+        // Front part is cc1 = 7 -> node_id = 6 + 7 = 13.
+        let mut damage = CarDamage::new((6..=13).map(|id| part(id, 2)).collect(), false, 0);
+        damage.set_night_pod_lamps(
+            true,
+            vec![
+                [HALF, 0, -0x4000],
+                [HALF, 0, 0x1000],
+                [HALF, 0, 0x4000],
+            ],
+        );
+        // First hit pushes front deform_788[7] above 0x3333 -> breaks nearest pod lamp (index 1).
+        damage.dent([HALF, 0, 0], 0x8000);
+        assert!(damage.deform_788[7] > 0x3333);
+        assert_eq!(damage.broken_pod_count_cc0, 1);
+        assert_eq!(damage.broken_pod_lamps_ca8[..3], [false, true, false]);
+
+        // Second hit pushes deform_788[7] above 0x6666 -> breaks next nearest pod lamp (index 0, tie keeps first).
+        damage.dent([HALF, 0, 0], 0x1_0000);
+        assert!(damage.deform_788[7] > 0x6666);
+        assert_eq!(damage.broken_pod_count_cc0, 2);
+        assert_eq!(damage.broken_pod_lamps_ca8[..3], [true, true, false]);
     }
 }

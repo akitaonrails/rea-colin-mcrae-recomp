@@ -437,6 +437,7 @@ Escape pauses the race (`FUN_00449580` Escape block, `FUN_00468200`), and the pa
 The pause menu draws its text and panel (`FUN_00468dd0`, `FUN_00497b40`) with the in-game fonts and strings.
 The surface roll/skid (`FUN_00489890`), landing thumps (`FUN_0046a030`) and barrier impacts (`FUN_00469e80`) play over the extracted surface-audio tables, followed by the wet-tyre/rain tick (`FUN_0048d4c0`); scenery hits (`FUN_0043d760`) play their impact sounds too.
 Dynamic trackside moving objects (`.obj` admission `FUN_00482140`, cell bucketing `FUN_004622b0`, car-object OBB collision and two-body impulse/torque response `FUN_0043f790`/`FUN_00440d90`/`FUN_0043faf0`, per-tick gravity/ground/damping and cone settle `FUN_00450d40`, rally-school `DAT_00552f68`/`DAT_00558fb0` contact flags, and dynamic `.obj` node-local rendering in both software and GPU renderers) are reconstructed and wired.
+Night headlights, brake/tail/pod lamps, electrics flicker, pod breakage (`FUN_0044a770`), additive flare/beam quads (`FUN_0044bbc0` over `hlight.bmp` and `lbeam.bmp`), and the night road light pool (`FUN_004a8750`/`FUN_004a9490`/`FUN_004853e0`) are reconstructed in `cmr-core::car_headlights` and wired across `cmr-video` and `cmr-app`.
 
 ## Update rules
 
@@ -447,14 +448,14 @@ watched with `tail`; recompute its counters from the checklist instead of
 estimating them.
 
 <!-- PROGRESS-TAIL-BEGIN -->
-updated_utc=2026-11-02T05:00:00Z
-milestone=moving-objects-collision-and-wiring
+updated_utc=2026-11-02T06:30:00Z
+milestone=night-headlights-and-road-light-pool
 completed=117
 partial=2
 not_started=0
 blocked=0
 total=119
-current_focus=night-headlights-and-car-vs-car-collision
-next_exit_gate=night-headlights-replays-and-remaining-impacts
+current_focus=car-vs-car-contact-and-replays
+next_exit_gate=car-vs-car-contact-replays-and-intro-fmv
 auxiliary_reference=psx-p0-complete-p1-static-map-partial-p2-replay-cursor-resolved
 <!-- PROGRESS-TAIL-END -->

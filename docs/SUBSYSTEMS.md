@@ -2690,7 +2690,11 @@ languages rather than fabricating or silently aliasing Italian assets.
   tick (`FUN_0043f790`/`FUN_00440d90`/`FUN_0043faf0`) with crash damage and
   school cone-contact flags (`DAT_00552f68`, `DAT_00558fb0`), simulated over
   the `.hpc` ground (`FUN_00450d40`), and rendered with live node locals in both
-  the software and GPU renderers.
+  the software and GPU renderers. Car lamps, pod breakage (`FUN_0044a770`),
+  electrics flicker (`FUN_0044b000`), additive flare/beam sprites
+  (`FUN_0044bbc0`), and the night road light pool (`FUN_004a8750`/`FUN_004a9490`)
+  are reconstructed in `cmr-core::car_headlights` and wired into `cmr-video` and
+  `cmr-app`.
 - Suspension/surface recovery is composed end to end: authenticated HPC data
   feeds the complete eight-lane initializer, and the four-wheel producer shares
   its force/contact results with geometric postprocess, translation, angular

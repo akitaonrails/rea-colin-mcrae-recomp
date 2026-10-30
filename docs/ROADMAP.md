@@ -2079,9 +2079,12 @@ trackside moving objects (`.obj` admission `FUN_00482140`, cell bucketing
 `FUN_004622b0`, car-object OBB collision and two-body impulse/torque response
 `FUN_0043f790`/`FUN_0043faf0`/`FUN_00440d90`, per-tick gravity/ground/damping
 and cone settle `FUN_00450d40`, rally-school `DAT_00552f68`/`DAT_00558fb0`
-contact flags, and software+GPU dynamic `.obj` node-local rendering). The reset
-trigger remains an explicit input, and no unsupported position-snap, time
-penalty, or damage-performance mapping is claimed.
+contact flags, and software+GPU dynamic `.obj` node-local rendering), and the
+night headlight, brake/tail/pod lamp, electrics flicker, pod breakage
+`FUN_0044a770`, and night road light pool `FUN_004a8750`/`FUN_004a9490`
+pipeline (`cmr-core::car_headlights`). The reset trigger remains an explicit
+input, and no unsupported position-snap, time penalty, or damage-performance
+mapping is claimed.
 
 G03 is complete at the safe portable-contract boundary. The authenticated HPC
 provider runs the complete compiled-initializer spine, and the four-wheel

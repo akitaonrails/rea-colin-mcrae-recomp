@@ -301,6 +301,226 @@ impl StageSceneFrame {
         Ok(())
     }
 
+    /// Additive camera-billboard lamp flares (`FUN_004a4330`/`FUN_004a4460`,
+    /// kind 6): each quad is depth-tested against the scene without updating
+    /// the scene depth (`ZWRITEENABLE` off), modulated by `alpha` (`0xFF000000
+    /// | a<<16 | a<<8 | a`), and added to the underlying palette colour.
+    pub fn blend_additive_sprites(
+        &mut self,
+        camera_world_q16: &[i32; 16],
+        sprites: &[SpriteQuad<'_>],
+    ) -> Result<(), StageSceneComposeError> {
+        if sprites.is_empty() {
+            return Ok(());
+        }
+        let [width, height] = self.extent;
+        let identity = [
+            0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000,
+        ];
+        let transforms = SoftwareC3dTransformState::for_gameplay_scene(
+            width,
+            height,
+            camera_world_q16,
+            &identity,
+        )?;
+        let palette = *self.palette;
+        let mut cache = std::collections::HashMap::<(u8, [u8; 3], u8), u8>::new();
+        for sprite in sprites {
+            if sprite.alpha == 0 {
+                continue;
+            }
+            let (u0, u1) = if sprite.flip { (1.0, 0.0) } else { (0.0, 1.0) };
+            let uv = [[u0, 1.0], [u0, 0.0], [u1, 1.0], [u1, 0.0]];
+            let a32 = u32::from(sprite.alpha);
+            let diffuse = 0xff00_0000 | (a32 * 0x01_0101);
+            let vertices: Vec<crate::c3d_software_raster::SoftwareC3dLitVertex> = (0..4)
+                .map(|i| crate::c3d_software_raster::SoftwareC3dLitVertex {
+                    position: sprite.corners[i],
+                    diffuse,
+                    uv: uv[i],
+                })
+                .collect();
+            let batch = crate::c3d_software_raster::preflight_lit_triangle_list(
+                &vertices,
+                &[0, 3, 2, 0, 1, 3],
+                transforms,
+            )?;
+            let texture = sprite.texture;
+            let (tw, th) = (texture.width as usize, texture.height as usize);
+            let mut scratch = self.depth.clone();
+            let pixels = &mut self.pixels;
+            let scale = u32::from(sprite.alpha);
+            crate::c3d_software_raster::rasterize_c3d_fragments_untextured(
+                &batch,
+                &mut scratch,
+                |fragment| {
+                    let [u, v] = fragment.uv();
+                    let tx = ((u * tw as f32) as usize).min(tw.saturating_sub(1));
+                    let ty = ((v * th as f32) as usize).min(th.saturating_sub(1));
+                    let Some(&index) = texture.pixels.get(ty * tw + tx) else {
+                        return;
+                    };
+                    if index == 0 {
+                        return;
+                    }
+                    let Some(entry) = texture.palette.get(usize::from(index)) else {
+                        return;
+                    };
+                    let add_rgb = [entry.red, entry.green, entry.blue]
+                        .map(|c| ((u32::from(c) * scale) / 255) as u8);
+                    if add_rgb == [0, 0, 0] {
+                        return;
+                    }
+                    let [x, y] = fragment.position();
+                    let at = usize::from(y) * usize::from(width) + usize::from(x);
+                    let under = pixels[at];
+                    let bayer = BAYER_4X4[usize::from(y & 3)][usize::from(x & 3)];
+                    pixels[at] =
+                        *cache
+                            .entry((under, add_rgb, bayer))
+                            .or_insert_with(|| {
+                                let base = palette[usize::from(under)];
+                                let offset = (f32::from(bayer) - 7.5) * DITHER_STEP;
+                                let add = |b: u8, s: u8| {
+                                    (f32::from(b) + f32::from(s) + offset)
+                                        .round()
+                                        .clamp(0.0, 255.0) as u8
+                                };
+                                nearest_index(
+                                    [
+                                        add(base.red, add_rgb[0]),
+                                        add(base.green, add_rgb[1]),
+                                        add(base.blue, add_rgb[2]),
+                                    ],
+                                    &palette,
+                                )
+                            });
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Night road light pool (`FUN_004a8a60`/`FUN_004a8750`): modulates
+    /// visible stage pixels (`depth < 1.0`) by the circular XZ pool grey byte
+    /// (`0x28..=0xff`) around `pool_light_q16` with radius `pool_radius_q16`.
+    /// When `exclude_car_sphere_q16` is `Some((centre, radius))`, pixels within
+    /// that 3D sphere keep their NIGHT car model look.
+    pub fn apply_night_pool(
+        &mut self,
+        camera_world_q16: &[i32; 16],
+        pool_light_q16: [i32; 3],
+        pool_radius_q16: i32,
+        exclude_car_sphere_q16: Option<([i32; 3], i32)>,
+    ) {
+        let [width, height] = self.extent;
+        if width == 0 || height == 0 {
+            return;
+        }
+        let (pw, ph, zn, zf) = cmr_core::c3d_camera::PROJECTION_BASELINE;
+        let m00 = pw * 0.5;
+        let m11 = ph * 0.5;
+        let w_half = f32::from(width) * 0.5;
+        let h_half = f32::from(height) * 0.5;
+        let aspect = f32::from(width) / f32::from(height);
+        let to_f = |q: i32| q as f32 / 65536.0;
+        let cam_right = [
+            to_f(camera_world_q16[0]),
+            to_f(camera_world_q16[1]),
+            to_f(camera_world_q16[2]),
+        ];
+        let cam_up = [
+            to_f(camera_world_q16[4]),
+            to_f(camera_world_q16[5]),
+            to_f(camera_world_q16[6]),
+        ];
+        let cam_fwd = [
+            to_f(camera_world_q16[8]),
+            to_f(camera_world_q16[9]),
+            to_f(camera_world_q16[10]),
+        ];
+        let cam_pos = [
+            to_f(camera_world_q16[12]),
+            to_f(camera_world_q16[13]),
+            to_f(camera_world_q16[14]),
+        ];
+        let car_excl = exclude_car_sphere_q16.map(|(c, r)| {
+            let rf = to_f(r);
+            ([to_f(c[0]), to_f(c[1]), to_f(c[2])], rf * rf)
+        });
+        let palette = *self.palette;
+        let mut lut = [[0u8; 256]; 256];
+        let mut lut_ready = [false; 256];
+        let depth_vals = self.depth.values();
+        let w_usize = usize::from(width);
+
+        for y in 0..usize::from(height) {
+            let ny = 1.0 - ((y as f32 + 0.5) / h_half);
+            let y_coeff = (ny * aspect) / m11;
+            let row = y * w_usize;
+            for x in 0..w_usize {
+                let at = row + x;
+                let z_ndc = depth_vals[at];
+                if z_ndc >= 1.0 {
+                    continue;
+                }
+                let denom = zf - z_ndc * (zf - zn);
+                if denom <= 1e-5 {
+                    continue;
+                }
+                let z_view = (zn * zf) / denom;
+                let nx = ((x as f32 + 0.5) / w_half) - 1.0;
+                let x_view = (nx * z_view) / m00;
+                let y_view = y_coeff * z_view;
+                let wx = cam_pos[0]
+                    + x_view * cam_right[0]
+                    + y_view * cam_up[0]
+                    + z_view * cam_fwd[0];
+                let wy = cam_pos[1]
+                    + x_view * cam_right[1]
+                    + y_view * cam_up[1]
+                    + z_view * cam_fwd[1];
+                let wz = cam_pos[2]
+                    + x_view * cam_right[2]
+                    + y_view * cam_up[2]
+                    + z_view * cam_fwd[2];
+                if let Some((cc, r2)) = car_excl {
+                    let dx = wx - cc[0];
+                    let dy = wy - cc[1];
+                    let dz = wz - cc[2];
+                    if dx * dx + dy * dy + dz * dz <= r2 {
+                        continue;
+                    }
+                }
+                let v_q16 = [
+                    (wx * 65536.0) as i32,
+                    (wy * 65536.0) as i32,
+                    (wz * 65536.0) as i32,
+                ];
+                let g = cmr_core::car_headlights::pool_grey_4a8750(
+                    pool_light_q16,
+                    v_q16,
+                    pool_radius_q16,
+                );
+                if g == 0xff {
+                    continue;
+                }
+                let gi = usize::from(g);
+                if !lut_ready[gi] {
+                    let g32 = u32::from(g);
+                    for (idx, entry) in palette.iter().enumerate() {
+                        let rgb = [entry.red, entry.green, entry.blue]
+                            .map(|c| ((u32::from(c) * g32) / 255) as u8);
+                        lut[gi][idx] = nearest_index(rgb, &palette);
+                    }
+                    lut_ready[gi] = true;
+                }
+                let under = self.pixels[at];
+                self.pixels[at] = lut[gi][usize::from(under)];
+            }
+        }
+    }
+
     /// Vertex-coloured triangles in world units, blended by their vertex
     /// alpha (the tyre marks, `FUN_004a9cd0`'s untextured buffer), depth
     /// tested against the frame without writing it, and re-quantized with

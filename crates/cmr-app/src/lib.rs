@@ -2266,6 +2266,13 @@ pub struct StageRenderResources {
     particles: Option<StageParticles>,
     sprite_draws: Vec<SpriteDraw>,
     mark_draws: Vec<([[f32; 3]; 3], [u32; 3])>,
+    /// The car's headlights, tail/brake/reverse lamps, and night road light pool
+    /// (`FUN_00449ec0`, `FUN_0044a950`, `FUN_0044bbc0`, `FUN_004a8750`).
+    lamps: Option<StageLamps>,
+    lamp_overlay_draws: Vec<([[f32; 3]; 3], [u32; 3])>,
+    lamp_flare_draws: Vec<cmr_core::car_headlights::LampFlareQuad>,
+    lamp_flare_basis: ([i32; 3], [i32; 3]),
+    night_pool_draw: Option<([i32; 3], i32)>,
     /// `.obj` scene-graph local matrix overrides for hit/moving objects (`FUN_00452b70`).
     object_locals: Vec<(usize, [i32; 16])>,
     palette: [PaletteEntry; 256],
@@ -2370,6 +2377,11 @@ impl StageRenderResources {
             particles: None,
             sprite_draws: Vec::new(),
             mark_draws: Vec::new(),
+            lamps: None,
+            lamp_overlay_draws: Vec::new(),
+            lamp_flare_draws: Vec::new(),
+            lamp_flare_basis: ([0; 3], [0; 3]),
+            night_pool_draw: None,
             object_locals: Vec::new(),
             palette,
             node_count,
@@ -2557,7 +2569,10 @@ impl StageRenderResources {
     /// model index `car +0x739`.
     fn fresh_car_damage(&mut self, model: u8) -> Option<cmr_core::car_crash_damage::CarDamage> {
         let pristine = self.car_scene_pristine.as_ref()?;
-        let damage = cmr_core::car_crash_damage::CarDamage::from_c3d(pristine, false, model)?;
+        let mut damage = cmr_core::car_crash_damage::CarDamage::from_c3d(pristine, false, model)?;
+        if let Some(lamps) = self.lamps.as_ref() {
+            damage.set_night_pod_lamps(lamps.night, lamps.state.spec.pod_lamp_offsets());
+        }
         if self.car_scene.as_ref() != Some(pristine) {
             self.car_scene = Some(pristine.clone());
             self.sync_gpu_car(&damage);
@@ -2773,6 +2788,143 @@ impl StageRenderResources {
             ambient,
             textures,
         });
+    }
+
+    /// `FUN_0044a750` (`Game\\Images\\headglow.bmp`, `bglow2.bmp`),
+    /// `FUN_00449e60` (the car's lamp slots from `car_lamp_tables`), and
+    /// `FUN_004853e0`'s night road light pool state.
+    pub fn attach_lamps(&mut self, runtime_data: &Path, model: u8, weather: StageWeather) {
+        if self.car_scene.is_none() {
+            self.lamps = None;
+            return;
+        };
+        let Some(tables) = open_static_tables(runtime_data).and_then(|store| {
+            let block = store.tables().block("car_lamp_tables")?;
+            cmr_core::car_headlights::CarLampTables::from_block(block)
+        }) else {
+            self.lamps = None;
+            return;
+        };
+        let Some(state) = cmr_core::car_headlights::CarLampState::new(&tables, model, false) else {
+            self.lamps = None;
+            return;
+        };
+        let store = ReviewedProfile::from_json(REVIEWED_PROFILE)
+            .ok()
+            .and_then(|reviewed| {
+                AssetStore::open(runtime_data, &reviewed, DecodeLimits::default()).ok()
+            });
+        let load_bmp = |path: &str| {
+            store
+                .as_ref()?
+                .load(path)
+                .ok()
+                .and_then(|bytes| {
+                    cmr_formats::bitmap::parse_indexed_bitmap(&bytes, BitmapLimits::default()).ok()
+                })
+        };
+        let (Some(headglow), Some(bglow2)) = (
+            load_bmp("Game/Images/HEADGLOW.BMP"),
+            load_bmp("Game/Images/BGLOW2.BMP"),
+        ) else {
+            self.lamps = None;
+            return;
+        };
+        let night = weather.lighting == cmr_core::stage_weather::NIGHT_LIGHTING;
+        // `car +0x6f8`: headlights are on during night stages and rain/snow stages.
+        let lights_on_6f8 = night || weather.weather_type == 3 || weather.weather_type == 4;
+        self.lamps = Some(StageLamps {
+            tables,
+            state,
+            headglow,
+            bglow2,
+            rand_table_82ae84: [0x1_0000; 23],
+            rand_index_82a4d0: 0,
+            pool: cmr_core::car_headlights::OutOfBoundsPoolState::default(),
+            night,
+            lights_on_6f8,
+        });
+    }
+
+    /// `FUN_0048bc00` (per-frame 23-entry flicker random table) and
+    /// `FUN_004853e0` (out-of-bounds night road pool target/fade).
+    fn tick_lamps(&mut self, session: &GameplaySession, rng: &mut GameLcg) {
+        let Some(lamps) = self.lamps.as_mut() else {
+            return;
+        };
+        lamps.rand_table_82ae84 = cmr_core::car_headlights::fill_flicker_rand_table_48bc00(rng);
+        lamps.rand_index_82a4d0 = 0;
+        if lamps.night {
+            lamps.pool.step_4853e0(
+                session.out_of_bounds_timer_75c(),
+                session.event().split_screen(),
+            );
+        }
+    }
+
+    /// `FUN_0044a950`, `FUN_0044bbc0` (`FUN_0044b600`, `FUN_0044b240`),
+    /// `FUN_0044c8c0` (`FUN_004a9ad0`), and `FUN_004a9490` for this frame.
+    fn plan_lamps(
+        &mut self,
+        session: &GameplaySession,
+        camera_world: &[i32; 16],
+        car_world: &[i32; 16],
+        interior_view: bool,
+    ) {
+        self.lamp_overlay_draws.clear();
+        self.lamp_flare_draws.clear();
+        self.night_pool_draw = None;
+        let body_local_94 = self
+            .car_scene
+            .as_ref()
+            .and_then(|scene| scene.group0_records().find(|r| r.node_id() == 5))
+            .map_or(MATRIX_IDENTITY_Q16, |r| r.affine_matrix_q16());
+        let body_world_d4 = cmr_core::c3d_camera::matmul_q16(&body_local_94, car_world);
+        let Some(lamps) = self.lamps.as_mut() else {
+            return;
+        };
+        if lamps.night {
+            let light_world = cmr_core::car_headlights::pool_world_position_4a9490(
+                car_world,
+                lamps.pool.light_local,
+            );
+            self.night_pool_draw = Some((light_world, lamps.pool.radius_5028dc));
+        }
+        if interior_view {
+            return;
+        }
+        let pose = session.lamp_pose_input(
+            body_local_94,
+            body_world_d4,
+            *car_world,
+            lamps.lights_on_6f8,
+            lamps.night,
+        );
+        lamps.state.update_positions_44a950(
+            &pose,
+            camera_world,
+            None,
+            &lamps.rand_table_82ae84,
+            &mut lamps.rand_index_82a4d0,
+        );
+        let plan = lamps.state.plan_draws_44bbc0(
+            &pose,
+            lamps.tables.model(0),
+            camera_world,
+            0,
+            true,
+            false,
+        );
+        self.lamp_overlay_draws = plan
+            .overlays
+            .iter()
+            .map(cmr_core::car_headlights::LampOverlayTriangle::to_world_f32)
+            .collect();
+        self.lamp_flare_draws = plan.flares;
+        self.lamp_flare_basis = (
+            [camera_world[0], camera_world[1], camera_world[2]],
+            [camera_world[4], camera_world[5], camera_world[6]],
+        );
     }
 
     /// One sim tick of the wheel particles (`FUN_00428320` inside
@@ -3072,17 +3224,32 @@ impl StageRenderResources {
                 &self.sprite_draws,
                 &self.mark_draws,
             );
+            let lamps = (
+                self.lamps.as_ref(),
+                &self.lamp_overlay_draws,
+                &self.lamp_flare_draws,
+                self.lamp_flare_basis,
+                self.night_pool_draw,
+            );
             let blend = |scene: &mut cmr_video::software_stage_scene::StageSceneFrame| {
+                if let Some((light_world, radius_q16)) = lamps.4 {
+                    scene.apply_night_pool(camera, light_world, radius_q16, None);
+                }
                 if let Some(shadow) = shadow {
                     scene
                         .blend_shadows(camera, shadow_draws, &shadow.alpha)
                         .map_err(StageFrameError::Compose)?;
                 }
-                blend_sprite_draws(scene, camera, sprites.0, sprites.1, sprites.2)
+                blend_sprite_draws(scene, camera, sprites.0, sprites.1, sprites.2)?;
+                blend_lamp_draws(scene, camera, lamps.0, lamps.1, lamps.2, lamps.3)
             };
-            let post: Option<&PostBlend<'_>> =
-                (shadow.is_some() || !self.sprite_draws.is_empty() || !self.mark_draws.is_empty())
-                    .then_some(&blend);
+            let post: Option<&PostBlend<'_>> = (shadow.is_some()
+                || !self.sprite_draws.is_empty()
+                || !self.mark_draws.is_empty()
+                || !self.lamp_overlay_draws.is_empty()
+                || !self.lamp_flare_draws.is_empty()
+                || self.night_pool_draw.is_some())
+            .then_some(&blend);
             let mut dynamic_sets: Vec<&[[i32; 16]]> = Vec::with_capacity(2);
             if let Some(car_worlds) = car_node_worlds.as_deref() {
                 dynamic_sets.push(car_worlds);
@@ -3198,6 +3365,12 @@ impl StageRenderResources {
                 .merge_nearest(&graph_frame)
                 .map_err(StageFrameError::Compose)?;
         }
+        // `FUN_004a8a60` / `FUN_004a8750`: relight the visible stage track and
+        // object meshes with the night ambient (0x28) and the 22 m road light
+        // pool ahead of the car before merging the night car and night horizon.
+        if let Some((light_world, radius_q16)) = self.night_pool_draw {
+            frame.apply_night_pool(camera, light_world, radius_q16, None);
+        }
 
         if let (Some(car_scene), Some(car_textures), Some(car_world)) = (
             self.car_scene.as_ref(),
@@ -3267,6 +3440,14 @@ impl StageRenderResources {
             self.particles.as_ref(),
             &self.sprite_draws,
             &self.mark_draws,
+        )?;
+        blend_lamp_draws(
+            &mut frame,
+            camera,
+            self.lamps.as_ref(),
+            &self.lamp_overlay_draws,
+            &self.lamp_flare_draws,
+            self.lamp_flare_basis,
         )?;
 
         let presented = frame
@@ -4729,6 +4910,66 @@ fn blend_sprite_draws(
         .map_err(StageFrameError::Compose)
 }
 
+/// The car's lamp state, static lamp tables, additive flare textures
+/// (`headglow.bmp`, `bglow2.bmp`), flicker random ring, and night pool state.
+struct StageLamps {
+    tables: cmr_core::car_headlights::CarLampTables,
+    state: cmr_core::car_headlights::CarLampState,
+    headglow: cmr_formats::bitmap::IndexedBitmap,
+    bglow2: cmr_formats::bitmap::IndexedBitmap,
+    rand_table_82ae84: [i32; 23],
+    rand_index_82a4d0: usize,
+    pool: cmr_core::car_headlights::OutOfBoundsPoolState,
+    night: bool,
+    lights_on_6f8: bool,
+}
+
+/// Blend the car's lit lamp overlay triangles (`FUN_004a9ad0` tri buffer #1)
+/// and additive lamp flare billboards (`FUN_004a4460` kind 6).
+fn blend_lamp_draws(
+    frame: &mut cmr_video::software_stage_scene::StageSceneFrame,
+    camera: &[i32; 16],
+    lamps: Option<&StageLamps>,
+    overlays: &[([[f32; 3]; 3], [u32; 3])],
+    flares: &[cmr_core::car_headlights::LampFlareQuad],
+    basis: ([i32; 3], [i32; 3]),
+) -> Result<(), StageFrameError> {
+    if !overlays.is_empty() {
+        frame
+            .blend_coloured_triangles(camera, overlays)
+            .map_err(StageFrameError::Compose)?;
+    }
+    let Some(lamps) = lamps else {
+        return Ok(());
+    };
+    if flares.is_empty() {
+        return Ok(());
+    }
+    let (right, up) = basis;
+    let quads: Vec<cmr_video::software_stage_scene::SpriteQuad> = flares
+        .iter()
+        .map(|flare| {
+            let corners = flare
+                .corners_q16(right, up)
+                .map(|c| c.map(|v| (f64::from(v) / 65536.0) as f32));
+            let texture = match flare.texture {
+                cmr_core::car_headlights::LampFlareTexture::Headglow => &lamps.headglow,
+                cmr_core::car_headlights::LampFlareTexture::Bglow2 => &lamps.bglow2,
+            };
+            cmr_video::software_stage_scene::SpriteQuad {
+                corners,
+                alpha: flare.alpha,
+                grey: flare.grey,
+                flip: false,
+                texture,
+            }
+        })
+        .collect();
+    frame
+        .blend_additive_sprites(camera, &quads)
+        .map_err(StageFrameError::Compose)
+}
+
 struct StageShadow {
     sun: cmr_core::car_shadow::ShadowSun,
     alpha: Vec<u8>,
@@ -5249,6 +5490,7 @@ fn advance_game_frame<C: HostClock>(
             &mut camera.rng,
             &camera.trig,
         );
+        resources.tick_lamps(session, &mut camera.rng);
     }
     // The render's compositor step: the screen fade's black quad
     // (`FUN_00423170`), or state 0xb's display shutdown.
@@ -5301,6 +5543,7 @@ fn advance_game_frame<C: HostClock>(
         };
         resources.plan_shadow(session, &camera_world, camera.interior());
         resources.plan_particles(session, &camera_world, camera.interior(), single_alpha);
+        resources.plan_lamps(session, &camera_world, &car_world, camera.interior());
         resources.set_object_locals(session.moving_object_node_locals());
         let world = resources
             .compose_with_posed_car(&camera_world, Some(&car_world), &wheels)
@@ -8109,6 +8352,7 @@ fn load_windowed_stage(
         .map_err(WindowedStageFrameError::CompiledPose)?;
     pose.adjust_spawn(&mut start, actor_rows)
         .map_err(WindowedStageFrameError::CompiledPose)?;
+    resources.attach_lamps(runtime_data, pose.selector as u8, weather);
     let statics = stage_statics(media_root, stage, &resources)?;
     let srf = read_decoded_section(media_root, stage, ".srf", DecodeLimits::default())
         .ok()
@@ -8219,6 +8463,7 @@ fn reload_stage_for_event<'a>(
     // The car load reloads the model and sets its parts up afresh
     // (`FUN_00480e60`, `FUN_0041efe0`); the model index is `cfg[0xb6]`'s.
     let model = session.event().cfg.car_0b6 & 0xf;
+    resources.attach_lamps(context.runtime_data, model, loaded.weather);
     if let Some(damage) = resources.fresh_car_damage(model) {
         session.attach_car_damage(damage);
     }

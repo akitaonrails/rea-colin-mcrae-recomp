@@ -34,6 +34,7 @@ pub mod camera_trackside;
 pub mod camera_view;
 pub mod car_crash_damage;
 pub mod car_damage;
+pub mod car_headlights;
 pub mod car_particles;
 pub mod car_reset;
 pub mod car_resources;
