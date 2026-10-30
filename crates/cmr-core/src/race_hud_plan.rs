@@ -88,6 +88,11 @@ pub enum RaceHudBitmap {
     ProgressRedSpot,
     HorizontalBar,
     HorizontalBarEnd,
+    HorizontalBarEndRight,
+    TopLeftCorner,
+    BottomLeftCurve,
+    VerticalBar,
+    ProgressBarTop,
 }
 
 impl RaceHudBitmap {
@@ -98,6 +103,11 @@ impl RaceHudBitmap {
             Self::ProgressRedSpot => "images/osdnew/High/common/redspot.bmp",
             Self::HorizontalBar => "images/osdnew/High/common/hbar.bmp",
             Self::HorizontalBarEnd => "images/osdnew/High/common/hbarend.bmp",
+            Self::HorizontalBarEndRight => "images/osdnew/High/common/hbarend2.bmp",
+            Self::TopLeftCorner => "images/osdnew/High/common/tlc.bmp",
+            Self::BottomLeftCurve => "images/osdnew/High/common/curve.bmp",
+            Self::VerticalBar => "images/osdnew/High/common/vbar.bmp",
+            Self::ProgressBarTop => "images/osdnew/High/common/pbartop.bmp",
         }
     }
 }
@@ -428,6 +438,83 @@ pub fn plan_normal_single_player_race_hud(
     })
 }
 
+/// Plans the common gauge and progress-rail border fragments (`FUN_0045dac0`
+/// and the `FUN_0045f530` progress-rail descriptors initialized in
+/// `FUN_0045d050`).
+pub fn plan_common_gauge_border_fragments(
+    viewport: DisplayExtent,
+) -> Result<Vec<RaceHudCommand>, RaceHudPlanError> {
+    if viewport.width == 0 || viewport.height == 0 {
+        return Err(RaceHudPlanError::EmptyViewport);
+    }
+    let mut commands = Vec::with_capacity(12);
+    for (bitmap, source, destination) in [
+        (
+            RaceHudBitmap::ProgressBarTop,
+            HudRect::new(0, 0, 16, 4),
+            HudRect::new(618, 11, 16, 4),
+        ),
+        (
+            RaceHudBitmap::VerticalBar,
+            HudRect::new(0, 0, 4, 4),
+            HudRect::new(630, 15, 4, 340),
+        ),
+        (
+            RaceHudBitmap::VerticalBar,
+            HudRect::new(0, 0, 4, 4),
+            HudRect::new(618, 15, 4, 302),
+        ),
+        (
+            RaceHudBitmap::HorizontalBar,
+            HudRect::new(0, 0, 4, 4),
+            HudRect::new(16, 11, 122, 4),
+        ),
+        (
+            RaceHudBitmap::HorizontalBar,
+            HudRect::new(0, 0, 4, 4),
+            HudRect::new(15, 91, 123, 4),
+        ),
+        (
+            RaceHudBitmap::HorizontalBarEndRight,
+            HudRect::new(0, 0, 4, 4),
+            HudRect::new(138, 11, 4, 4),
+        ),
+        (
+            RaceHudBitmap::HorizontalBarEndRight,
+            HudRect::new(0, 0, 4, 4),
+            HudRect::new(138, 91, 4, 4),
+        ),
+        (
+            RaceHudBitmap::TopLeftCorner,
+            HudRect::new(0, 0, 4, 4),
+            HudRect::new(12, 11, 4, 4),
+        ),
+        (
+            RaceHudBitmap::BottomLeftCurve,
+            HudRect::new(0, 0, 16, 16),
+            HudRect::new(12, 457, 16, 16),
+        ),
+        (
+            RaceHudBitmap::HorizontalBar,
+            HudRect::new(0, 0, 4, 4),
+            HudRect::new(28, 469, 124, 4),
+        ),
+        (
+            RaceHudBitmap::VerticalBar,
+            HudRect::new(0, 0, 4, 4),
+            HudRect::new(12, 15, 4, 442),
+        ),
+        (
+            RaceHudBitmap::HorizontalBarEndRight,
+            HudRect::new(0, 0, 4, 4),
+            HudRect::new(152, 469, 4, 4),
+        ),
+    ] {
+        push_bitmap(&mut commands, viewport, bitmap, source, destination);
+    }
+    Ok(commands)
+}
+
 fn push_bitmap(
     commands: &mut Vec<RaceHudCommand>,
     viewport: DisplayExtent,
@@ -748,5 +835,22 @@ mod tests {
             .iter()
             .filter(|command| matches!(command, RaceHudCommand::TintedBitmap { .. }))
             .count()
+    }
+
+    #[test]
+    fn common_gauge_border_fragments_emit_twelve_commands_at_640x480_only() {
+        let cmds = plan_common_gauge_border_fragments(DisplayExtent {
+            width: 640,
+            height: 480,
+        })
+        .unwrap();
+        assert_eq!(cmds.len(), 12);
+        assert_eq!(
+            plan_common_gauge_border_fragments(DisplayExtent {
+                width: 0,
+                height: 480,
+            }),
+            Err(RaceHudPlanError::EmptyViewport)
+        );
     }
 }

@@ -570,6 +570,15 @@ impl<'a> C3dGroup1Record<'a> {
         self.unknown
     }
 
+    /// Returns the draw-group flags byte at record offset `+0x14` (`+20`),
+    /// copied by `FUN_004a2b70`/`FUN_004b1e10` to runtime `mesh + lod*0x18 + 0x20`
+    /// (`bit 0` = two-sided `D3DCULL_NONE`, `bit 2` = cylindrical Y-billboard
+    /// `FUN_004a18e0`).
+    #[must_use]
+    pub const fn draw_flags(self) -> u8 {
+        self.unknown[0]
+    }
+
     /// Returns the three signed Q16.16 bounds copied verbatim into the runtime
     /// mesh fields used by the recovered static-collision builder.
     #[must_use]

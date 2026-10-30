@@ -155,8 +155,8 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
                 font,
                 text,
                 position,
+                color,
                 flags,
-                ..
             } => {
                 outcome.text_commands += 1;
                 let font_data = resolve_font(*font);
@@ -175,6 +175,7 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
                     source,
                 })?;
 
+                let mut quantization = BitmapQuantizationCache::new(BitmapDiffuse::Tinted(*color));
                 for blit in plan.blits {
                     validate_source(command_index, *font, blit.code, blit.source, font_data)?;
                     blit_glyph(
@@ -185,6 +186,8 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
                         blit.source,
                         blit.destination.x,
                         blit.destination.y,
+                        palette.as_ref(),
+                        &mut quantization,
                     )?;
                     outcome.glyphs_drawn += 1;
                 }
@@ -539,6 +542,7 @@ fn validate_source(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn blit_glyph(
     destination: &mut [u8],
     destination_width: usize,
@@ -547,6 +551,8 @@ fn blit_glyph(
     source: RectI16,
     destination_x: i32,
     destination_y: i32,
+    active_palette: &[PaletteEntry; 256],
+    quantization: &mut BitmapQuantizationCache,
 ) -> Result<(), RaceHudComposeError> {
     let atlas = font.atlas();
     let atlas_width =
@@ -595,9 +601,27 @@ fn blit_glyph(
                         .map_err(|_| RaceHudComposeError::ArithmeticOverflow)?,
                 )
                 .ok_or(RaceHudComposeError::ArithmeticOverflow)?;
+            let resolved_index = match atlas.palette.get(usize::from(atlas_index)) {
+                Some(source_color)
+                    if [source_color.red, source_color.green, source_color.blue] != [0, 0, 0] =>
+                {
+                    let dst_idx = *destination
+                        .get(destination_index)
+                        .ok_or(RaceHudComposeError::ArithmeticOverflow)?;
+                    let destination_color = active_palette[usize::from(dst_idx)];
+                    quantization.resolve(
+                        atlas_index,
+                        dst_idx,
+                        source_color,
+                        destination_color,
+                        active_palette,
+                    )
+                }
+                _ => atlas_index,
+            };
             *destination
                 .get_mut(destination_index)
-                .ok_or(RaceHudComposeError::ArithmeticOverflow)? = atlas_index;
+                .ok_or(RaceHudComposeError::ArithmeticOverflow)? = resolved_index;
         }
     }
     Ok(())
@@ -985,5 +1009,47 @@ mod tests {
         bytes[trailer + 4..trailer + 8].copy_from_slice(&1u32.to_le_bytes());
         bytes[trailer + 24..trailer + 40].copy_from_slice(&glyph);
         parse_legacy_font(&bytes, FontLimits::default()).unwrap()
+    }
+
+    #[test]
+    fn text_glyph_quantizes_and_tints_font_palette_against_active_palette() {
+        const PIXEL_OFFSET: usize = 0x436;
+        let width = 2u32;
+        let height = 1u32;
+        let stride = 4usize;
+        let trailer = PIXEL_OFFSET + stride * height as usize;
+        let mut bytes = vec![0u8; trailer + 24 + 16];
+        bytes[0..2].copy_from_slice(b"BM");
+        bytes[18..22].copy_from_slice(&(width as i32).to_le_bytes());
+        bytes[22..26].copy_from_slice(&(height as i32).to_le_bytes());
+        bytes[28..30].copy_from_slice(&8u16.to_le_bytes());
+        // Font palette entry 5 = white (BGR0 = 255, 255, 255, 0) at 0x36 + 5 * 4.
+        let pal_entry = 0x36 + 5 * 4;
+        bytes[pal_entry..pal_entry + 4].copy_from_slice(&[255, 255, 255, 0]);
+        bytes[PIXEL_OFFSET] = 5;
+        bytes[PIXEL_OFFSET + 1] = 0;
+        bytes[trailer + 1] = 1;
+        bytes[trailer + 4..trailer + 8].copy_from_slice(&1u32.to_le_bytes());
+        bytes[trailer + 24..trailer + 40].copy_from_slice(&glyph(b'1', 0, 0, 2, 1));
+        let parsed_font = parse_legacy_font(&bytes, FontLimits::default()).unwrap();
+
+        let palette = active_palette(&[(42, [200, 100, 50])]);
+        let command = RaceHudCommand::Text {
+            font: RaceHudFont::Numbers640,
+            text: "1".to_owned(),
+            position: HudTextPosition::Pixels(HudPoint::new(1, 0)),
+            color: HudColor::new(200, 100, 50, 255),
+            flags: 0,
+        };
+        let (frame, _) = compose_text(
+            frame_with_palette(4, 2, &[9; 8], palette),
+            &[command],
+            &parsed_font,
+        )
+        .unwrap();
+        // Font index 5 (white) tinted by (200,100,50) quantizes to active_palette index 42;
+        // font index 0 stays transparent (9).
+        assert_eq!(frame.pixels()[1], 42);
+        assert_eq!(frame.pixels()[2], 9);
     }
 }

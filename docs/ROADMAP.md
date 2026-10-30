@@ -2101,7 +2101,14 @@ seeding, and Rally School `intro.rsp`/`exit.rsp` playback (`FUN_0046de70`,
 are wired end to end through `StageRenderResources::build_moj_slots` and
 `GameplaySession`, and `FUN_0046f920` briefing `.avi`/`.wav` path formatting
 (`"%d"` + `".avi"`, `[80, 32, 320, 208]`) is pinned in `cmr-core::intro_video`,
-completing `I14` (`119 / 119` items complete).
+completing `I14` (`119 / 119` items complete). Headless `gamescope` differential
+verification against the original game further pinned and wired C3D Group-1
+`flag20` cylindrical Y-billboarding (`0x04`, `FUN_004a18e0`) and two-sided
+scenery (`0x01`, `FUN_004a2460`) across software and GPU renderers, the 12
+decorative HUD border/progress-rail bitmaps (`FUN_0045dac0`, `FUN_0045f530`),
+HUD font palette quantization/tinting against the stage palette, uppercase
+default hostname player names, case-insensitive stage sibling lookup, and
+clean State-4 stage-loading interstitial presentation.
 The reset trigger remains an explicit input, and no unsupported position-snap,
 time penalty, or damage-performance mapping is claimed.
 

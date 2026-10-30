@@ -86,7 +86,7 @@ use cmr_core::prang_sound::{
 };
 use cmr_core::race_hud_plan::{
     CommonGaugeInset, RaceHudBitmap, RaceHudFont, RaceHudPlanError, RaceHudPreparedInputs,
-    plan_normal_single_player_race_hud,
+    plan_common_gauge_border_fragments, plan_normal_single_player_race_hud,
 };
 use cmr_core::race_state::{
     CarState, Controls, FirstWheelParams, FourWheelIterationParams, FourWheelPostprocessParams,
@@ -1255,10 +1255,16 @@ fn read_decoded_section(
     extension: &'static str,
     limits: DecodeLimits,
 ) -> Result<Option<Vec<u8>>, StageFrameError> {
-    let path = media_root.join(format!("{stage}{extension}"));
+    let file_name = format!("{stage}{extension}");
+    let path = media_root.join(&file_name);
     let raw = match std::fs::read(&path) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let Some(found) = find_case_insensitive(media_root, &file_name) else {
+                return Ok(None);
+            };
+            std::fs::read(&found).map_err(|error| StageFrameError::Io { extension, error })?
+        }
         Err(error) => return Err(StageFrameError::Io { extension, error }),
     };
     let decoded = decode_stored_asset(&raw, limits)
@@ -2174,6 +2180,11 @@ pub struct RaceHudAssets {
     progress_red_spot: IndexedBitmap,
     horizontal_bar: IndexedBitmap,
     horizontal_bar_end: IndexedBitmap,
+    horizontal_bar_end_right: IndexedBitmap,
+    top_left_corner: IndexedBitmap,
+    bottom_left_curve: IndexedBitmap,
+    vertical_bar: IndexedBitmap,
+    progress_bar_top: IndexedBitmap,
     numbers: BitmapFont,
     time_numbers: BitmapFont,
 }
@@ -2185,6 +2196,14 @@ impl RaceHudAssets {
             progress_red_spot: load_race_hud_bitmap(store, RaceHudBitmap::ProgressRedSpot)?,
             horizontal_bar: load_race_hud_bitmap(store, RaceHudBitmap::HorizontalBar)?,
             horizontal_bar_end: load_race_hud_bitmap(store, RaceHudBitmap::HorizontalBarEnd)?,
+            horizontal_bar_end_right: load_race_hud_bitmap(
+                store,
+                RaceHudBitmap::HorizontalBarEndRight,
+            )?,
+            top_left_corner: load_race_hud_bitmap(store, RaceHudBitmap::TopLeftCorner)?,
+            bottom_left_curve: load_race_hud_bitmap(store, RaceHudBitmap::BottomLeftCurve)?,
+            vertical_bar: load_race_hud_bitmap(store, RaceHudBitmap::VerticalBar)?,
+            progress_bar_top: load_race_hud_bitmap(store, RaceHudBitmap::ProgressBarTop)?,
             numbers: load_race_hud_font(store, RaceHudFont::Numbers640)?,
             time_numbers: load_race_hud_font(store, RaceHudFont::TimeNumbers640)?,
         })
@@ -2198,6 +2217,11 @@ impl RaceHudAssets {
             RaceHudBitmap::ProgressRedSpot => &self.progress_red_spot,
             RaceHudBitmap::HorizontalBar => &self.horizontal_bar,
             RaceHudBitmap::HorizontalBarEnd => &self.horizontal_bar_end,
+            RaceHudBitmap::HorizontalBarEndRight => &self.horizontal_bar_end_right,
+            RaceHudBitmap::TopLeftCorner => &self.top_left_corner,
+            RaceHudBitmap::BottomLeftCurve => &self.bottom_left_curve,
+            RaceHudBitmap::VerticalBar => &self.vertical_bar,
+            RaceHudBitmap::ProgressBarTop => &self.progress_bar_top,
         }
     }
 
@@ -3873,10 +3897,13 @@ fn compose_live_race_hud(
     let assets = resources
         .race_hud()
         .ok_or(StageFrameError::MissingHudAssets)?;
+    let mut commands =
+        plan_common_gauge_border_fragments(input.viewport).map_err(StageFrameError::HudPlan)?;
     let plan = plan_normal_single_player_race_hud(input).map_err(StageFrameError::HudPlan)?;
+    commands.extend_from_slice(plan.commands());
     compose_race_hud_commands(
         frame,
-        plan.commands(),
+        &commands,
         |font| assets.font(font),
         |bitmap| assets.bitmap(bitmap),
     )
@@ -4168,7 +4195,8 @@ impl ServiceHost {
         if let (Some(mixer), Some(_)) = (mixer, self.music) {
             set_channel_volume(mixer, SERVICE_MUSIC_CHANNEL, self.draw.music_volume);
         }
-        let present = (!done && drawn.is_ok())
+        let present = drawn
+            .is_ok()
             .then(|| {
                 SoftwarePresentedFrame::from_indexed(
                     ROOT_EXTENT,
@@ -5704,8 +5732,13 @@ fn advance_game_frame<C: HostClock>(
             Err(error) => eprintln!("cmr-app: listener skipped: {error}"),
         }
     }
+    let loading_route = if session.state().id() == 4 {
+        Some(RenderRoute::LoadInterstitial)
+    } else {
+        advanced.route
+    };
     let loading_interstitial = loading_interstitial_for_route(
-        advanced.route,
+        loading_route,
         resources.loading_background(),
         resources.loading_overlay.as_ref(),
         STAGE_LOADING_PROGRESS_CAP,
@@ -5799,7 +5832,7 @@ impl SessionSurfaceInputs {
             ReviewedSurfaceCapabilityProfile::from_json(REVIEWED_SURFACE_CAPABILITY_PROFILE)
                 .map_err(SessionSurfaceInputsError::Profile)?;
         let store = SurfaceCapabilityStore::open(
-            &runtime_data.join(SURFACE_CAPABILITY_STORE_DIRECTORY),
+            &session_sidecar_store(runtime_data, SURFACE_CAPABILITY_STORE_DIRECTORY),
             &reviewed,
         )
         .map_err(SessionSurfaceInputsError::Store)?;
@@ -6085,7 +6118,7 @@ fn host_computer_name() -> Option<Vec<u8>> {
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok()
         .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
-        .map(|name| name.trim().as_bytes().to_vec())
+        .map(|name| name.trim().to_ascii_uppercase().into_bytes())
         .filter(|name| !name.is_empty())
 }
 
@@ -7158,9 +7191,11 @@ impl SessionWheelInputs {
     pub fn open(runtime_data: &Path) -> Result<Self, SessionSurfaceInputsError> {
         let reviewed = ReviewedSurfaceProfile::from_json(REVIEWED_SURFACE_TABLE_PROFILE)
             .map_err(SessionSurfaceInputsError::Profile)?;
-        let store =
-            SurfaceTableStore::open(&runtime_data.join(SURFACE_TABLE_STORE_DIRECTORY), &reviewed)
-                .map_err(SessionSurfaceInputsError::Store)?;
+        let store = SurfaceTableStore::open(
+            &session_sidecar_store(runtime_data, SURFACE_TABLE_STORE_DIRECTORY),
+            &reviewed,
+        )
+        .map_err(SessionSurfaceInputsError::Store)?;
         Ok(Self { store })
     }
 
@@ -9472,26 +9507,28 @@ pub fn run_windowed_game_session(
                             Ok(outcome) => {
                                 // A composed world frame wins; otherwise the interactive
                                 // front-end route presents the recovered root-menu frame.
-                                let present = if outcome.screen.is_some() {
+                                let present = if outcome.loading_interstitial.is_some() {
+                                    outcome.loading_interstitial
+                                } else if outcome.screen.is_some() {
                                     outcome.screen
                                 } else if outcome.world.is_some() {
                                     outcome.world
-                                } else if outcome.loading_interstitial.is_some() {
-                                    outcome.loading_interstitial
                                 } else if let Some(render_input) = outcome.root_render_input {
                                     root.render(render_input)
                                         .ok()
                                         .and_then(|_| root.backend().presented_frame().cloned())
-                                } else if let Some(commands) = screen_commands(
-                                    &root_interaction,
-                                    static_tables.as_ref(),
-                                    &config.image[..],
-                                    &mut screen_state,
-                                    root.text(),
-                                    root.fonts(),
-                                    clock.millis(),
-                                    led_step(&screen_bitmaps),
-                                ) {
+                                } else if outcome.music_active
+                                    && let Some(commands) = screen_commands(
+                                        &root_interaction,
+                                        static_tables.as_ref(),
+                                        &config.image[..],
+                                        &mut screen_state,
+                                        root.text(),
+                                        root.fonts(),
+                                        clock.millis(),
+                                        led_step(&screen_bitmaps),
+                                    )
+                                {
                                     root.render_screen(
                                         &commands,
                                         &screen_bitmaps,

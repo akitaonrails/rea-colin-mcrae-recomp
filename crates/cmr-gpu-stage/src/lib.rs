@@ -118,6 +118,13 @@ struct DynamicDraw {
     prim: usize,
     mesh: u32,
     layer: usize,
+    y_billboard: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BillboardDraw {
+    draw: usize,
+    base_world: [i32; 16],
 }
 
 /// Upload one layer-local ordinal's texture once, returning its id, or
@@ -171,6 +178,7 @@ pub struct PreparedRawStage {
     resources: C3dResourceSet,
     draws: Box<[C3dDraw]>,
     dynamic_draws: Box<[DynamicDraw]>,
+    billboard_draws: Box<[BillboardDraw]>,
     dynamic_world_set_count: usize,
     texture_by_ordinal: BTreeMap<(usize, i16), u32>,
     stats: PreparedRawStageStats,
@@ -212,6 +220,7 @@ impl PreparedRawStage {
         let mut texture_by_ordinal = BTreeMap::<(usize, i16), u32>::new();
         let mut draws = Vec::new();
         let mut dynamic_draws = Vec::new();
+        let mut billboard_draws = Vec::new();
         let mut dynamic_world_set_count = 0;
         let mut stats = PreparedRawStageStats::default();
 
@@ -227,6 +236,8 @@ impl PreparedRawStage {
                     stats.empty_lod_nodes += 1;
                     continue;
                 };
+                let is_two_sided = draw_group.is_two_sided();
+                let is_y_billboard = draw_group.is_y_billboard();
                 for (prim_index, prim) in draw_group.prims().iter().enumerate() {
                     let Some(texture_id) = texture_id_for(
                         layer_index,
@@ -246,13 +257,18 @@ impl PreparedRawStage {
                             count: meshes.len(),
                         }
                     })?;
+                    let indices = if is_two_sided {
+                        cmr_core::c3d_mesh::two_sided_indices(prim.indices())
+                    } else {
+                        prim.indices().to_vec()
+                    };
                     meshes.push(C3dMeshResource::new(
                         prim.unique_entries_32()
                             .iter()
                             .copied()
                             .map(C3dStageVertex::from)
                             .collect::<Vec<_>>(),
-                        prim.indices().to_vec(),
+                        indices,
                     )?);
                     let local_world = *layer.scene.world(op.node);
                     let draw_index = draws.len();
@@ -274,6 +290,12 @@ impl PreparedRawStage {
                             prim: prim_index,
                             mesh: mesh_id,
                             layer: layer_index,
+                            y_billboard: is_y_billboard,
+                        });
+                    } else if is_y_billboard {
+                        billboard_draws.push(BillboardDraw {
+                            draw: draw_index,
+                            base_world: local_world,
                         });
                     }
                 }
@@ -323,6 +345,7 @@ impl PreparedRawStage {
             resources,
             draws: draws.into_boxed_slice(),
             dynamic_draws: dynamic_draws.into_boxed_slice(),
+            billboard_draws: billboard_draws.into_boxed_slice(),
             dynamic_world_set_count,
             texture_by_ordinal,
             stats,
@@ -423,10 +446,28 @@ impl PreparedRawStage {
                     actual: dynamic_worlds[dynamic.world_set].len(),
                 },
             )?;
+            let effective_world = if dynamic.y_billboard {
+                cmr_core::c3d_camera::y_billboard_world_q16(world, camera_world_q16)
+            } else {
+                *world
+            };
             self.draws[dynamic.draw] = C3dDraw::new(
                 old.mesh(),
                 old.texture(),
-                world_matrix_words(world),
+                world_matrix_words(&effective_world),
+                old.submission(),
+            )?;
+        }
+        for billboard in self.billboard_draws.iter().copied() {
+            let old = self.draws[billboard.draw];
+            let effective_world = cmr_core::c3d_camera::y_billboard_world_q16(
+                &billboard.base_world,
+                camera_world_q16,
+            );
+            self.draws[billboard.draw] = C3dDraw::new(
+                old.mesh(),
+                old.texture(),
+                world_matrix_words(&effective_world),
                 old.submission(),
             )?;
         }

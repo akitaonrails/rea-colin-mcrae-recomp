@@ -786,12 +786,20 @@ where
             continue;
         };
         // The transform state depends only on the node (its world matrix), so it
-        // is built once and reused across the node's prims.
+        // is built once and reused across the node's prims. Nodes whose active
+        // LOD carries Y_BILLBOARD_FLAG (`0x04`, `FUN_004a18e0`) rotate around Y
+        // to face the camera's XZ forward direction using their Group-0 basis
+        // row scales.
+        let effective_world = if draw_group.is_y_billboard() {
+            cmr_core::c3d_camera::y_billboard_world_q16(world, camera_world_q16)
+        } else {
+            *world
+        };
         let transforms = SoftwareC3dTransformState::for_gameplay_scene_with_projection(
             width,
             height,
             camera_world_q16,
-            world,
+            &effective_world,
             projection,
         )?;
         for prim in draw_group.prims() {
@@ -799,8 +807,14 @@ where
                 stats.unresolved_prims += 1;
                 continue;
             };
-            let batch =
-                preflight_mesh_lod_prim(prim.unique_entries_32(), prim.indices(), transforms)?;
+            let doubled_indices;
+            let indices = if draw_group.is_two_sided() {
+                doubled_indices = cmr_core::c3d_mesh::two_sided_indices(prim.indices());
+                doubled_indices.as_slice()
+            } else {
+                prim.indices()
+            };
+            let batch = preflight_mesh_lod_prim(prim.unique_entries_32(), indices, transforms)?;
             let outcome = if let Some(color_key) = color_key {
                 compose_root_c3d_indexed_copy_color_key(
                     &batch,

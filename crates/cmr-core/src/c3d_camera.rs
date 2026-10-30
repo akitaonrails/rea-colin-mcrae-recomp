@@ -160,6 +160,9 @@ pub const CULL_CW: u32 = 2;
 pub const CULL_CCW: u32 = 3;
 /// Bit in a mesh LOD record's byte `+0x20` marking the record two-sided.
 pub const TWO_SIDED_FLAG: u8 = 0x01;
+/// Bit in a mesh LOD record's byte `+0x20` selecting the cylindrical Y-billboard
+/// drawer `FUN_004a18e0` (`FUN_004a07d0` at `0x4a0f6a`, `FUN_004a1ed0` at `0x4a1f0c`).
+pub const Y_BILLBOARD_FLAG: u8 = 0x04;
 
 /// The cull mode for a draw record: `CULL_NONE` when its two-sided bit is set,
 /// otherwise the default back-face cull.
@@ -169,6 +172,74 @@ pub fn cull_mode(record_flag_20: u8) -> u32 {
     } else {
         CULL_CCW
     }
+}
+
+/// Builds the cylindrical Y-billboard WORLD matrix (`FUN_004a18e0` + `FUN_004a07d0`
+/// `0x4a0816..0x4a094f` + `FUN_004a2b70` `0x4a3279..0x4a34d0`) for a node whose
+/// active LOD draw group has [`Y_BILLBOARD_FLAG`] (`0x04`) set.
+///
+/// Trackside foliage and spectator quads (`flag20 & 0x04`) are authored in the
+/// local YZ plane (`x == 0`, `z in [-w/2, +w/2]`, `y in [0, h]`). At draw time:
+/// - `FUN_004a07d0` normalizes the camera's XZ forward direction `(cam[8], 0, cam[10])`
+///   to unit `(fx, 0, fz)` and forms the perpendicular `perp = (fz, 0, -fx)`.
+/// - `FUN_004a18e0` rotates each vertex's `z` into `(new_x, new_y, new_z) = (-z * fz, y, z * fx)`
+///   and submits a diagonal WORLD matrix using the node's three basis-row Euclidean
+///   lengths `(scale_x, scale_y, scale_z)` (`node+0x30/+0x34/+0x38`) plus the node's
+///   world translation `node_world_q16[12..15]`.
+///
+/// Placing `[-fz * scale_x, 0, fx * scale_z, 0]` in row 2 (Z basis) and
+/// `[0, scale_y, 0, 0]` in row 1 (Y basis) of the node's WORLD matrix maps any
+/// YZ-plane vertex `(0, y, z, 1)` to identical world coordinates without mutating
+/// the shared static Group-1 vertex buffer.
+#[must_use]
+pub fn y_billboard_world_q16(
+    node_world_q16: &[i32; 16],
+    camera_world_q16: &[i32; 16],
+) -> [i32; 16] {
+    let row_len_q16 = |x: i32, y: i32, z: i32| -> i32 {
+        let len_sq = i64::from(fmul_q16(x, x))
+            + i64::from(fmul_q16(y, y))
+            + i64::from(fmul_q16(z, z));
+        if len_sq <= 0 {
+            0
+        } else {
+            ((len_sq as f64 / 65_536.0).sqrt() * 65_536.0) as i32
+        }
+    };
+    let scale_x = row_len_q16(node_world_q16[0], node_world_q16[1], node_world_q16[2]);
+    let scale_y = row_len_q16(node_world_q16[4], node_world_q16[5], node_world_q16[6]);
+    let scale_z = row_len_q16(node_world_q16[8], node_world_q16[9], node_world_q16[10]);
+
+    let cam_fx = camera_world_q16[8];
+    let cam_fz = camera_world_q16[10];
+    let cam_xz_len = row_len_q16(cam_fx, 0, cam_fz);
+    let (fx_q16, fz_q16) = if cam_xz_len > 0 {
+        (
+            (((cam_fx as i64) << 16) / i64::from(cam_xz_len)) as i32,
+            (((cam_fz as i64) << 16) / i64::from(cam_xz_len)) as i32,
+        )
+    } else {
+        (0, 0x1_0000)
+    };
+
+    [
+        fmul_q16(fx_q16, scale_x),
+        0,
+        fmul_q16(fz_q16, scale_z),
+        0,
+        0,
+        scale_y,
+        0,
+        0,
+        -fmul_q16(fz_q16, scale_x),
+        0,
+        fmul_q16(fx_q16, scale_z),
+        0,
+        node_world_q16[12],
+        node_world_q16[13],
+        node_world_q16[14],
+        node_world_q16[15],
+    ]
 }
 
 // --- LOD / detail selection ---------------------------------------------------
@@ -426,6 +497,38 @@ mod tests {
         assert_eq!(cull_mode(0x00), CULL_CCW);
         assert_eq!(cull_mode(TWO_SIDED_FLAG), CULL_NONE);
         assert_eq!(cull_mode(0xfe), CULL_CCW); // the two-sided bit is clear
+    }
+
+    #[test]
+    fn y_billboard_aligns_xz_basis_with_camera_forward_and_preserves_scale_and_translation() {
+        let mut node = MATRIX_IDENTITY_Q16;
+        node[0] = 2 * ONE; // X scale = 2
+        node[5] = 3 * ONE; // Y scale = 3
+        node[10] = 4 * ONE; // Z scale = 4
+        node[12] = 10 * ONE;
+        node[13] = 20 * ONE;
+        node[14] = 30 * ONE;
+
+        // Camera forward (+Z row = indices 8..11) pointing along +X (1, 0, 0).
+        let mut cam = MATRIX_IDENTITY_Q16;
+        cam[8] = ONE;
+        cam[9] = 0;
+        cam[10] = 0;
+
+        let out = y_billboard_world_q16(&node, &cam);
+        // fx = 1, fz = 0 => row0 = (2, 0, 0), row1 = (0, 3, 0), row2 = (0, 0, 4).
+        assert_eq!([out[0], out[1], out[2]], [2 * ONE, 0, 0]);
+        assert_eq!([out[4], out[5], out[6]], [0, 3 * ONE, 0]);
+        assert_eq!([out[8], out[9], out[10]], [0, 0, 4 * ONE]);
+        assert_eq!([out[12], out[13], out[14]], [10 * ONE, 20 * ONE, 30 * ONE]);
+
+        // Purely vertical camera forward (cam_fx = 0, cam_fz = 0) falls back to (0, 1).
+        cam[8] = 0;
+        cam[9] = ONE;
+        cam[10] = 0;
+        let fallback = y_billboard_world_q16(&node, &cam);
+        assert_eq!([fallback[0], fallback[2]], [0, 4 * ONE]);
+        assert_eq!([fallback[8], fallback[10]], [-2 * ONE, 0]);
     }
 
     #[test]

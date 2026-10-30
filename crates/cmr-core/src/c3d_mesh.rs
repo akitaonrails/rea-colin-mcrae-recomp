@@ -299,6 +299,7 @@ pub fn lod_stream_backup_offset(lod: u8) -> Option<usize> {
 #[derive(Debug, Eq, PartialEq)]
 pub struct MeshLodDrawGroup<'a, S> {
     vertex_type: u32,
+    draw_flags: u8,
     prims: Vec<C3dConsecutiveBatch<'a, S>>,
 }
 
@@ -306,6 +307,24 @@ impl<'a, S: Copy> MeshLodDrawGroup<'a, S> {
     /// The draw-group vertex type passed to [`draw_call`] for every prim.
     pub fn vertex_type(&self) -> u32 {
         self.vertex_type
+    }
+
+    /// The draw-group flags byte (`mesh + lod*0x18 + 0x20`, copied from Group-1
+    /// record offset `+0x14` by `FUN_004b1e10`).
+    pub fn draw_flags(&self) -> u8 {
+        self.draw_flags
+    }
+
+    /// Whether this LOD disables back-face culling (`D3DCULL_NONE`,
+    /// [`crate::c3d_camera::TWO_SIDED_FLAG`]).
+    pub fn is_two_sided(&self) -> bool {
+        self.draw_flags & crate::c3d_camera::TWO_SIDED_FLAG != 0
+    }
+
+    /// Whether this LOD draws through the cylindrical Y-billboard drawer
+    /// `FUN_004a18e0` ([`crate::c3d_camera::Y_BILLBOARD_FLAG`]).
+    pub fn is_y_billboard(&self) -> bool {
+        self.draw_flags & crate::c3d_camera::Y_BILLBOARD_FLAG != 0
     }
 
     /// The prim batches, in submission order.
@@ -325,6 +344,20 @@ impl<'a, S: Copy> MeshLodDrawGroup<'a, S> {
     }
 }
 
+/// Expands a triangle-list index stream with reversed-winding duplicates
+/// (`[i2, i1, i0]` after the original triangles, matching `FUN_004a2b70` at
+/// `0x4a3e9e..0x4a3f42`) so a two-sided draw group (`D3DCULL_NONE`) renders from
+/// both sides under a single-sided `D3DCULL_CCW` rasterizer.
+#[must_use]
+pub fn two_sided_indices(indices: &[u16]) -> Vec<u16> {
+    let mut doubled = Vec::with_capacity(indices.len() * 2);
+    doubled.extend_from_slice(indices);
+    for &[i0, i1, i2] in indices.as_chunks::<3>().0 {
+        doubled.extend_from_slice(&[i2, i1, i0]);
+    }
+    doubled
+}
+
 /// Assembles one LOD's draw group from its on-disk group-1 mesh record, the LOD
 /// draw-group vertex type, and the resolved per-face selectors.
 ///
@@ -341,7 +374,11 @@ pub fn assemble_lod_draw_group<'a, S: Copy + Eq>(
     selectors: &[S],
 ) -> Result<MeshLodDrawGroup<'a, S>, C3dBatchPlanError> {
     let prims = plan_consecutive_batches(record, selectors)?;
-    Ok(MeshLodDrawGroup { vertex_type, prims })
+    Ok(MeshLodDrawGroup {
+        vertex_type,
+        draw_flags: record.draw_flags(),
+        prims,
+    })
 }
 
 /// The vertex and index counts one prim submits in its `DrawIndexedPrimitive`
@@ -657,6 +694,13 @@ mod tests {
         assert!(group.has_per_vertex_diffuse());
         assert!(group.takes_fog(true));
         assert!(!group.takes_fog(false));
+        assert_eq!(group.draw_flags(), 0);
+        assert!(!group.is_two_sided());
+        assert!(!group.is_y_billboard());
+        assert_eq!(
+            two_sided_indices(&[0, 1, 2, 3, 4, 5]),
+            vec![0, 1, 2, 3, 4, 5, 2, 1, 0, 5, 4, 3]
+        );
 
         let prims = group.prims();
         assert_eq!(prims.len(), 2);

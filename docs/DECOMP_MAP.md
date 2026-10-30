@@ -442,6 +442,7 @@ Car-vs-car collision (`FUN_00442740`, `FUN_004438a0`, `FUN_00442860`, `FUN_00441
 All 14 stage sibling sections (`.c3d`, `.dat`, `.obj`, `.moj`, `.sht`, `.ars`, `.hzn`, `.tsc`, `.csp`, `.cat`, `.spl`, `.anm`, `.rsf`, `.fuz`) are integrated in `cmr-formats::stage::StageBundle` (`E08` complete), and `.moj` kinematic motion (`FUN_0045bde0`..`FUN_0045c9c0`) is reconstructed in `cmr-core::stage_moj_motion`.
 Replay snapshot keyframes (`FUN_0046c7d0`/`FUN_0046c910`/`FUN_0046ca70`), Region-A initial-state seed views and partial-preserve restores (`FUN_0046d370`/`FUN_0046d460`), RLE input-trace playback (`FUN_0046dc20`), `.SSR`/`.RSP` file parsing (`FUN_0046ddc0`/`FUN_0046de30`), `CarState` Region-A seeding, and Rally School `intro.rsp`/`exit.rsp` playback (`FUN_0046de70`, `FUN_00437ef0`, `FUN_004384a0`, `FUN_0046edd0`) are reconstructed in `cmr-core::replay`, `cmr-core::race_state`, `cmr-core::gameplay_session`, and `cmr-app`.
 Bound `.moj` kinematic scene-object slots (`FUN_0045bde0`..`FUN_0045c9c0`) are wired end to end through `StageRenderResources::build_moj_slots` and `GameplaySession` (`set_moj_slots`, per-tick `step_moj_slot_45c1b0` in `four_wheel_tail`/`try_advance`, `interpolate_moj_slot_45c9c0` with `.hpc` ground-Y snap in `moving_object_node_locals`, and stage-reentry restore), and `FUN_0046f920` briefing `.avi`/`.wav` path formatting (`0x4ed6e8 = "%d"`, `0x4f4c1c = ".avi"`, `[80, 32, 320, 208]`) is pinned in `cmr-core::intro_video`, completing `I14` (`119 / 119` items complete).
+Headless `gamescope` differential verification against the original game pinned and wired C3D Group-1 `flag20` cylindrical Y-billboarding (`0x04`, `FUN_004a18e0`) and two-sided scenery (`0x01`, `FUN_004a2460`) across software and GPU renderers, the 12 decorative HUD border/progress-rail bitmaps (`FUN_0045dac0`, `FUN_0045f530`, `FUN_0045d050`), HUD font palette quantization/tinting against the active stage palette, uppercase default hostname player names, case-insensitive stage sibling lookup, and clean State-4 stage-loading interstitial presentation.
 
 ## Update rules
 
@@ -452,8 +453,8 @@ watched with `tail`; recompute its counters from the checklist instead of
 estimating them.
 
 <!-- PROGRESS-TAIL-BEGIN -->
-updated_utc=2026-11-02T08:45:00Z
-milestone=wire-moj-kinematic-motion-and-complete-i14
+updated_utc=2026-11-02T16:05:00Z
+milestone=reconstruct-y-billboard-two-sided-scenery-hud-frame-and-font-quantization
 completed=119
 partial=0
 not_started=0
