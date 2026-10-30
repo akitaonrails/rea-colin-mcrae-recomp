@@ -273,6 +273,59 @@ pub struct GameplaySession<'a> {
     rng: crate::game_rng::GameLcg,
 }
 
+/// A loaded `.rsp` / `.ssr` replay track (`DAT_005ef444` intro or `DAT_005ef440` exit).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SchoolReplayTrack {
+    region_a: Box<[u8; crate::replay::REPLAY_INITIAL_STATE_BYTES]>,
+    records: Vec<crate::replay::ReplayControlRecord>,
+    stepper: crate::replay::ReplayPlaybackStepper,
+    started: bool,
+}
+
+impl SchoolReplayTrack {
+    /// Parse a single-frame `.rsp` or `.ssr` buffer (`FUN_0046ddc0` + `FUN_0046de30`).
+    #[must_use]
+    pub fn from_replay_bytes(bytes: &[u8]) -> Option<Self> {
+        let view = crate::replay::ReplayFileView::from_bytes(bytes)?;
+        let region_a_view = view.region_a(0)?;
+        let (records, stepper) = view.frame_playback(0)?;
+        let mut region_a = Box::new([0u8; crate::replay::REPLAY_INITIAL_STATE_BYTES]);
+        region_a.copy_from_slice(region_a_view.as_bytes());
+        Some(Self {
+            region_a,
+            records,
+            stepper,
+            started: false,
+        })
+    }
+
+    #[must_use]
+    pub fn region_a_view(&self) -> crate::replay::ReplayRegionAView<'_> {
+        crate::replay::ReplayRegionAView::new(&self.region_a)
+    }
+
+    #[must_use]
+    pub const fn is_started(&self) -> bool {
+        self.started
+    }
+
+    #[must_use]
+    pub const fn is_finished(&self) -> bool {
+        self.stepper.is_finished()
+    }
+
+    /// Step one physics tick of RLE replay input (`FUN_0046dc20`).
+    pub fn step_controls(&mut self) -> Option<Controls> {
+        let decoded = self.stepper.step_tick_46dc20(&self.records)?;
+        Some(Controls::from_decoded_replay_control(&decoded))
+    }
+
+    /// Stop playback early (`FUN_0046dd90`, player skip `FUN_0046ee40`).
+    pub fn stop_playback_46dd90(&mut self) {
+        self.stepper.cursor = usize::from(self.stepper.end_cursor);
+    }
+}
+
 /// The rally school's task in a session: the in-race logic, the intro
 /// (state 7) and exit (state 9) phases, and what the host plays.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -285,6 +338,14 @@ pub struct SchoolTask {
     exit: u8,
     /// The host's instructor channel is playing.
     pub speaking: bool,
+    /// Optional loaded `intro.rsp` pan (`DAT_005ef444` / `DAT_004f4b34`).
+    pub intro_rsp: Option<SchoolReplayTrack>,
+    /// Optional loaded `exit.rsp` demonstration (`DAT_005ef440` / `DAT_004f4b38`).
+    pub exit_rsp: Option<SchoolReplayTrack>,
+    /// `DAT_005ef454`: State 7 post-pan fade-out / restore phase.
+    intro_fading_5ef454: bool,
+    /// `DAT_005ef450`: State 7 intro `.rsp` pan completed; ready for intro speech.
+    intro_pan_done_5ef450: bool,
     cues: Vec<SchoolHostCue>,
     marks_out: Option<[u8; 4]>,
 }
@@ -556,15 +617,25 @@ impl ResultsHold {
     }
 }
 
-/// The school's gates in states 5, 7 and 9. The intro and exit
-/// demonstration replays (`.rsp`) are not reconstructed, so the binary's
-/// path without them runs: state 7 plays the intro wav and waits for it
-/// (`0x437f3a`); state 9 waits out the task end's fade, fades in at black,
-/// plays the exit wav by the total and waits for it (`0x4384f2`).
+/// The school's gates in states 5, 7 and 9 (`FUN_00437ef0` / `FUN_0046e0f0` /
+/// `FUN_0046edd0` for state 7; `FUN_004384a0` / `FUN_0046e180` for state 9).
+///
+/// When `intro_rsp` (`DAT_005ef444`) is attached, state 7 seeds `race` from
+/// `intro.rsp` Region A (`FUN_0046db30`), plays its RLE control stream until
+/// completion or skip (`FUN_0046e0f0`), fades out to black, restores `race` to
+/// `stage_start` in neutral gear (`FUN_0046edd0`), fades back in, plays the
+/// instructor intro speech (`FUN_00474cb0`), and shifts to 1st gear (`0x438087`).
+/// When `exit_rsp` (`DAT_005ef440`) is attached, state 9 seeds `race` from
+/// `exit.rsp` Region A at the black fade boundary (`0x438545`), fades in, starts
+/// the instructor exit speech (`FUN_00474cd0`), and waits for both the speech
+/// and `exit.rsp` playback (`FUN_0046e180`) to finish.
+#[allow(clippy::too_many_arguments)]
 fn school_gates(
     state: u8,
     task: &mut SchoolTask,
     fade: &mut RaceFade,
+    race: &mut RaceState,
+    stage_start: CarState,
     rng: &mut crate::game_rng::GameLcg,
     inputs: &mut InRaceInputs,
 ) {
@@ -579,14 +650,45 @@ fn school_gates(
             inputs.replay_ready = task.race.done;
         }
         7 => {
-            match task.intro {
-                0 => {
-                    task.cues.push(SchoolHostCue::IntroSpeech);
-                    task.intro = 1;
+            if !task.intro_pan_done_5ef450
+                && let Some(track) = task.intro_rsp.as_mut()
+            {
+                if !task.intro_fading_5ef454 {
+                    if !track.started {
+                        track.started = true;
+                        race.seed_from_replay_region_a_46d460(track.region_a_view());
+                    }
+                    if track.is_finished() {
+                        fade.fade_out();
+                        task.intro_fading_5ef454 = true;
+                    }
+                } else if fade.fade.idle() {
+                    if fade.fade.evaluate() == 0 {
+                        // `FUN_0046edd0`: restore car 0 from pre-pan backup in neutral gear.
+                        race.set_car(stage_start);
+                        race.set_gear_43a(0);
+                        task.race.hud = true;
+                        fade.fade_in_race();
+                    } else {
+                        task.intro_fading_5ef454 = false;
+                        task.intro_pan_done_5ef450 = true;
+                    }
                 }
-                1 => task.intro = 2,
-                2 if !task.speaking => task.intro = 3,
-                _ => {}
+            } else {
+                match task.intro {
+                    0 => {
+                        task.cues.push(SchoolHostCue::IntroSpeech);
+                        task.intro = 1;
+                    }
+                    1 => task.intro = 2,
+                    2 if !task.speaking => {
+                        if task.intro_pan_done_5ef450 {
+                            race.set_gear_43a(1);
+                        }
+                        task.intro = 3;
+                    }
+                    _ => {}
+                }
             }
             inputs.replay_intro_done = task.intro == 3;
         }
@@ -594,6 +696,10 @@ fn school_gates(
             match task.exit {
                 0 if fade.fade.idle() => {
                     if fade.fade.evaluate() == 0 {
+                        if let Some(track) = task.exit_rsp.as_mut() {
+                            track.started = true;
+                            race.seed_from_replay_region_a_46d460(track.region_a_view());
+                        }
                         task.race.hud = false;
                         fade.fade_in_race();
                     } else {
@@ -603,10 +709,20 @@ fn school_gates(
                 1 => {
                     let wav = SchoolTask::exit_wav(task.race.marks(), rng);
                     task.cues.push(SchoolHostCue::ExitSpeech(wav));
+                    if task.exit_rsp.is_some() {
+                        race.set_gear_43a(1);
+                    }
                     task.exit = 2;
                 }
                 2 => task.exit = 3,
-                3 if !task.speaking => task.exit = 4,
+                3 if !task.speaking
+                    && task
+                        .exit_rsp
+                        .as_ref()
+                        .is_none_or(SchoolReplayTrack::is_finished) =>
+                {
+                    task.exit = 4;
+                }
                 _ => {}
             }
             inputs.flyby_cinematic_done = task.exit == 4;
@@ -628,13 +744,15 @@ fn in_race_next(
     finished: bool,
     results: &mut ResultsHold,
     fade: &mut RaceFade,
+    race: &mut RaceState,
+    stage_start: CarState,
     finish_writeback: &mut bool,
     school: Option<&mut SchoolTask>,
     rng: &mut crate::game_rng::GameLcg,
 ) -> GameState {
     let mut inputs = pause.apply(script.with_finish(finished, event.globals.school_d3ca88));
     if let Some(task) = school.filter(|_| inputs.school_session) {
-        school_gates(state.id(), task, fade, rng, &mut inputs);
+        school_gates(state.id(), task, fade, race, stage_start, rng, &mut inputs);
     }
     inputs.fade_done = fade.fade.idle();
     inputs.results_page_up = fade.display_up;
@@ -1229,11 +1347,15 @@ impl<'a> GameplaySession<'a> {
         if driving_sample.is_some() {
             self.wet_tick(&controls);
             self.school_after_drive(&controls, progress);
+        } else if !pause.enter_pause {
+            self.step_active_school_replay(progress)?;
         }
         let script = self.script;
         let results = &mut self.results;
         let sim_ticks = &mut self.sim_ticks;
         let fade = &mut self.fade;
+        let race = &mut self.race;
+        let stage_start = self.stage_start;
         let writeback = &mut self.damage_writeback;
         let school = &mut self.school;
         let rng = &mut self.rng;
@@ -1256,6 +1378,8 @@ impl<'a> GameplaySession<'a> {
                 progress.finished(),
                 results,
                 fade,
+                race,
+                stage_start,
                 writeback,
                 school.as_mut(),
                 rng,
@@ -1393,11 +1517,16 @@ impl<'a> GameplaySession<'a> {
         if driving_sample.is_some() {
             self.wet_tick(&controls);
             self.school_after_drive(&controls, progress);
+        } else if !pause.enter_pause {
+            self.step_active_school_replay(progress)
+                .map_err(StaticGameplayAdvanceError::Wheel)?;
         }
         let script = self.script;
         let results = &mut self.results;
         let sim_ticks = &mut self.sim_ticks;
         let fade = &mut self.fade;
+        let race = &mut self.race;
+        let stage_start = self.stage_start;
         let writeback = &mut self.damage_writeback;
         let school = &mut self.school;
         let rng = &mut self.rng;
@@ -1420,6 +1549,8 @@ impl<'a> GameplaySession<'a> {
                 progress.finished(),
                 results,
                 fade,
+                race,
+                stage_start,
                 writeback,
                 school.as_mut(),
                 rng,
@@ -1661,9 +1792,96 @@ impl<'a> GameplaySession<'a> {
             intro: 0,
             exit: 0,
             speaking: false,
+            intro_rsp: None,
+            exit_rsp: None,
+            intro_fading_5ef454: false,
+            intro_pan_done_5ef450: false,
             cues: Vec::new(),
             marks_out: None,
         });
+    }
+
+    /// Attach loaded `intro.rsp` (`DAT_005ef444`) and/or `exit.rsp` (`DAT_005ef440`)
+    /// tracks (`FUN_0046de70`) to the active school task.
+    pub fn set_school_replays(
+        &mut self,
+        intro_rsp: Option<SchoolReplayTrack>,
+        exit_rsp: Option<SchoolReplayTrack>,
+    ) {
+        if let Some(task) = self.school.as_mut() {
+            task.intro_rsp = intro_rsp;
+            task.exit_rsp = exit_rsp;
+        }
+    }
+
+    /// Stop the currently playing school `.rsp` pan (`FUN_0046ee40` -> `FUN_0046dd90`).
+    pub fn skip_school_replay(&mut self) {
+        let state = self.session.current().id();
+        let Some(task) = self.school.as_mut() else {
+            return;
+        };
+        if state == 7
+            && let Some(track) = task.intro_rsp.as_mut()
+        {
+            track.stop_playback_46dd90();
+        } else if state == 9
+            && let Some(track) = task.exit_rsp.as_mut()
+        {
+            track.stop_playback_46dd90();
+        }
+    }
+
+    /// Step an active `.rsp` replay track during State 7 (`intro.rsp`) or State 9
+    /// (`exit.rsp`) (`FUN_0043afd0` -> `FUN_0046dd50` -> `FUN_0046dc20`).
+    fn step_active_school_replay(
+        &mut self,
+        progress: &mut StageProgress,
+    ) -> Result<(), WheelPostprocessError> {
+        let state = self.session.current().id();
+        let replay_controls = {
+            let Some(task) = self.school.as_mut() else {
+                return Ok(());
+            };
+            match state {
+                7 if !task.intro_fading_5ef454 && !task.intro_pan_done_5ef450 => {
+                    let Some(track) = task.intro_rsp.as_mut() else {
+                        return Ok(());
+                    };
+                    if !track.started {
+                        track.started = true;
+                        self.race
+                            .seed_from_replay_region_a_46d460(track.region_a_view());
+                    }
+                    track.step_controls()
+                }
+                9 => {
+                    let Some(track) = task.exit_rsp.as_mut() else {
+                        return Ok(());
+                    };
+                    if track.started {
+                        track.step_controls()
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        };
+        let Some(controls) = replay_controls else {
+            return Ok(());
+        };
+        if self.wheel.is_some() {
+            let race_before = self.race.clone();
+            let mut sample = self.four_wheel_drive(&controls)?;
+            if let Err(error) = self.four_wheel_tail(&controls, progress, &mut sample) {
+                self.race = race_before;
+                return Err(error);
+            }
+        } else {
+            self.race.step(&controls, &self.params);
+        }
+        self.sim_ticks += 1;
+        Ok(())
     }
 
     /// `DAT_005fbe18`: the loaded stage's school lines (their numbers are
@@ -2870,5 +3088,111 @@ mod tests {
         );
         assert_eq!(session.moving_object_node_locals().len(), 1);
         assert_eq!(session.moving_object_node_locals()[0].0, 7);
+    }
+
+    #[test]
+    fn school_task_with_intro_and_exit_rsp_tracks_seeds_steps_and_restores_car() {
+        use crate::replay::{
+            REPLAY_INITIAL_STATE_BYTES, REPLAY_OBJECT_HEADER_BYTES, REPLAY_PHYSICS_OFFSET,
+            REPLAY_TICK_RECORD_BYTES, ReplayObjectHeader, replay_object_size,
+        };
+        use crate::school_race::{SchoolRace, SchoolScoring};
+
+        let make_rsp_bytes = |seed_x: i32, n_records: u16| -> Vec<u8> {
+            let n_ticks = 8u16;
+            let size = replay_object_size(u32::from(n_ticks), 1);
+            let mut buf = vec![0u8; size];
+            let hdr = ReplayObjectHeader {
+                n_frames_30: 1,
+                n_ticks_32: n_ticks as i16,
+                recorded_frames_34: 1,
+                ..ReplayObjectHeader::default()
+            };
+            buf[..REPLAY_OBJECT_HEADER_BYTES].copy_from_slice(&hdr.to_bytes());
+            let pos_off = REPLAY_OBJECT_HEADER_BYTES + REPLAY_PHYSICS_OFFSET + 0xc8;
+            buf[pos_off..pos_off + 4].copy_from_slice(&seed_x.to_le_bytes());
+            let rb = REPLAY_OBJECT_HEADER_BYTES + REPLAY_INITIAL_STATE_BYTES;
+            for i in 0..usize::from(n_records) {
+                let off = rb + i * REPLAY_TICK_RECORD_BYTES;
+                buf[off..off + 4].copy_from_slice(&[0x04, 0x00, 0x01, 0x00]);
+            }
+            let rc = rb + usize::from(n_ticks) * REPLAY_TICK_RECORD_BYTES;
+            buf[rc..rc + 2].copy_from_slice(&n_records.to_le_bytes());
+            buf
+        };
+
+        let intro_track =
+            SchoolReplayTrack::from_replay_bytes(&make_rsp_bytes(0x77_0000, 2)).unwrap();
+        let exit_track =
+            SchoolReplayTrack::from_replay_bytes(&make_rsp_bytes(0x88_0000, 2)).unwrap();
+
+        let script = InRaceScript {
+            replay_ready: false,
+            replay_intro_done: false,
+            flyby_cinematic_done: false,
+            quit_requested: false,
+            ..InRaceScript::school_harness()
+        };
+        let mut session = GameplaySession::new(params(), script);
+        let nodes = line();
+        let mut progress = StageProgress::new(&nodes, 0);
+        for _ in 0..100 {
+            if session.state().id() == 4 {
+                break;
+            }
+            rendered(&mut session, &mut progress);
+        }
+        assert_eq!(session.state().id(), 4);
+
+        let reference = cmr_formats::school_rsf::SchoolReference {
+            time_cs: 100,
+            records: vec![cmr_formats::school_rsf::LineRecord::default(); 200],
+            trailing: Vec::new(),
+        };
+        let scoring = SchoolScoring {
+            offsets: [[0; 6]; 12],
+            scales: [[1; 6]; 12],
+            damage_sum: 0,
+            setup: [0; 5],
+        };
+        session.start_school_task(SchoolRace::start(0, 0, 3, reference, scoring));
+        session.set_school_replays(Some(intro_track), Some(exit_track));
+
+        let mut saw_intro_seed = false;
+        let mut saw_restored_start = false;
+        let mut saw_exit_seed = false;
+        let mut states = Vec::new();
+        for _ in 0..3500 {
+            rendered(&mut session, &mut progress);
+            let st = session.state().id();
+            if states.last() != Some(&st) {
+                states.push(st);
+            }
+            if st == 7 && session.car().position.x == Fixed16::from_raw(0x77_0000) {
+                saw_intro_seed = true;
+            }
+            if st == 7 && saw_intro_seed && session.car().position.x == Fixed16::ZERO {
+                saw_restored_start = true;
+            }
+            if st == 9 && session.car().position.x == Fixed16::from_raw(0x88_0000) {
+                saw_exit_seed = true;
+            }
+            if st == 2 {
+                break;
+            }
+        }
+        assert!(
+            saw_intro_seed,
+            "State 7 seeded car from intro.rsp Region A (0x77_0000)"
+        );
+        assert!(
+            saw_restored_start,
+            "State 7 restored car to stage_start (0) via FUN_0046edd0 after intro.rsp"
+        );
+        assert!(
+            saw_exit_seed,
+            "State 9 seeded car from exit.rsp Region A (0x88_0000)"
+        );
+        assert_eq!(states, [7, 5, 9, 0xb, 2]);
     }
 }

@@ -8488,7 +8488,14 @@ fn reload_stage_for_event<'a>(
     }
     // The school's stage load (`FUN_004716b0`) and setup (`FUN_0046ee70`).
     if session.event().globals.school_d3ca88 {
-        start_school_task(session, loaded, config, results, &mut camera.rng);
+        start_school_task(
+            session,
+            loaded,
+            context.game_root.as_deref(),
+            config,
+            results,
+            &mut camera.rng,
+        );
     }
     // `FUN_00420c70` in the car load: player 1's carried damage.
     let live = cmr_core::config_commit::live_mut(&mut config.image);
@@ -8510,6 +8517,18 @@ fn reload_stage_for_event<'a>(
     Ok(())
 }
 
+/// Load a Rally School `.rsp` replay track (`FUN_0046de70` -> `FUN_0046ddc0`).
+fn load_school_rsp_track(
+    game_root: &Path,
+    rel_path: &str,
+) -> Option<cmr_core::gameplay_session::SchoolReplayTrack> {
+    let (dir, file_name) = resolve_stage_dir(game_root, rel_path)?;
+    let path = find_case_insensitive(&dir, &file_name)?;
+    let raw = std::fs::read(&path).ok()?;
+    let decoded = decode_stored_asset(&raw, DecodeLimits::default()).ok()?;
+    cmr_core::gameplay_session::SchoolReplayTrack::from_replay_bytes(decoded.bytes())
+}
+
 /// `FUN_004716b0` and `FUN_0046ee70` for the loaded school stage: the
 /// reference run beside the stage (`<stage>.rsf`), the forced setup, the
 /// scorer's tables and the intro wav's pick. A missing reference run
@@ -8517,6 +8536,7 @@ fn reload_stage_for_event<'a>(
 fn start_school_task(
     session: &mut GameplaySession,
     loaded: &LoadedStageKey,
+    game_root: Option<&Path>,
     config: &mut FrontEndConfig,
     results: &mut RaceResults,
     rng: &mut GameLcg,
@@ -8552,6 +8572,13 @@ fn start_school_task(
     session.start_school_task(cmr_core::school_race::SchoolRace::start(
         level, task, lines, reference, scoring,
     ));
+    if let Some(root) = game_root {
+        let intro_rsp = cmr_core::replay::school_intro_rsp_path_46de70(level, task)
+            .and_then(|rel| load_school_rsp_track(root, &rel));
+        let exit_rsp = cmr_core::replay::school_exit_rsp_path_46de70(level, task)
+            .and_then(|rel| load_school_rsp_track(root, &rel));
+        session.set_school_replays(intro_rsp, exit_rsp);
+    }
     results.school.intro_wav = Some(cmr_core::school_race::intro_wav(task, rng));
 }
 

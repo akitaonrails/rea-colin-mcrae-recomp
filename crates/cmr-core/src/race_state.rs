@@ -130,6 +130,30 @@ pub struct Controls {
     pub raw_gear_command_314: i8,
 }
 
+impl Controls {
+    /// Build per-tick [`Controls`] from a decoded replay control record (`FUN_0046cef0` / `FUN_0046dc20`).
+    #[must_use]
+    pub fn from_decoded_replay_control(decoded: &crate::replay::ReplayDecodedControl) -> Self {
+        Self {
+            steer_rate: 0,
+            forward_force: Fixed16::ZERO,
+            handbrake: decoded.actuators.handbrake,
+            raw_steer: RawSteer {
+                left_2fc: decoded.actuators.steer,
+                right_300: decoded.actuators.steer_alternate,
+                analog_410: decoded.control_410,
+            },
+            raw_pedals: RawPedals {
+                throttle_304: decoded.actuators.throttle,
+                brake_308: decoded.actuators.brake,
+                throttle_analog_414: decoded.control_414,
+                brake_analog_418: decoded.control_418,
+            },
+            raw_gear_command_314: decoded.actuators.gear as i8,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FirstWheelState {
     pub force: i32,
@@ -1109,6 +1133,191 @@ impl CarState {
             },
             ground: None,
         }
+    }
+
+    /// Seed this [`CarState`] from a replay Region-A initial-state block
+    /// (`FUN_0046d460`: `FUN_0046d150` control restore `+0xcd0..+0x1134` and
+    /// `FUN_0046d1f0` physics restore `+0x11f4..+0x195c`).
+    pub fn seed_from_replay_region_a_46d460(&mut self, view: crate::replay::ReplayRegionAView<'_>) {
+        let phys = view.physics_bytes();
+        let ctl = view.control_bytes();
+        let p_i32 = |off: usize| i32::from_le_bytes(phys[off..off + 4].try_into().unwrap());
+        let p_u16 = |off: usize| u16::from_le_bytes(phys[off..off + 2].try_into().unwrap());
+        let p_i16 = |off: usize| i16::from_le_bytes(phys[off..off + 2].try_into().unwrap());
+        let p_raw3 = |off: usize| [p_i32(off), p_i32(off + 4), p_i32(off + 8)];
+        let p_vec3 = |off: usize| {
+            Vec3::new(
+                Fixed16::from_raw(p_i32(off)),
+                Fixed16::from_raw(p_i32(off + 4)),
+                Fixed16::from_raw(p_i32(off + 8)),
+            )
+        };
+        let c_i32 = |off: usize| i32::from_le_bytes(ctl[off..off + 4].try_into().unwrap());
+        let c_u16 = |off: usize| u16::from_le_bytes(ctl[off..off + 2].try_into().unwrap());
+        let c_i16 = |off: usize| i16::from_le_bytes(ctl[off..off + 2].try_into().unwrap());
+        let c_vec3 = |off: usize| {
+            Vec3::new(
+                Fixed16::from_raw(c_i32(off)),
+                Fixed16::from_raw(c_i32(off + 4)),
+                Fixed16::from_raw(c_i32(off + 8)),
+            )
+        };
+
+        self.position = p_vec3(0xc8);
+        self.velocity = p_vec3(0xd4);
+        self.motion = MotionState {
+            basis: [p_vec3(0x258), p_vec3(0x264), p_vec3(0x270)],
+            projection_axis: p_vec3(0x324),
+            angular_velocity: p_vec3(0xf0),
+            moment: p_vec3(0x3d8),
+            compiled_half_words: p_vec3(0x2c),
+            lane_source_s: p_vec3(0x5d4),
+            contact_distance_flags: std::array::from_fn(|i| p_i32(0x68c + i * 4) != 0),
+            contact_count_674: p_i32(0x674),
+            upper_hull_deformation: UpperHullDeformationScalars {
+                scale_638: Fixed16::from_raw(p_i32(0x638)),
+                scale_63c: Fixed16::from_raw(p_i32(0x63c)),
+                scale_640: Fixed16::from_raw(p_i32(0x640)),
+            },
+        };
+        self.collision.pending_linear_3cc = p_vec3(0x3cc);
+        self.collision.response_state_680 = p_i32(0x680) != 0;
+        self.collision.recovery_latch_688 = p_i32(0x688) != 0;
+        self.collision.out_of_control_axis_bc = p_vec3(0xbc);
+
+        let wheel = &mut self.four_wheel;
+        wheel.first = std::array::from_fn(|w| FirstWheelState {
+            force: p_i32(0x534 + w * 4),
+            wheel_speed: c_i32(0x2a8 + w * 4),
+        });
+        for w in 0..4 {
+            wheel.second[w].ratio_at_3b0 = c_i32(0x3b0 + w * 4);
+        }
+        wheel.smoothed_wheel_speeds = std::array::from_fn(|w| c_i32(0x2b8 + w * 4));
+        wheel.contact_updates = std::array::from_fn(|i| p_vec3(0x45c + i * 12));
+        wheel.speed_ec = p_i32(0xec);
+        wheel.residual_enable = ctl[0x43b];
+        wheel.engine_2e0 = c_i32(0x2e0);
+        wheel.engine_speed_2e8 = c_i32(0x2e8);
+        wheel.limiter_444 = c_i32(0x444) != 0;
+        wheel.limiter_cut_448 = c_i32(0x448);
+        wheel.engine_force_530 = p_i32(0x530);
+        wheel.idle_6e8 = p_i32(0x6e8);
+        wheel.idle_countdown_6ec = p_i16(0x6ec);
+        wheel.pedals = PedalResponseState {
+            response_2d8: c_i32(0x2d8),
+            throttle_ramp_2dc: c_i32(0x2dc),
+            brake_response_2ec: c_i32(0x2ec),
+            brake_ramp_2f0: c_i32(0x2f0),
+            handbrake_torque_2f4: c_i32(0x2f4),
+            handbrake_ramp_2f8: c_i32(0x2f8),
+        };
+        wheel.steering = SteeringState {
+            position_318: c_i32(0x318),
+            direction_114: c_i32(0x114),
+            angle_3e0: c_i16(0x3e0),
+            target_3e2: c_i16(0x3e2),
+        };
+        wheel.gearbox = GearboxState {
+            gear_43a: ctl[0x43a] as i8,
+            target_43f: ctl[0x43f] as i8,
+            shift_40c: c_i32(0x40c) != 0,
+            cooldown_441: ctl[0x441] as i8,
+            last_direction_442: ctl[0x442],
+            skip_443: ctl[0x443] as i8,
+            reverse_mode_408: c_i32(0x408) != 0,
+            upshift_hint_420: c_i32(0x420) != 0,
+        };
+        wheel.upright_404 = c_i32(0x404) != 0;
+        wheel.resting_700 = p_i32(0x700) != 0;
+        wheel.start_basis_27c = [p_vec3(0x27c), p_vec3(0x288), p_vec3(0x294)];
+        wheel.wheel_terms = WheelSurfaceTerms {
+            term_278: std::array::from_fn(|w| c_i32(0x278 + w * 4)),
+            term_288: std::array::from_fn(|w| c_i32(0x288 + w * 4)),
+            term_298: std::array::from_fn(|w| c_i32(0x298 + w * 4)),
+        };
+        wheel.tyre_gains = TyreGains {
+            gain_31c: std::array::from_fn(|i| c_i32(0x31c + i * 4)),
+            gain_33c: std::array::from_fn(|i| c_i32(0x33c + i * 4)),
+            gain_35c: std::array::from_fn(|i| c_i32(0x35c + i * 4)),
+            gain_36c: std::array::from_fn(|i| c_i32(0x36c + i * 4)),
+        };
+        wheel.support_3fc = std::array::from_fn(|i| p_vec3(0x3fc + i * 12));
+        wheel.tumble = TumbleState {
+            righting_3ec: c_i32(0x3ec) != 0,
+            roof_3f4: c_i32(0x3f4) != 0,
+            side_3f8: c_i32(0x3f8) != 0,
+            end_3fc: c_i32(0x3fc) != 0,
+            roof_ticks_43c: ctl[0x43c] as i8,
+            side_ticks_43d: ctl[0x43d] as i8,
+            end_ticks_43e: ctl[0x43e] as i8,
+            hull_ticks_678: p_i32(0x678),
+            inverted_684: p_i32(0x684) != 0,
+            lowest_wheel_64c: p_i32(0x64c),
+            lowest_wheel_650: phys[0x650] as i8,
+        };
+        wheel.contact_vectors_4bc = std::array::from_fn(|i| p_vec3(0x4bc + i * 12));
+        wheel.lateral_dot_3c0 = std::array::from_fn(|w| c_i32(0x3c0 + w * 4));
+        wheel.rollover = RolloverState {
+            slope_ticks_734: p_u16(0x734),
+            roll_610: p_i32(0x610),
+            roll_ticks_614: p_i16(0x614),
+            roll_angle_60c: p_i16(0x60c),
+        };
+        wheel.previous_normal_330 = p_vec3(0x330);
+        wheel.reset = ResetFadeState {
+            active_41c: c_i32(0x41c) != 0,
+            countdown_424: c_i32(0x424),
+            fade_428: ctl[0x428],
+            penalty_460: c_i32(0x460) != 0,
+        };
+        wheel.saved_position_3e4 = p_vec3(0x3e4);
+        wheel.trigger_prior_15c = std::array::from_fn(|i| p_raw3(0x15c + i * 12));
+        wheel.barrier_impact_3f0 = p_raw3(0x3f0);
+        wheel.head_vectors_380 = std::array::from_fn(|i| c_vec3(0x380 + i * 12));
+        wheel.barrier_contact_6dc = p_i32(0x6dc) != 0;
+        wheel.trigger_walk.previous_contact_6e0 = p_i32(0x6e0) != 0;
+        wheel.trigger_walk.penalty_timer_75c = p_i16(0x75c);
+        wheel.wheels.compression_55c = std::array::from_fn(|w| p_i32(0x55c + w * 4));
+        wheel.wheels.eased_56c = std::array::from_fn(|w| p_i32(0x56c + w * 4));
+        wheel.wheels.vibration_57c = std::array::from_fn(|w| p_u16(0x57c + w * 2));
+        wheel.wheels.bounce_584 = std::array::from_fn(|w| p_i32(0x584 + w * 4));
+        wheel.wheels.travel_594 = std::array::from_fn(|w| p_i32(0x594 + w * 4));
+        wheel.wheels.wobble_phase_604 = std::array::from_fn(|w| p_u16(0x604 + w * 2));
+        wheel.wheels.wobble_5e4 =
+            std::array::from_fn(|w| [p_i32(0x5e4 + w * 8), p_i32(0x5e8 + w * 8)]);
+
+        let lane_inputs = self.ground.map_or(
+            crate::compiled_car_initializer::CompiledSetupPoseLaneInputs {
+                gate_words: [0; 8],
+                drive_words: [0; 8],
+                first_four_subtractions: [0; 4],
+            },
+            |g| g.lane_inputs,
+        );
+        self.ground = Some(GroundContact {
+            lanes: crate::compiled_car_initializer::CompiledEightLaneExecutionState {
+                handles: std::array::from_fn(|i| c_i16(0x3d0 + i * 2)),
+                type_words: std::array::from_fn(|i| c_u16(0x42a + i * 2)),
+                output_vectors: std::array::from_fn(|i| p_raw3(0x33c + i * 12)),
+                lane_words: std::array::from_fn(|i| p_i32(0x2e4 + i * 4)),
+                accumulator_words: std::array::from_fn(|i| p_i32(0x618 + i * 4)),
+                latch_67c: p_i32(0x67c),
+            },
+            lane_inputs,
+            half_words: p_raw3(0x2c),
+            deformation: p_raw3(0x638),
+            probes: std::array::from_fn(|i| p_raw3(0xfc + i * 12)),
+            thresholds: CompiledLaneThresholdEffects {
+                flags_73a: std::array::from_fn(|i| phys[0x73a + i]),
+                count_742: phys[0x742],
+                flag_743: phys[0x743],
+                indices_744: std::array::from_fn(|i| phys[0x744 + i]),
+            },
+            wheel_reach_648_644: [p_i32(0x648), p_i32(0x644)],
+            reach_20: p_i32(0x20),
+            radius_44: p_i32(0x44),
+        });
     }
 }
 
@@ -2949,6 +3158,26 @@ impl RaceState {
         wheel.trigger_walk.penalty_timer_75c = 0;
     }
 
+    /// Seed the live car state from a replay Region-A initial-state block (`FUN_0046d460`).
+    pub fn seed_from_replay_region_a_46d460(&mut self, view: crate::replay::ReplayRegionAView<'_>) {
+        self.car.seed_from_replay_region_a_46d460(view);
+        self.last_tumble_impact = None;
+    }
+
+    /// Replace the live car state (used by `FUN_0046edd0` to restore car 0 from
+    /// its pre-pan backup `FUN_0046eda0`).
+    pub fn set_car(&mut self, car: CarState) {
+        self.car = car;
+        self.last_tumble_impact = None;
+    }
+
+    /// Set the car's current gear (`ctl +0x43a` and `+0x43f`, `FUN_0046edd0` /
+    /// `0x438087` / `0x4385be`).
+    pub fn set_gear_43a(&mut self, gear: i8) {
+        self.car.four_wheel.gearbox.gear_43a = gear;
+        self.car.four_wheel.gearbox.target_43f = gear;
+    }
+
     /// Run a scripted control sequence, returning the per-tick trace.
     pub fn run_trace(&mut self, controls: &[Controls], params: &SimParams) -> Vec<TraceSample> {
         controls.iter().map(|c| self.step(c, params)).collect()
@@ -4491,5 +4720,63 @@ mod tests {
         let trace = state.run_trace(&script, &params());
         let last = trace.last().unwrap().car;
         assert_ne!(last.velocity.z, Fixed16::ZERO);
+    }
+
+    #[test]
+    fn seed_from_replay_region_a_and_replay_controls_populate_car_state() {
+        use crate::replay::{
+            REPLAY_CONTROL_OFFSET, REPLAY_INITIAL_STATE_BYTES, REPLAY_PHYSICS_OFFSET,
+            ReplayControlRecord, ReplayRegionAView, decode_replay_control,
+        };
+
+        let mut region_a = Box::new([0u8; REPLAY_INITIAL_STATE_BYTES]);
+        let phys_off = REPLAY_PHYSICS_OFFSET;
+        let ctl_off = REPLAY_CONTROL_OFFSET;
+
+        // Position (+0xc8), velocity (+0xd4), speed_ec (+0xec), contact_count (+0x674)
+        region_a[phys_off + 0xc8..phys_off + 0xcc].copy_from_slice(&0x12_3456i32.to_le_bytes());
+        region_a[phys_off + 0xcc..phys_off + 0xd0].copy_from_slice(&0x23_4567i32.to_le_bytes());
+        region_a[phys_off + 0xd0..phys_off + 0xd4].copy_from_slice(&0x34_5678i32.to_le_bytes());
+        region_a[phys_off + 0xd4..phys_off + 0xd8].copy_from_slice(&0x1_0000i32.to_le_bytes());
+        region_a[phys_off + 0xec..phys_off + 0xf0].copy_from_slice(&0x1_0000i32.to_le_bytes());
+        region_a[phys_off + 0x674..phys_off + 0x678].copy_from_slice(&4i32.to_le_bytes());
+        region_a[phys_off + 0x700..phys_off + 0x704].copy_from_slice(&1i32.to_le_bytes());
+
+        // Control: gear_43a = 2, target_43f = 2, residual_enable = 5, upright_404 = 1
+        region_a[ctl_off + 0x404..ctl_off + 0x408].copy_from_slice(&1i32.to_le_bytes());
+        region_a[ctl_off + 0x43a] = 2;
+        region_a[ctl_off + 0x43b] = 5;
+        region_a[ctl_off + 0x43f] = 2;
+
+        let mut state = RaceState::new(CarState::at_rest());
+        state.seed_from_replay_region_a_46d460(ReplayRegionAView::new(&region_a));
+        let car = state.car();
+        assert_eq!(
+            car.position,
+            Vec3::new(
+                Fixed16::from_raw(0x12_3456),
+                Fixed16::from_raw(0x23_4567),
+                Fixed16::from_raw(0x34_5678),
+            )
+        );
+        assert_eq!(car.velocity.x, Fixed16::ONE);
+        assert_eq!(car.four_wheel.speed_ec, 0x1_0000);
+        assert_eq!(car.motion.contact_count_674, 4);
+        assert!(car.four_wheel.resting_700);
+        assert!(car.four_wheel.upright_404);
+        assert_eq!(car.four_wheel.gearbox.gear_43a, 2);
+        assert_eq!(car.four_wheel.gearbox.target_43f, 2);
+        assert_eq!(car.four_wheel.residual_enable, 5);
+        assert!(car.ground.is_some());
+
+        // Decode a replay control record and map to Controls
+        let decoded = decode_replay_control(ReplayControlRecord([0x04, 0x02, 0x81, 0xe0]), 0);
+        let controls = Controls::from_decoded_replay_control(&decoded);
+        assert_eq!(controls.raw_steer.left_2fc, 0x20 << 10);
+        assert!(controls.raw_steer.analog_410);
+        assert_eq!(controls.raw_pedals.throttle_304, -66);
+        assert!(!controls.raw_pedals.throttle_analog_414);
+        assert!(controls.handbrake);
+        assert_eq!(controls.raw_gear_command_314, 1);
     }
 }

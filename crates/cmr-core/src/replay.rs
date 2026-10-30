@@ -617,6 +617,12 @@ impl<'a> ReplayRegionAView<'a> {
         Self { bytes }
     }
 
+    /// Borrow the full `0x151ec`-byte Region-A slice.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &'a [u8; REPLAY_INITIAL_STATE_BYTES] {
+        self.bytes
+    }
+
     /// Borrow from a byte slice if its length is `REPLAY_INITIAL_STATE_BYTES` (`0x151ec`).
     #[must_use]
     pub fn from_slice(slice: &'a [u8]) -> Option<Self> {
@@ -802,6 +808,301 @@ impl ReplayPlaybackStepper {
         }
         Some(decoded)
     }
+}
+
+/// The `0x40`-byte header of a replay object (`.SSR` / `.RSP` file prefix or
+/// runtime allocation at `FUN_0046d7b0`..`FUN_0046de30`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ReplayObjectHeader {
+    /// `+0x00`: distance-gated pan mode (`FUN_0046d870` `arg2`, `FUN_0046d8f0`
+    /// `0x23_0000 <= dist <= 0x32_0000` gate).
+    pub distance_gated_mode_00: u32,
+    /// `+0x04`: playback active flag (`0` = idle, `1` = playing).
+    pub is_playing_04: u32,
+    /// `+0x08`: playback frame active flag.
+    pub playback_frame_active_08: u32,
+    /// `+0x0c`: recording active flag.
+    pub is_recording_0c: u32,
+    /// `+0x10`: recording frame active flag.
+    pub recording_frame_active_10: u32,
+    /// `+0x14`: playback frame transition pulse.
+    pub playback_frame_transition_14: u32,
+    /// `+0x18`: recording frame transition pulse.
+    pub recording_frame_transition_18: u32,
+    /// `+0x1c`: target car slot index (`0..8`).
+    pub car_idx_1c: u8,
+    /// `+0x1d`: running RLE repeat counter (`0..64`).
+    pub rle_repeat_counter_1d: u8,
+    /// `+0x1e..+0x20`: alignment bytes.
+    pub pad_1e: [u8; 2],
+    /// `+0x20`: serialized Region-A pointer (relocated on load by `FUN_0046de30`
+    /// to offset `0x40`).
+    pub region_a_ptr_20: u32,
+    /// `+0x24`: current playback Region-A pointer.
+    pub playback_region_a_cur_24: u32,
+    /// `+0x28`: current recording Region-A pointer.
+    pub recording_region_a_cur_28: u32,
+    /// `+0x2c`: serialized Region-B pointer (relocated on load by `FUN_0046de30`
+    /// to offset `0x40 + n_frames * 0x151ec`).
+    pub region_b_ptr_2c: u32,
+    /// `+0x30`: frame capacity (`1` in all `.SSR` / `.RSP` files).
+    pub n_frames_30: i16,
+    /// `+0x32`: tick capacity per frame (`0x1d4c` = 7500 at 25 Hz, `0x3a98` = 15000 at 50 Hz).
+    pub n_ticks_32: i16,
+    /// `+0x34`: number of recorded frames (`0..=n_frames_30`; `FUN_0046db30`
+    /// requires `start_frame < recorded_frames_34`).
+    pub recorded_frames_34: i16,
+    /// `+0x36`: alignment word.
+    pub pad_36: u16,
+    /// `+0x38`: serialized Region-C pointer (relocated on load by `FUN_0046de30`
+    /// to offset `0x40 + n_frames * (0x151ec + n_ticks * 4)`).
+    pub region_c_ptr_38: u32,
+    /// `+0x3c`: current playback frame index.
+    pub playback_frame_idx_3c: i16,
+    /// `+0x3e`: current playback Region-B record cursor.
+    pub playback_record_cursor_3e: i16,
+}
+
+impl ReplayObjectHeader {
+    /// Parse the `0x40`-byte header from little-endian bytes (`FUN_0046ddc0`).
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8; REPLAY_OBJECT_HEADER_BYTES]) -> Self {
+        let u32_at = |off: usize| u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        let u16_at = |off: usize| u16::from_le_bytes(bytes[off..off + 2].try_into().unwrap());
+        let i16_at = |off: usize| i16::from_le_bytes(bytes[off..off + 2].try_into().unwrap());
+        Self {
+            distance_gated_mode_00: u32_at(0x00),
+            is_playing_04: u32_at(0x04),
+            playback_frame_active_08: u32_at(0x08),
+            is_recording_0c: u32_at(0x0c),
+            recording_frame_active_10: u32_at(0x10),
+            playback_frame_transition_14: u32_at(0x14),
+            recording_frame_transition_18: u32_at(0x18),
+            car_idx_1c: bytes[0x1c],
+            rle_repeat_counter_1d: bytes[0x1d],
+            pad_1e: [bytes[0x1e], bytes[0x1f]],
+            region_a_ptr_20: u32_at(0x20),
+            playback_region_a_cur_24: u32_at(0x24),
+            recording_region_a_cur_28: u32_at(0x28),
+            region_b_ptr_2c: u32_at(0x2c),
+            n_frames_30: i16_at(0x30),
+            n_ticks_32: i16_at(0x32),
+            recorded_frames_34: i16_at(0x34),
+            pad_36: u16_at(0x36),
+            region_c_ptr_38: u32_at(0x38),
+            playback_frame_idx_3c: i16_at(0x3c),
+            playback_record_cursor_3e: i16_at(0x3e),
+        }
+    }
+
+    /// Serialize the `0x40`-byte header to little-endian bytes (`FUN_0046de00`).
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; REPLAY_OBJECT_HEADER_BYTES] {
+        let mut out = [0u8; REPLAY_OBJECT_HEADER_BYTES];
+        out[0x00..0x04].copy_from_slice(&self.distance_gated_mode_00.to_le_bytes());
+        out[0x04..0x08].copy_from_slice(&self.is_playing_04.to_le_bytes());
+        out[0x08..0x0c].copy_from_slice(&self.playback_frame_active_08.to_le_bytes());
+        out[0x0c..0x10].copy_from_slice(&self.is_recording_0c.to_le_bytes());
+        out[0x10..0x14].copy_from_slice(&self.recording_frame_active_10.to_le_bytes());
+        out[0x14..0x18].copy_from_slice(&self.playback_frame_transition_14.to_le_bytes());
+        out[0x18..0x1c].copy_from_slice(&self.recording_frame_transition_18.to_le_bytes());
+        out[0x1c] = self.car_idx_1c;
+        out[0x1d] = self.rle_repeat_counter_1d;
+        out[0x1e..0x20].copy_from_slice(&self.pad_1e);
+        out[0x20..0x24].copy_from_slice(&self.region_a_ptr_20.to_le_bytes());
+        out[0x24..0x28].copy_from_slice(&self.playback_region_a_cur_24.to_le_bytes());
+        out[0x28..0x2c].copy_from_slice(&self.recording_region_a_cur_28.to_le_bytes());
+        out[0x2c..0x30].copy_from_slice(&self.region_b_ptr_2c.to_le_bytes());
+        out[0x30..0x32].copy_from_slice(&self.n_frames_30.to_le_bytes());
+        out[0x32..0x34].copy_from_slice(&self.n_ticks_32.to_le_bytes());
+        out[0x34..0x36].copy_from_slice(&self.recorded_frames_34.to_le_bytes());
+        out[0x36..0x38].copy_from_slice(&self.pad_36.to_le_bytes());
+        out[0x38..0x3c].copy_from_slice(&self.region_c_ptr_38.to_le_bytes());
+        out[0x3c..0x3e].copy_from_slice(&self.playback_frame_idx_3c.to_le_bytes());
+        out[0x3e..0x40].copy_from_slice(&self.playback_record_cursor_3e.to_le_bytes());
+        out
+    }
+
+    /// Relocated byte offsets `(region_a_offset, region_b_offset, region_c_offset)`
+    /// within the replay object buffer, reproducing `FUN_0046de30`.
+    #[must_use]
+    pub fn relocated_offsets_46de30(&self) -> Option<(usize, usize, usize)> {
+        let n_frames = usize::try_from(self.n_frames_30).ok()?;
+        let n_ticks = usize::try_from(self.n_ticks_32).ok()?;
+        if n_frames == 0 || n_ticks == 0 {
+            return None;
+        }
+        let region_a = REPLAY_OBJECT_HEADER_BYTES;
+        let region_b = region_a.checked_add(n_frames.checked_mul(REPLAY_INITIAL_STATE_BYTES)?)?;
+        let region_b_bytes = n_frames.checked_mul(n_ticks.checked_mul(REPLAY_TICK_RECORD_BYTES)?)?;
+        let region_c = region_b.checked_add(region_b_bytes)?;
+        Some((region_a, region_b, region_c))
+    }
+}
+
+/// Bounds-checked view over a loaded `.SSR` or `.RSP` replay file (`FUN_0046ddc0`
+/// + `FUN_0046de30`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReplayFileView<'a> {
+    bytes: &'a [u8],
+    header: ReplayObjectHeader,
+    region_a_offset: usize,
+    region_b_offset: usize,
+    region_c_offset: usize,
+}
+
+impl<'a> ReplayFileView<'a> {
+    /// Validate and wrap a loaded replay buffer (`FUN_0046ddc0` size check +
+    /// `FUN_0046de30` pointer relocation).
+    #[must_use]
+    pub fn from_bytes(bytes: &'a [u8]) -> Option<Self> {
+        let header_bytes: &[u8; REPLAY_OBJECT_HEADER_BYTES] =
+            bytes.get(..REPLAY_OBJECT_HEADER_BYTES)?.try_into().ok()?;
+        let header = ReplayObjectHeader::from_bytes(header_bytes);
+        let n_frames = u32::try_from(header.n_frames_30).ok()?;
+        let n_ticks = u32::try_from(header.n_ticks_32).ok()?;
+        if n_frames == 0
+            || n_ticks == 0
+            || header.recorded_frames_34 < 0
+            || header.recorded_frames_34 > header.n_frames_30
+        {
+            return None;
+        }
+        if !replay_file_size_valid(bytes.len(), n_ticks, n_frames) {
+            return None;
+        }
+        let (region_a_offset, region_b_offset, region_c_offset) =
+            header.relocated_offsets_46de30()?;
+        Some(Self {
+            bytes,
+            header,
+            region_a_offset,
+            region_b_offset,
+            region_c_offset,
+        })
+    }
+
+    #[must_use]
+    pub const fn header(&self) -> &ReplayObjectHeader {
+        &self.header
+    }
+
+    #[must_use]
+    pub const fn n_frames(&self) -> usize {
+        self.header.n_frames_30 as usize
+    }
+
+    #[must_use]
+    pub const fn n_ticks(&self) -> usize {
+        self.header.n_ticks_32 as usize
+    }
+
+    #[must_use]
+    pub const fn recorded_frames(&self) -> usize {
+        self.header.recorded_frames_34 as usize
+    }
+
+    /// Return the Region-A initial-state seed block for `frame_idx` (`0..recorded_frames`).
+    #[must_use]
+    pub fn region_a(&self, frame_idx: usize) -> Option<ReplayRegionAView<'a>> {
+        if frame_idx >= self.recorded_frames() {
+            return None;
+        }
+        let start = self
+            .region_a_offset
+            .checked_add(frame_idx.checked_mul(REPLAY_INITIAL_STATE_BYTES)?)?;
+        let end = start.checked_add(REPLAY_INITIAL_STATE_BYTES)?;
+        let slice: &'a [u8; REPLAY_INITIAL_STATE_BYTES] =
+            self.bytes.get(start..end)?.try_into().ok()?;
+        Some(ReplayRegionAView::new(slice))
+    }
+
+    /// Return the Region-C end-cursor `u16` (`[region_c + frame_idx * 2]`) for `frame_idx`.
+    #[must_use]
+    pub fn region_c_end_cursor(&self, frame_idx: usize) -> Option<u16> {
+        if frame_idx >= self.recorded_frames() {
+            return None;
+        }
+        let start = self.region_c_offset.checked_add(frame_idx.checked_mul(2)?)?;
+        let raw: [u8; 2] = self.bytes.get(start..start + 2)?.try_into().ok()?;
+        let end_cursor = u16::from_le_bytes(raw);
+        if usize::from(end_cursor) > self.n_ticks() {
+            return None;
+        }
+        Some(end_cursor)
+    }
+
+    /// Read one 4-byte Region-B record `(frame_idx, record_idx)`.
+    #[must_use]
+    pub fn region_b_record(
+        &self,
+        frame_idx: usize,
+        record_idx: usize,
+    ) -> Option<ReplayControlRecord> {
+        if frame_idx >= self.recorded_frames() || record_idx >= self.n_ticks() {
+            return None;
+        }
+        let frame_base = self
+            .region_b_offset
+            .checked_add(frame_idx.checked_mul(self.n_ticks() * REPLAY_TICK_RECORD_BYTES)?)?;
+        let start = frame_base.checked_add(record_idx.checked_mul(REPLAY_TICK_RECORD_BYTES)?)?;
+        let raw: [u8; 4] = self.bytes.get(start..start + 4)?.try_into().ok()?;
+        Some(ReplayControlRecord(raw))
+    }
+
+    /// Collect the active Region-B records `0..end_cursor` for `frame_idx`, together
+    /// with a [`ReplayPlaybackStepper`] ready to step `FUN_0046dc20`.
+    #[must_use]
+    pub fn frame_playback(
+        &self,
+        frame_idx: usize,
+    ) -> Option<(Vec<ReplayControlRecord>, ReplayPlaybackStepper)> {
+        let end_cursor = self.region_c_end_cursor(frame_idx)?;
+        let count = usize::from(end_cursor);
+        let mut records = Vec::with_capacity(count);
+        for idx in 0..count {
+            records.push(self.region_b_record(frame_idx, idx)?);
+        }
+        Some((records, ReplayPlaybackStepper::new(end_cursor)))
+    }
+}
+
+/// Subdirectory under `rallschl\pans\` selected by `(level, task)` in `FUN_0046de70`.
+///
+/// Tasks `0` and `1` in every level take place on the Skid Pan (`"skid"`).
+/// Tasks `2`, `3`, and `4` select `"easy"` (`level == 0`), `"medium"` (`level == 1`),
+/// or `"hard"` (`level == 2`).
+#[must_use]
+pub const fn school_rsp_subdir_46de70(level: u8, task: u8) -> Option<&'static str> {
+    match task {
+        0 | 1 => Some("skid"),
+        2..=4 => match level {
+            0 => Some("easy"),
+            1 => Some("medium"),
+            2 => Some("hard"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Relative path under the game root for the Rally School intro `.rsp` pan
+/// (`FUN_0046de70` -> `DAT_005ef444`), loaded only when `task < 2`.
+#[must_use]
+pub fn school_intro_rsp_path_46de70(level: u8, task: u8) -> Option<String> {
+    if task >= 2 {
+        return None;
+    }
+    let subdir = school_rsp_subdir_46de70(level, task)?;
+    Some(format!("rallschl\\pans\\{subdir}\\intro.rsp"))
+}
+
+/// Relative path under the game root for the Rally School exit `.rsp` demonstration
+/// (`FUN_0046de70` -> `DAT_005ef440`), loaded for every `(level, task)`.
+#[must_use]
+pub fn school_exit_rsp_path_46de70(level: u8, task: u8) -> Option<String> {
+    let subdir = school_rsp_subdir_46de70(level, task)?;
+    Some(format!("rallschl\\pans\\{subdir}\\exit.rsp"))
 }
 
 #[cfg(test)]
@@ -1188,5 +1489,92 @@ mod tests {
         assert_eq!(stepper.cursor, 2);
         assert!(stepper.is_finished());
         assert!(stepper.step_tick_46dc20(&records).is_none());
+    }
+
+    #[test]
+    fn replay_object_header_and_file_view_round_trip_and_validate_bounds() {
+        let n_ticks = 4u16;
+        let size = replay_object_size(u32::from(n_ticks), 1);
+        let mut buf = vec![0u8; size];
+        let hdr = ReplayObjectHeader {
+            distance_gated_mode_00: 1,
+            car_idx_1c: 0,
+            n_frames_30: 1,
+            n_ticks_32: n_ticks as i16,
+            recorded_frames_34: 1,
+            ..ReplayObjectHeader::default()
+        };
+        buf[..REPLAY_OBJECT_HEADER_BYTES].copy_from_slice(&hdr.to_bytes());
+        assert_eq!(
+            ReplayObjectHeader::from_bytes(buf[..REPLAY_OBJECT_HEADER_BYTES].try_into().unwrap()),
+            hdr
+        );
+
+        let (ra, rb, rc) = hdr.relocated_offsets_46de30().unwrap();
+        assert_eq!(ra, 0x40);
+        assert_eq!(rb, 0x40 + REPLAY_INITIAL_STATE_BYTES);
+        assert_eq!(rc, rb + 4 * REPLAY_TICK_RECORD_BYTES);
+
+        // Set position in Region A
+        let pos_off = ra + REPLAY_PHYSICS_OFFSET + 0xc8;
+        buf[pos_off..pos_off + 4].copy_from_slice(&0x5_0000i32.to_le_bytes());
+        // Set 2 records in Region B and end_cursor = 2 in Region C
+        buf[rb..rb + 4].copy_from_slice(&[0x04, 0x00, 0x02, 0x00]);
+        buf[rb + 4..rb + 8].copy_from_slice(&[0x00, 0x04, 0x01, 0x00]);
+        buf[rc..rc + 2].copy_from_slice(&2u16.to_le_bytes());
+
+        let view = ReplayFileView::from_bytes(&buf).unwrap();
+        assert_eq!(view.n_frames(), 1);
+        assert_eq!(view.n_ticks(), 4);
+        assert_eq!(view.recorded_frames(), 1);
+        assert_eq!(
+            view.region_a(0).unwrap().physics_position_q16()[0],
+            0x5_0000
+        );
+        assert_eq!(view.region_c_end_cursor(0), Some(2));
+        let (records, mut stepper) = view.frame_playback(0).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(
+            stepper.step_tick_46dc20(&records).unwrap().actuators.throttle,
+            -66
+        );
+
+        // Reject truncated buffer
+        assert!(ReplayFileView::from_bytes(&buf[..size - 1]).is_none());
+    }
+
+    #[test]
+    fn school_rsp_paths_match_fun_0046de70_jump_table() {
+        // Tasks 0 and 1 in all levels map to skid/intro.rsp and skid/exit.rsp
+        for level in 0..=2 {
+            for task in 0..=1 {
+                assert_eq!(
+                    school_intro_rsp_path_46de70(level, task).as_deref(),
+                    Some("rallschl\\pans\\skid\\intro.rsp")
+                );
+                assert_eq!(
+                    school_exit_rsp_path_46de70(level, task).as_deref(),
+                    Some("rallschl\\pans\\skid\\exit.rsp")
+                );
+            }
+        }
+        // Tasks 2..=4 have no intro.rsp and map exit.rsp by level (easy, medium, hard)
+        for task in 2..=4 {
+            assert_eq!(school_intro_rsp_path_46de70(0, task), None);
+            assert_eq!(
+                school_exit_rsp_path_46de70(0, task).as_deref(),
+                Some("rallschl\\pans\\easy\\exit.rsp")
+            );
+            assert_eq!(
+                school_exit_rsp_path_46de70(1, task).as_deref(),
+                Some("rallschl\\pans\\medium\\exit.rsp")
+            );
+            assert_eq!(
+                school_exit_rsp_path_46de70(2, task).as_deref(),
+                Some("rallschl\\pans\\hard\\exit.rsp")
+            );
+        }
+        assert_eq!(school_exit_rsp_path_46de70(3, 2), None);
+        assert_eq!(school_exit_rsp_path_46de70(0, 5), None);
     }
 }

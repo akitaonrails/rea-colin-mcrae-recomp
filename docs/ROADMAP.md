@@ -2091,8 +2091,13 @@ depenetration, inelastic impulse/torque, and crash-damage response
 (closing E08), and `.moj` kinematic object motion (`FUN_0045bde0`..`FUN_0045c9c0`)
 is reconstructed in `cmr-core::stage_moj_motion`. Replay snapshot keyframes
 (`FUN_0046c7d0`/`FUN_0046c910`/`FUN_0046ca70`), Region-A initial-state seed
-views and partial-preserve restores (`FUN_0046d370`/`FUN_0046d460`), and RLE
-input-trace playback (`FUN_0046dc20`) are reconstructed in `cmr-core::replay`.
+views and partial-preserve restores (`FUN_0046d370`/`FUN_0046d460`), RLE
+input-trace playback (`FUN_0046dc20`), `.SSR`/`.RSP` file parsing and pointer
+relocation (`FUN_0046ddc0`/`FUN_0046de30`), `CarState`/`RaceState` Region-A
+seeding, and Rally School `intro.rsp`/`exit.rsp` playback (`FUN_0046de70`,
+`FUN_00437ef0`, `FUN_004384a0`, `FUN_0046edd0`) are reconstructed in
+`cmr-core::replay`, `cmr-core::race_state`, `cmr-core::gameplay_session`, and
+`cmr-app`.
 The reset trigger remains an explicit input, and no unsupported position-snap,
 time penalty, or damage-performance mapping is claimed.
 

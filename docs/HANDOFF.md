@@ -216,27 +216,31 @@ tyre inputs (`DAT_004f6b50/6f10/777c` are now in `SessionTyreTables`).
 
 ## Latest state (read first)
 
-Replay snapshot keyframes (`SnapshotKeyframe`, `SnapshotCarLane`), Region-A
-initial-state seed views and partial-preserve restores (`ReplayRegionAView`,
-`FUN_0046d370`/`FUN_0046d460`), and RLE input-trace playback
-(`ReplayPlaybackStepper`, `FUN_0046dc20`) are now reconstructed in
-`cmr-core::replay` (`impl.replay-snapshot-and-region-a`). Stage bundle sibling
-decoders and `.moj` kinematic object motion (`E08` -> complete, `118 / 119`
-items complete; `impl.stage-bundle-all-14-siblings-and-moj`) are also complete
-in `cmr-formats::stage` and `cmr-core::stage_moj_motion`.
+`.SSR`/`.RSP` file parsing and pointer relocation (`ReplayObjectHeader`,
+`ReplayFileView`, `FUN_0046ddc0`/`FUN_0046de30`), Rally School `.rsp` path
+selection (`school_intro_rsp_path_46de70`, `school_exit_rsp_path_46de70`),
+`CarState`/`RaceState` Region-A seeding (`seed_from_replay_region_a_46d460`,
+`Controls::from_decoded_replay_control`), and `GameplaySession` State 7/9
+`intro.rsp`/`exit.rsp` playback and `FUN_0046edd0` pre-pan car restore
+(`SchoolReplayTrack`, `set_school_replays`, `skip_school_replay`) are now
+reconstructed and wired into `cmr-app::start_school_task`
+(`impl.replay-file-and-school-rsp`). Replay snapshot keyframes
+(`SnapshotKeyframe`, `SnapshotCarLane`), Region-A seed views
+(`ReplayRegionAView`), and RLE input-trace playback (`ReplayPlaybackStepper`)
+are also complete (`impl.replay-snapshot-and-region-a`), as are all 14 stage
+bundle sibling decoders and `.moj` kinematic object motion (`E08` -> complete,
+`118 / 119` items complete; `impl.stage-bundle-all-14-siblings-and-moj`).
 
 ## Highest-priority remaining work
 
 The earlier items (four-wheel path, contact flags, the static damage owner,
-the body basis, moving objects, night headlights, and car-vs-car collision) are
-done; see `docs/CONVERSION_TIMELINE.md` for the history. Open now, in order:
+the body basis, moving objects, night headlights, car-vs-car collision, stage
+sibling sections/`.moj` motion, and `.SSR`/`.RSP` replay seeding and Rally School
+pan playback) are done; see `docs/CONVERSION_TIMELINE.md` for the history. Open
+now, in order:
 
-1. Replays (`replay.rs` has the trace format): the input-trace re-simulation
-   behind the school's demonstration runs (`Pans/*/exit.rsp`,
-   `Pans/Skid/intro.rsp`) and the `.ssr` files. Playback re-runs the physics
-   from a raw car-state seed, so it needs the seed mapped onto `RaceState` and
-   a bit-exact sim; until then the binary's no-replay path runs.
-2. The intro FMV codec (IV50) for the front end's opening movie.
+1. The intro FMV codec (IV50 / Indeo 5) for the front end's opening movie and
+   final `I14` closure.
 
 The next `docs/DECOMP_MAP.md` focus stays on the gameplay gaps above.
 
