@@ -216,17 +216,17 @@ tyre inputs (`DAT_004f6b50/6f10/777c` are now in `SessionTyreTables`).
 
 ## Latest state (read first)
 
-Car-vs-car collision and response (`impl.car-vs-car-collision`) are now complete
-in `cmr-core::car_vs_car_collision` and bridged onto `RaceState`:
-`should_run_car_vs_car_43b2cc` (`FUN_00485bb0` / `FUN_00401060` mode gates),
-`cars_share_cell_442767` (4×4 active-cell equality), `car_sphere_overlap_4438a0`
-(`FUN_004438a0`), `resolve_car_vs_car_narrow_phase_442860` (`FUN_00442860`
-two-pass XZ OBB narrow phase with 50/50 depenetration and `-5.0` fast-contact Y
-lever-arm drop), `apply_car_vs_car_response_441f30` (`FUN_00441f30` X/Z-only
-contact clamp, inelastic normal impulse, grounded Y-transfer via `+0x743 != 1`,
-`±8/±4/±8` torque clamp, dual-car `FUN_0041f630` crash damage with doubled and
-saturated severity, and `DAT_00552f5c`-gated material `5` impact sound and FFB),
-and `resolve_car_vs_car_collision_442740`.
+Stage bundle sibling decoders and `.moj` kinematic object motion (`E08` ->
+complete, `118 / 119` items complete; `impl.stage-bundle-all-14-siblings-and-moj`)
+are now complete: `cmr-formats::stage::StageBundle` and `load_stage` integrate
+all 14 `STAGE_EXTENSIONS` (`.c3d`, `.dat`, `.obj`, `.moj`, `.sht`, `.ars`,
+`.hzn`, `.tsc`, `.csp`, `.cat`, `.spl`, `.anm`, `.rsf`, and `.fuz`), and
+`cmr-core::stage_moj_motion` reconstructs `.moj` scene-node binding
+(`FUN_0045be90`/`FUN_0045c160`), X/Y/X rotation (`FUN_0045c770`/`FUN_0045c890`),
+circular and linear translation modes `1..=4` (`FUN_0045c1b0`), and pose
+interpolation (`FUN_0045c9c0`). Car-vs-car collision and response
+(`impl.car-vs-car-collision`) are also complete in
+`cmr-core::car_vs_car_collision` and bridged onto `RaceState`.
 
 ## Highest-priority remaining work
 

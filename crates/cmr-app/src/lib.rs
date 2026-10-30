@@ -132,9 +132,10 @@ use cmr_formats::font::{BitmapFont, FontError, FontLimits, parse_legacy_font};
 use cmr_formats::riff_palette::{PaletteEntry, PaletteError, parse_legacy_palette_256};
 use cmr_formats::stage::CatNode;
 use cmr_formats::stage::{
-    ARS_EXTENSION, C3D_EXTENSION, CAT_EXTENSION, CSP_EXTENSION, CspStart, DAT_EXTENSION,
-    HZN_EXTENSION, OBJ_EXTENSION, SHT_EXTENSION, StageBundle, StageLoadError, StageSectionSource,
-    TSC_EXTENSION, load_stage,
+    ANM_EXTENSION, ARS_EXTENSION, C3D_EXTENSION, CAT_EXTENSION, CSP_EXTENSION, CspStart,
+    DAT_EXTENSION, FUZ_EXTENSION, HZN_EXTENSION, MOJ_EXTENSION, OBJ_EXTENSION, RSF_EXTENSION,
+    SHT_EXTENSION, SPL_EXTENSION, StageBundle, StageLoadError, StageSectionSource, TSC_EXTENSION,
+    load_stage,
 };
 use cmr_formats::stored_asset::{DecodeError, DecodeLimits, decode_stored_asset};
 use cmr_gpu_contract::{PersistentRawC3dGpuBackend, PersistentRawC3dIndexedBackend};
@@ -1187,14 +1188,19 @@ pub struct FsStageSectionSource {
     hzn: Option<Vec<u8>>,
     ars: Option<Vec<u8>>,
     obj: Option<Vec<u8>>,
+    moj: Option<Vec<u8>>,
     sht: Option<Vec<u8>>,
     csp: Option<Vec<u8>>,
     dat: Option<Vec<u8>>,
     tsc: Option<Vec<u8>>,
+    spl: Option<Vec<u8>>,
+    anm: Option<Vec<u8>>,
+    rsf: Option<Vec<u8>>,
+    fuz: Option<Vec<u8>>,
 }
 
 impl FsStageSectionSource {
-    /// Reads all currently decoded siblings of `stage` under `media_root`.
+    /// Reads all 14 master-loader sibling sections of `stage` under `media_root`.
     pub fn read(
         media_root: &Path,
         stage: &str,
@@ -1206,10 +1212,15 @@ impl FsStageSectionSource {
             hzn: read_decoded_section(media_root, stage, HZN_EXTENSION, limits)?,
             ars: read_decoded_section(media_root, stage, ARS_EXTENSION, limits)?,
             obj: read_decoded_section(media_root, stage, OBJ_EXTENSION, limits)?,
+            moj: read_decoded_section(media_root, stage, MOJ_EXTENSION, limits)?,
             sht: read_decoded_section(media_root, stage, SHT_EXTENSION, limits)?,
             csp: read_decoded_section(media_root, stage, CSP_EXTENSION, limits)?,
             dat: read_decoded_section(media_root, stage, DAT_EXTENSION, limits)?,
             tsc: read_decoded_section(media_root, stage, TSC_EXTENSION, limits)?,
+            spl: read_decoded_section(media_root, stage, SPL_EXTENSION, limits)?,
+            anm: read_decoded_section(media_root, stage, ANM_EXTENSION, limits)?,
+            rsf: read_decoded_section(media_root, stage, RSF_EXTENSION, limits)?,
+            fuz: read_decoded_section(media_root, stage, FUZ_EXTENSION, limits)?,
         })
     }
 }
@@ -1222,10 +1233,15 @@ impl StageSectionSource for FsStageSectionSource {
             HZN_EXTENSION => self.hzn.as_deref(),
             ARS_EXTENSION => self.ars.as_deref(),
             OBJ_EXTENSION => self.obj.as_deref(),
+            MOJ_EXTENSION => self.moj.as_deref(),
             SHT_EXTENSION => self.sht.as_deref(),
             CSP_EXTENSION => self.csp.as_deref(),
             DAT_EXTENSION => self.dat.as_deref(),
             TSC_EXTENSION => self.tsc.as_deref(),
+            SPL_EXTENSION => self.spl.as_deref(),
+            ANM_EXTENSION => self.anm.as_deref(),
+            RSF_EXTENSION => self.rsf.as_deref(),
+            FUZ_EXTENSION => self.fuz.as_deref(),
             _ => None,
         }
     }

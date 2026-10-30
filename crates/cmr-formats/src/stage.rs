@@ -34,6 +34,7 @@
 use std::fmt;
 
 use crate::c3d::{C3dError, C3dFile, C3dLimits, parse_c3d};
+use crate::school_rsf::{RsfError, SchoolReference, parse_rsf};
 
 /// Stride of one `.cat` node record (7 dwords).
 pub const CAT_NODE_STRIDE: usize = 0x1c;
@@ -73,6 +74,12 @@ pub const ARS_EXTENSION: &str = ".ars";
 pub const ARS_SETTINGS_LEN: usize = 16;
 /// Extension of the primary object/scenery C3D graph (parser mode 2).
 pub const OBJ_EXTENSION: &str = ".obj";
+/// Extension of the scripted moving/animated track-object records (`FUN_0045bde0`).
+pub const MOJ_EXTENSION: &str = ".moj";
+/// Size of one `.moj` record (`0x30` bytes = 12 dwords).
+pub const MOJ_RECORD_STRIDE: usize = 0x30;
+/// Capacity of the runtime `.moj` active table (`DAT_00579b68..0x57ae28`).
+pub const MOJ_MAX_ACTIVE_RECORDS: usize = 100;
 /// Extension of the secondary object/scenery C3D graph (parser mode 3).
 pub const SHT_EXTENSION: &str = ".sht";
 /// Extension of the authored car-start records.
@@ -83,6 +90,16 @@ pub const CSP_BLOCK_LEN: usize = 0x28;
 pub const TSC_EXTENSION: &str = ".tsc";
 /// Size of one `.tsc` camera record.
 pub const TSC_CAMERA_STRIDE: usize = 0x10;
+/// Extension of the split/checkpoint timing flag section (`FUN_0047fe10`).
+pub const SPL_EXTENSION: &str = ".spl";
+/// Extension of the animated-texture name table (`FUN_00482cc0`).
+pub const ANM_EXTENSION: &str = ".anm";
+/// Size of one `.anm` texture-name record (`0x0d` = 13 bytes).
+pub const ANM_RECORD_STRIDE: usize = 0x0d;
+/// Extension of the Rally-School reference run section (`FUN_004716b0` -> `FUN_00473140`).
+pub const RSF_EXTENSION: &str = ".rsf";
+/// Extension of the compiled-out `.fuz` stub section (`FUN_00443a40` / `FUN_00443ae0`).
+pub const FUZ_EXTENSION: &str = ".fuz";
 
 /// Rally-School stage directory template (`%s` = track name, `%d` = task index).
 pub const STAGE_DIR_TEMPLATE: &str = r"RALLSCHL\TRACKS\%s\TASK%d\";
@@ -124,6 +141,10 @@ pub enum StageError {
     CspInvalidLength { len: usize },
     /// A `.tsc` payload whose length is not a whole number of camera records.
     TscNotCameraAligned { len: usize, stride: usize },
+    /// A `.moj` payload whose length is not a whole number of `0x30` records.
+    MojNotRecordAligned { len: usize, stride: usize },
+    /// An `.anm` payload whose length is not a whole number of `0x0d` records.
+    AnmNotRecordAligned { len: usize, stride: usize },
 }
 
 impl fmt::Display for StageError {
@@ -164,6 +185,14 @@ impl fmt::Display for StageError {
                 f,
                 "tsc camera table length {len} is not a multiple of the {stride}-byte record stride"
             ),
+            StageError::MojNotRecordAligned { len, stride } => write!(
+                f,
+                "moj moving-object table length {len} is not a multiple of the {stride}-byte record stride"
+            ),
+            StageError::AnmNotRecordAligned { len, stride } => write!(
+                f,
+                "anm animated-texture table length {len} is not a multiple of the {stride}-byte record stride"
+            ),
         }
     }
 }
@@ -184,19 +213,14 @@ pub trait StageSectionSource {
     fn section(&self, extension: &str) -> Option<&[u8]>;
 }
 
-/// The decoded sections of one stage needed to render and navigate it: the
-/// `.c3d` scene (always present), optional `.hzn` background scene, and the
-/// `.cat` node spline (optional).
-///
-/// This is the recovered front half of the stage bundle (`FUN_004228d0` walks
-/// the 14-extension sibling set): it ties the per-section decoders to one stage,
-/// so a caller can go from a resolved stage base path to a parsed scene ready
-/// for `cmr-core::c3d_mesh::assemble_scene_meshes`. Sections whose decode is not
-/// yet reconstructed (`.obj`, `.sht`, ...) are left for later milestones.
+/// The decoded sections of one stage (`FUN_004228d0` walks all 14 sibling
+/// extensions in [`STAGE_EXTENSIONS`]): the mandatory `.c3d` world scene and
+/// the 13 optional sibling sections.
 #[derive(Debug)]
 pub struct StageBundle {
     scene: C3dFile,
     objects: Option<C3dFile>,
+    moving_object_paths: Option<Vec<MojRecord>>,
     scenery: Option<C3dFile>,
     horizon: Option<C3dFile>,
     ars: Option<ArsSettings>,
@@ -204,6 +228,10 @@ pub struct StageBundle {
     trackside_cameras: Option<Vec<TscCameraRecord>>,
     nodes: Option<Vec<CatNode>>,
     triggers: Option<Vec<TriggerVolume>>,
+    split_section: Option<SplSection>,
+    animated_textures: Option<Vec<AnmRecord>>,
+    school_reference: Option<SchoolReference>,
+    fuz_section: Option<FuzSection>,
 }
 
 impl StageBundle {
@@ -217,6 +245,12 @@ impl StageBundle {
     #[must_use]
     pub fn objects(&self) -> Option<&C3dFile> {
         self.objects.as_ref()
+    }
+
+    /// The parsed `.moj` scripted moving/animated object records, if present.
+    #[must_use]
+    pub fn moving_object_paths(&self) -> Option<&[MojRecord]> {
+        self.moving_object_paths.as_deref()
     }
 
     /// The parsed `.sht` secondary scenery graph, if present.
@@ -260,6 +294,30 @@ impl StageBundle {
     pub fn triggers(&self) -> Option<&[TriggerVolume]> {
         self.triggers.as_deref()
     }
+
+    /// The `.spl` split/checkpoint section state, if a `.spl` sibling was supplied.
+    #[must_use]
+    pub fn split_section(&self) -> Option<&SplSection> {
+        self.split_section.as_ref()
+    }
+
+    /// Parsed `.anm` animated-texture name records, if present.
+    #[must_use]
+    pub fn animated_textures(&self) -> Option<&[AnmRecord]> {
+        self.animated_textures.as_deref()
+    }
+
+    /// Parsed `.rsf` Rally-School reference run, if present.
+    #[must_use]
+    pub fn school_reference(&self) -> Option<&SchoolReference> {
+        self.school_reference.as_ref()
+    }
+
+    /// The `.fuz` stub section state, if a `.fuz` sibling was supplied.
+    #[must_use]
+    pub fn fuz_section(&self) -> Option<&FuzSection> {
+        self.fuz_section.as_ref()
+    }
 }
 
 /// Failure to load a stage bundle from its section source.
@@ -273,6 +331,8 @@ pub enum StageLoadError {
     Horizon(C3dError),
     /// The optional `.obj` scene payload failed to parse.
     Objects(C3dError),
+    /// The optional `.moj` moving-object path table failed to decode.
+    MovingObjectPaths(StageError),
     /// The optional `.sht` scene payload failed to parse.
     Scenery(C3dError),
     /// The optional `.ars` settings payload failed to decode.
@@ -285,6 +345,10 @@ pub enum StageLoadError {
     Nodes(StageError),
     /// The optional `.dat` trigger-volume payload failed to decode.
     Triggers(StageError),
+    /// The optional `.anm` animated-texture table failed to decode.
+    AnimatedTextures(StageError),
+    /// The optional `.rsf` Rally-School reference run failed to decode.
+    SchoolReference(RsfError),
 }
 
 impl fmt::Display for StageLoadError {
@@ -294,6 +358,9 @@ impl fmt::Display for StageLoadError {
             StageLoadError::Scene(error) => write!(f, "stage .c3d scene: {error}"),
             StageLoadError::Horizon(error) => write!(f, "stage .hzn horizon: {error}"),
             StageLoadError::Objects(error) => write!(f, "stage .obj objects: {error}"),
+            StageLoadError::MovingObjectPaths(error) => {
+                write!(f, "stage .moj moving-object paths: {error}")
+            }
             StageLoadError::Scenery(error) => write!(f, "stage .sht scenery: {error}"),
             StageLoadError::Ars(error) => write!(f, "stage .ars settings: {error}"),
             StageLoadError::Starts(error) => write!(f, "stage .csp starts: {error}"),
@@ -302,6 +369,12 @@ impl fmt::Display for StageLoadError {
             }
             StageLoadError::Nodes(error) => write!(f, "stage .cat nodes: {error}"),
             StageLoadError::Triggers(error) => write!(f, "stage .dat triggers: {error}"),
+            StageLoadError::AnimatedTextures(error) => {
+                write!(f, "stage .anm animated textures: {error}")
+            }
+            StageLoadError::SchoolReference(error) => {
+                write!(f, "stage .rsf school reference: {error}")
+            }
         }
     }
 }
@@ -312,23 +385,23 @@ impl std::error::Error for StageLoadError {
             StageLoadError::Scene(error) => Some(error),
             StageLoadError::Horizon(error) => Some(error),
             StageLoadError::Objects(error) => Some(error),
+            StageLoadError::MovingObjectPaths(error) => Some(error),
             StageLoadError::Scenery(error) => Some(error),
             StageLoadError::Ars(error) => Some(error),
             StageLoadError::Starts(error) => Some(error),
             StageLoadError::TracksideCameras(error) => Some(error),
             StageLoadError::Nodes(error) => Some(error),
             StageLoadError::Triggers(error) => Some(error),
+            StageLoadError::AnimatedTextures(error) => Some(error),
+            StageLoadError::SchoolReference(error) => Some(error),
             StageLoadError::MissingScene => None,
         }
     }
 }
 
-/// Loads a stage bundle from its section source, parsing the `.c3d` scene (with
-/// `c3d_limits`) and the `.cat` node spline when present.
-///
-/// The `.c3d` scene is mandatory ([`StageLoadError::MissingScene`] otherwise);
-/// a missing `.cat` yields [`StageBundle::nodes`] `None`. Other sibling sections
-/// are not decoded here yet.
+/// Loads a stage bundle from its section source, parsing the mandatory `.c3d`
+/// scene (with `c3d_limits`) and all present sibling sections from the
+/// 14-extension master-loader table (`FUN_004228d0`).
 pub fn load_stage(
     source: &impl StageSectionSource,
     c3d_limits: C3dLimits,
@@ -342,6 +415,11 @@ pub fn load_stage(
         .map(|bytes| parse_c3d(bytes, c3d_limits))
         .transpose()
         .map_err(StageLoadError::Objects)?;
+    let moving_object_paths = source
+        .section(MOJ_EXTENSION)
+        .map(parse_moj_records)
+        .transpose()
+        .map_err(StageLoadError::MovingObjectPaths)?;
     let scenery = source
         .section(SHT_EXTENSION)
         .map(|bytes| parse_c3d(bytes, c3d_limits))
@@ -377,9 +455,22 @@ pub fn load_stage(
         .map(parse_trigger_volumes)
         .transpose()
         .map_err(StageLoadError::Triggers)?;
+    let split_section = source.section(SPL_EXTENSION).map(parse_spl_section);
+    let animated_textures = source
+        .section(ANM_EXTENSION)
+        .map(parse_anm_records)
+        .transpose()
+        .map_err(StageLoadError::AnimatedTextures)?;
+    let school_reference = source
+        .section(RSF_EXTENSION)
+        .map(parse_rsf)
+        .transpose()
+        .map_err(StageLoadError::SchoolReference)?;
+    let fuz_section = source.section(FUZ_EXTENSION).map(parse_fuz_section);
     Ok(StageBundle {
         scene,
         objects,
+        moving_object_paths,
         scenery,
         horizon,
         ars,
@@ -387,7 +478,214 @@ pub fn load_stage(
         trackside_cameras,
         nodes,
         triggers,
+        split_section,
+        animated_textures,
+        school_reference,
+        fuz_section,
     })
+}
+
+/// One `0x30`-byte (12-dword) scripted moving/animated track-object record
+/// loaded from `<stage>.moj` by `FUN_0045bde0` into `DAT_00579b68` and stepped
+/// by `FUN_0045be90` / `FUN_0045c1b0` / `FUN_0045c9c0`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MojRecord {
+    /// `+0x00` (`dword[0]`): nonzero snaps the object's Y coordinate to ground
+    /// height via `FUN_00446c40` during `FUN_0045c9c0`.
+    pub terrain_snap_flag: u32,
+    /// `+0x04`: initial 12-bit BAM angle (`& 0xfff` into trig table `0x82d380`)
+    /// for circular orbit modes `1` and `2`.
+    pub initial_angle_bam: u16,
+    /// `+0x06`: upper 16 bits of `dword[1]`, preserved verbatim.
+    pub angle_padding: u16,
+    /// `+0x08` (`dword[2]`): Q16.16 orbit diameter (`idiv 0x20000` -> radius)
+    /// for circular orbit modes `1` and `2`.
+    pub orbit_diameter_q16: i32,
+    /// `+0x0c` (`dword[3]`): preserved dword with no consumer in EU v1.5.
+    pub reserved_0c: u32,
+    /// `+0x10..+0x1c` (`dwords[4..=6]`): Q16.16 `(X, Y, Z)` coordinates used to
+    /// match a scene node by `(X, Z)` in `FUN_0045be90` and as the translation
+    /// target in linear modes `3` and `4`.
+    pub position_or_target_q16: [i32; 3],
+    /// `+0x1c` (`dword[7]`): translation/orbit period in seconds (multiplied by
+    /// 25 or 50 ticks/s into runtime `+0xe4`).
+    pub translation_period_seconds: i32,
+    /// `+0x20..+0x2c` (`dwords[8..=10]`): X/Y/Z rotation periods in seconds
+    /// (multiplied by 25 or 50 ticks/s into runtime `+0xe8`, `+0xec`, `+0xf0`).
+    pub rotation_period_seconds: [i32; 3],
+    /// `+0x2c` (`dword[11]`): motion mode (`0` = inactive/skipped by
+    /// `FUN_0045bde0`; `1` = XZ circle, `2` = vertical circle, `3` = one-shot
+    /// linear, `4` = ping-pong linear).
+    pub motion_mode: u32,
+}
+
+impl MojRecord {
+    /// Whether `FUN_0045bde0` admits this record into `DAT_00579b68`
+    /// (`dword[11] != 0`).
+    #[must_use]
+    pub const fn is_active(&self) -> bool {
+        self.motion_mode != 0
+    }
+}
+
+/// Decode a flat `.moj` moving-object record table (`0x30`-byte stride).
+///
+/// All records (including inactive `motion_mode == 0` entries) are returned so
+/// the on-disk payload is represented losslessly; call
+/// [`filter_active_moj_records`] for `FUN_0045bde0`'s filtered `DAT_00579b68`
+/// table.
+pub fn parse_moj_records(bytes: &[u8]) -> Result<Vec<MojRecord>, StageError> {
+    if !bytes.len().is_multiple_of(MOJ_RECORD_STRIDE) {
+        return Err(StageError::MojNotRecordAligned {
+            len: bytes.len(),
+            stride: MOJ_RECORD_STRIDE,
+        });
+    }
+    let (records, tail) = bytes.as_chunks::<MOJ_RECORD_STRIDE>();
+    debug_assert!(tail.is_empty());
+    Ok(records
+        .iter()
+        .map(|record| MojRecord {
+            terrain_snap_flag: read_i32(record, 0x00) as u32,
+            initial_angle_bam: read_u16(record, 0x04),
+            angle_padding: read_u16(record, 0x06),
+            orbit_diameter_q16: read_i32(record, 0x08),
+            reserved_0c: read_i32(record, 0x0c) as u32,
+            position_or_target_q16: [
+                read_i32(record, 0x10),
+                read_i32(record, 0x14),
+                read_i32(record, 0x18),
+            ],
+            translation_period_seconds: read_i32(record, 0x1c),
+            rotation_period_seconds: [
+                read_i32(record, 0x20),
+                read_i32(record, 0x24),
+                read_i32(record, 0x28),
+            ],
+            motion_mode: read_i32(record, 0x2c) as u32,
+        })
+        .collect())
+}
+
+/// Reproduce `FUN_0045bde0`'s load-time filtering into `DAT_00579b68`
+/// (`DAT_0057ae28` count): keep only records with `motion_mode != 0`, up to
+/// [`MOJ_MAX_ACTIVE_RECORDS`].
+#[must_use]
+pub fn filter_active_moj_records(records: &[MojRecord]) -> Vec<MojRecord> {
+    records
+        .iter()
+        .copied()
+        .filter(MojRecord::is_active)
+        .take(MOJ_MAX_ACTIVE_RECORDS)
+        .collect()
+}
+
+/// Decoded representation of `<stage>.spl`.
+///
+/// In Windows EU v1.5 `Rally.exe`, `FUN_0047fe10` (`0x47fe10..0x47fe1c`) is a
+/// two-instruction stub (`mov dword ptr [0x5ffbf8], 1; ret 4`) that never opens
+/// or reads the `.spl` file. Any supplied bytes are preserved verbatim.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SplSection {
+    /// Value written to `DAT_005ffbf8` by `FUN_0047fe10` (`true`).
+    pub split_display_enabled: bool,
+    unconsumed_bytes: Vec<u8>,
+}
+
+impl SplSection {
+    /// Any payload bytes supplied for `.spl` (unconsumed by `FUN_0047fe10`).
+    #[must_use]
+    pub fn unconsumed_bytes(&self) -> &[u8] {
+        &self.unconsumed_bytes
+    }
+}
+
+/// Capture a `.spl` section under `FUN_0047fe10`'s stub contract.
+#[must_use]
+pub fn parse_spl_section(bytes: &[u8]) -> SplSection {
+    SplSection {
+        split_display_enabled: true,
+        unconsumed_bytes: bytes.to_vec(),
+    }
+}
+
+/// One `0x0d`-byte (13-byte) animated-texture name record from `<stage>.anm`
+/// (`FUN_00482cc0` -> `FUN_004acd30`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AnmRecord {
+    /// Raw 13-byte record on disk (a NUL-terminated 8.3 texture name plus any
+    /// trailing pad bytes).
+    pub raw_bytes: [u8; ANM_RECORD_STRIDE],
+}
+
+impl AnmRecord {
+    /// The NUL-terminated name slice (`FUN_004acd30` compares from `+0x00` up
+    /// to the first NUL byte against loaded stage texture names at `0xbb95b8`).
+    #[must_use]
+    pub fn name_bytes(&self) -> &[u8] {
+        let end = self
+            .raw_bytes
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(ANM_RECORD_STRIDE);
+        &self.raw_bytes[..end]
+    }
+
+    /// The NUL-terminated ASCII/UTF-8 texture name, if valid UTF-8.
+    #[must_use]
+    pub fn name_str(&self) -> Option<&str> {
+        std::str::from_utf8(self.name_bytes()).ok()
+    }
+}
+
+/// Decode a flat `.anm` animated-texture table (`0x0d`-byte stride).
+pub fn parse_anm_records(bytes: &[u8]) -> Result<Vec<AnmRecord>, StageError> {
+    if !bytes.len().is_multiple_of(ANM_RECORD_STRIDE) {
+        return Err(StageError::AnmNotRecordAligned {
+            len: bytes.len(),
+            stride: ANM_RECORD_STRIDE,
+        });
+    }
+    let (records, tail) = bytes.as_chunks::<ANM_RECORD_STRIDE>();
+    debug_assert!(tail.is_empty());
+    Ok(records
+        .iter()
+        .copied()
+        .map(|raw_bytes| AnmRecord { raw_bytes })
+        .collect())
+}
+
+/// Decoded representation of `<stage>.fuz`.
+///
+/// In Windows EU v1.5 `Rally.exe`, `FUN_00443a40` zeroes `DAT_00559030` and
+/// `DAT_00559034` and returns `1`, and `FUN_00443ae0` (`0x443ae0..0x443ae4`) is
+/// `xor eax, eax; ret 4` (`return 0`), never opening or reading `<stage>.fuz`.
+/// Any supplied bytes are preserved verbatim.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FuzSection {
+    /// Value written to `DAT_00559030` by `FUN_00443a40` (`0`).
+    pub state_559030: u32,
+    /// Value written to `DAT_00559034` by `FUN_00443a40` (`0`).
+    pub state_559034: u32,
+    unconsumed_bytes: Vec<u8>,
+}
+
+impl FuzSection {
+    /// Any payload bytes supplied for `.fuz` (unconsumed by `FUN_00443ae0`).
+    #[must_use]
+    pub fn unconsumed_bytes(&self) -> &[u8] {
+        &self.unconsumed_bytes
+    }
+}
+
+/// Capture a `.fuz` section under `FUN_00443a40` / `FUN_00443ae0`'s stub contract.
+#[must_use]
+pub fn parse_fuz_section(bytes: &[u8]) -> FuzSection {
+    FuzSection {
+        state_559030: 0,
+        state_559034: 0,
+        unconsumed_bytes: bytes.to_vec(),
+    }
 }
 
 /// One authored `.tsc` trackside/cinematic camera record.
@@ -1212,5 +1510,141 @@ mod tests {
                 stride: CAT_NODE_STRIDE,
             })
         );
+    }
+
+    fn moj_record_bytes(mode: u32, pos: [i32; 3], snap: u32, angle: u16, diameter: i32) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(MOJ_RECORD_STRIDE);
+        bytes.extend_from_slice(&snap.to_le_bytes());
+        bytes.extend_from_slice(&angle.to_le_bytes());
+        bytes.extend_from_slice(&0x1234u16.to_le_bytes());
+        bytes.extend_from_slice(&diameter.to_le_bytes());
+        bytes.extend_from_slice(&0xdead_beefu32.to_le_bytes());
+        for c in pos {
+            bytes.extend_from_slice(&c.to_le_bytes());
+        }
+        bytes.extend_from_slice(&12i32.to_le_bytes()); // translation period
+        for rot in [3i32, 4, 5] {
+            bytes.extend_from_slice(&rot.to_le_bytes());
+        }
+        bytes.extend_from_slice(&mode.to_le_bytes());
+        assert_eq!(bytes.len(), MOJ_RECORD_STRIDE);
+        bytes
+    }
+
+    #[test]
+    fn moj_records_parse_and_filter_active_entries() {
+        assert!(parse_moj_records(&[]).unwrap().is_empty());
+
+        let mut bytes = moj_record_bytes(0, [10, 20, 30], 0, 0x100, 0x20_0000);
+        bytes.extend_from_slice(&moj_record_bytes(1, [40, 50, 60], 1, 0x400, 0x40_0000));
+        let records = parse_moj_records(&bytes).unwrap();
+        assert_eq!(records.len(), 2);
+        assert!(!records[0].is_active());
+        assert!(records[1].is_active());
+        assert_eq!(records[1].terrain_snap_flag, 1);
+        assert_eq!(records[1].initial_angle_bam, 0x400);
+        assert_eq!(records[1].angle_padding, 0x1234);
+        assert_eq!(records[1].orbit_diameter_q16, 0x40_0000);
+        assert_eq!(records[1].reserved_0c, 0xdead_beef);
+        assert_eq!(records[1].position_or_target_q16, [40, 50, 60]);
+        assert_eq!(records[1].translation_period_seconds, 12);
+        assert_eq!(records[1].rotation_period_seconds, [3, 4, 5]);
+        assert_eq!(records[1].motion_mode, 1);
+
+        let active = filter_active_moj_records(&records);
+        assert_eq!(active, vec![records[1]]);
+
+        assert_eq!(
+            parse_moj_records(&[0u8; MOJ_RECORD_STRIDE + 1]).unwrap_err(),
+            StageError::MojNotRecordAligned {
+                len: MOJ_RECORD_STRIDE + 1,
+                stride: MOJ_RECORD_STRIDE,
+            }
+        );
+    }
+
+    #[test]
+    fn anm_records_parse_13_byte_names_and_reject_misalignment() {
+        assert!(parse_anm_records(&[]).unwrap().is_empty());
+
+        let mut rec0 = [0u8; ANM_RECORD_STRIDE];
+        rec0[..9].copy_from_slice(b"WATER.BMP");
+        rec0[10] = 0xaa;
+        let mut rec1 = [b'X'; ANM_RECORD_STRIDE];
+        let mut bytes = Vec::from(rec0);
+        bytes.extend_from_slice(&rec1);
+
+        let parsed = parse_anm_records(&bytes).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].name_str(), Some("WATER.BMP"));
+        assert_eq!(parsed[0].raw_bytes[10], 0xaa);
+        assert_eq!(parsed[1].name_bytes().len(), ANM_RECORD_STRIDE);
+        rec1[0] = 0xff;
+        let non_utf8 = AnmRecord { raw_bytes: rec1 };
+        assert_eq!(non_utf8.name_str(), None);
+
+        assert_eq!(
+            parse_anm_records(&[0u8; ANM_RECORD_STRIDE - 1]).unwrap_err(),
+            StageError::AnmNotRecordAligned {
+                len: ANM_RECORD_STRIDE - 1,
+                stride: ANM_RECORD_STRIDE,
+            }
+        );
+    }
+
+    #[test]
+    fn spl_and_fuz_sections_capture_stub_states_and_preserve_unconsumed_bytes() {
+        let spl = parse_spl_section(&[1, 2, 3]);
+        assert!(spl.split_display_enabled);
+        assert_eq!(spl.unconsumed_bytes(), &[1, 2, 3]);
+
+        let fuz = parse_fuz_section(&[4, 5]);
+        assert_eq!(fuz.state_559030, 0);
+        assert_eq!(fuz.state_559034, 0);
+        assert_eq!(fuz.unconsumed_bytes(), &[4, 5]);
+    }
+
+    #[test]
+    fn load_stage_integrates_all_14_master_loader_sibling_extensions() {
+        let mut sections = std::collections::HashMap::new();
+        sections.insert(C3D_EXTENSION, empty_scene_bytes());
+        sections.insert(DAT_EXTENSION, vec![0u8; TRIGGER_VOLUME_STRIDE]);
+        sections.insert(OBJ_EXTENSION, empty_scene_bytes());
+        sections.insert(
+            MOJ_EXTENSION,
+            moj_record_bytes(4, [1, 2, 3], 1, 0x200, 0x10_0000),
+        );
+        sections.insert(SHT_EXTENSION, empty_scene_bytes());
+        sections.insert(ARS_EXTENSION, vec![0u8; ARS_SETTINGS_LEN]);
+        sections.insert(HZN_EXTENSION, empty_scene_bytes());
+        sections.insert(TSC_EXTENSION, vec![0u8; TSC_CAMERA_STRIDE]);
+        sections.insert(CSP_EXTENSION, vec![0u8; CSP_BLOCK_LEN]);
+        sections.insert(CAT_EXTENSION, vec![0u8; CAT_NODE_STRIDE]);
+        sections.insert(SPL_EXTENSION, vec![0x99]);
+        sections.insert(ANM_EXTENSION, vec![0u8; ANM_RECORD_STRIDE * 2]);
+        sections.insert(
+            RSF_EXTENSION,
+            vec![0u8; crate::school_rsf::RSF_BLOCK_SIZE],
+        );
+        sections.insert(FUZ_EXTENSION, vec![0x77, 0x88]);
+        assert_eq!(sections.len(), STAGE_EXTENSIONS.len());
+
+        let bundle = load_stage(&MapSource(sections), C3dLimits::default()).unwrap();
+        assert!(bundle.objects().is_some());
+        assert_eq!(bundle.moving_object_paths().unwrap().len(), 1);
+        assert!(bundle.scenery().is_some());
+        assert!(bundle.ars().is_some());
+        assert!(bundle.horizon().is_some());
+        assert_eq!(bundle.trackside_cameras().unwrap().len(), 1);
+        assert!(bundle.starts().is_some());
+        assert_eq!(bundle.nodes().unwrap().len(), 1);
+        assert_eq!(bundle.triggers().unwrap().len(), 1);
+        assert!(bundle.split_section().unwrap().split_display_enabled);
+        assert_eq!(bundle.animated_textures().unwrap().len(), 2);
+        assert_eq!(
+            bundle.school_reference().unwrap().records.len(),
+            crate::school_rsf::RSF_RECORDS
+        );
+        assert_eq!(bundle.fuz_section().unwrap().unconsumed_bytes(), &[0x77, 0x88]);
     }
 }

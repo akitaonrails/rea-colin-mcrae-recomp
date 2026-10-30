@@ -2696,7 +2696,11 @@ languages rather than fabricating or silently aliasing Italian assets.
   are reconstructed in `cmr-core::car_headlights` and wired into `cmr-video` and
   `cmr-app`. Car-vs-car collision (`FUN_00442740`/`FUN_004438a0`/`FUN_00442860`/
   `FUN_00441f30`) is reconstructed in `cmr-core::car_vs_car_collision` and
-  bridged onto `RaceState`.
+  bridged onto `RaceState`. All 14 stage bundle sibling sections (`.c3d`,
+  `.dat`, `.obj`, `.moj`, `.sht`, `.ars`, `.hzn`, `.tsc`, `.csp`, `.cat`,
+  `.spl`, `.anm`, `.rsf`, and `.fuz`) are decoded by `cmr-formats::stage`, and
+  `.moj` kinematic scene-object motion (`FUN_0045bde0`..`FUN_0045c9c0`) is
+  reconstructed in `cmr-core::stage_moj_motion`.
 - Suspension/surface recovery is composed end to end: authenticated HPC data
   feeds the complete eight-lane initializer, and the four-wheel producer shares
   its force/contact results with geometric postprocess, translation, angular

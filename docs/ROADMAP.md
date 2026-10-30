@@ -2085,9 +2085,13 @@ and night road light pool `FUN_004a8750`/`FUN_004a9490` pipeline
 (`cmr-core::car_headlights`), and the car-vs-car narrow phase, 50/50
 depenetration, inelastic impulse/torque, and crash-damage response
 (`FUN_00442740`/`FUN_004438a0`/`FUN_00442860`/`FUN_00441f30` in
-`cmr-core::car_vs_car_collision`). The reset trigger remains an explicit input,
-and no unsupported position-snap, time penalty, or damage-performance mapping
-is claimed.
+`cmr-core::car_vs_car_collision`). All 14 stage sibling sections (`.c3d`,
+`.dat`, `.obj`, `.moj`, `.sht`, `.ars`, `.hzn`, `.tsc`, `.csp`, `.cat`, `.spl`,
+`.anm`, `.rsf`, and `.fuz`) are integrated in `cmr-formats::stage::StageBundle`
+(closing E08), and `.moj` kinematic object motion (`FUN_0045bde0`..`FUN_0045c9c0`)
+is reconstructed in `cmr-core::stage_moj_motion`. The reset trigger remains an
+explicit input, and no unsupported position-snap, time penalty, or
+damage-performance mapping is claimed.
 
 G03 is complete at the safe portable-contract boundary. The authenticated HPC
 provider runs the complete compiled-initializer spine, and the four-wheel

@@ -68,7 +68,7 @@ pub struct SchoolReference {
     pub trailing: Vec<u8>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RsfError {
     Truncated { len: usize, needed: usize },
 }
