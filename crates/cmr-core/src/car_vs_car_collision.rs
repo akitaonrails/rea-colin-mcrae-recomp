@@ -446,7 +446,9 @@ pub fn apply_car_vs_car_response_441f30<D: StaticDamageOwner>(
     let e = q(v_a.wrapping_sub(v_b), 0);
     let m_a = car_a.mass_48;
     let m_b = car_b.mass_48;
-    let num = q(v_b, m_b).wrapping_sub(q(e, m_b)).wrapping_add(q(v_a, m_a));
+    let num = q(v_b, m_b)
+        .wrapping_sub(q(e, m_b))
+        .wrapping_add(q(v_a, m_a));
     let den = m_b.wrapping_add(m_a);
     let v_star = if den == 0 { -1 } else { qdiv(num, den) };
 
@@ -746,9 +748,7 @@ mod tests {
         // Equal and opposite X shifts applied to car_a and car_b (within 1 LSB of Q16 floor shift)
         assert!(car_a.position_c8[0] < 0);
         assert!(car_b.position_c8[0] > 0x3_0000);
-        assert!(
-            (car_a.position_c8[0].wrapping_add(car_b.position_c8[0]) - 0x3_0000).abs() <= 1
-        );
+        assert!((car_a.position_c8[0].wrapping_add(car_b.position_c8[0]) - 0x3_0000).abs() <= 1);
         // Relative speed is 2.0 (> 0.5), so both local contact Y values drop by 5.0 (-0x5_0000)
         assert_eq!(car_a.contact_3f0[1], -FIVE);
         assert_eq!(car_b.contact_3f0[1], -FIVE);

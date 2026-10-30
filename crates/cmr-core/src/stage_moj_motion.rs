@@ -345,7 +345,10 @@ mod tests {
     fn bind_all_clears_table_when_any_active_record_is_unbound() {
         let rec = sample_record(1);
         let matching = [node_with_pos([0x20_0000, 0, 0x30_0000])];
-        assert_eq!(bind_all_moj_records_45c160(&[rec], &matching, false).len(), 1);
+        assert_eq!(
+            bind_all_moj_records_45c160(&[rec], &matching, false).len(),
+            1
+        );
 
         let non_matching = [node_with_pos([0, 0, 0])];
         assert!(bind_all_moj_records_45c160(&[rec], &non_matching, false).is_empty());

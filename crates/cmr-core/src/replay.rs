@@ -573,7 +573,8 @@ impl SnapshotCarLane {
         if (subframe_counter & 3) != 0 || self.frames.len() >= SNAPSHOT_CAPACITY_PER_CAR {
             return false;
         }
-        self.frames.push(SnapshotKeyframe::from_transform_46c7d0(tf));
+        self.frames
+            .push(SnapshotKeyframe::from_transform_46c7d0(tf));
         true
     }
 
@@ -585,7 +586,11 @@ impl SnapshotCarLane {
     ///   directly to `frames[keyframe_index]`, otherwise blends via `FUN_00435400` (`blend_pose`)
     ///   with `alpha = (subframe & 3) * 0x4000`.
     #[must_use]
-    pub fn evaluate_playback_46ca70(&self, keyframe_index: usize, subframe: u32) -> Option<[i32; 16]> {
+    pub fn evaluate_playback_46ca70(
+        &self,
+        keyframe_index: usize,
+        subframe: u32,
+    ) -> Option<[i32; 16]> {
         let sub = subframe & 3;
         let curr = self.frames.get(keyframe_index)?;
         let curr_tf = curr.to_transform_46c910();
@@ -638,10 +643,12 @@ impl<'a> ReplayRegionAView<'a> {
         n_frames: u32,
         frame_index: u32,
     ) -> Option<Self> {
-        if frame_index >= n_frames || !replay_file_size_valid(object_bytes.len(), n_ticks, n_frames) {
+        if frame_index >= n_frames || !replay_file_size_valid(object_bytes.len(), n_ticks, n_frames)
+        {
             return None;
         }
-        let start = REPLAY_OBJECT_HEADER_BYTES + (frame_index as usize) * REPLAY_INITIAL_STATE_BYTES;
+        let start =
+            REPLAY_OBJECT_HEADER_BYTES + (frame_index as usize) * REPLAY_INITIAL_STATE_BYTES;
         let end = start + REPLAY_INITIAL_STATE_BYTES;
         Self::from_slice(object_bytes.get(start..end)?)
     }
@@ -665,7 +672,8 @@ impl<'a> ReplayRegionAView<'a> {
     /// Reserved header gap (`+0x1134..+0x11f4`, `0xc0` bytes) skipped before `FUN_0046d010`.
     #[must_use]
     pub fn reserved_gap_bytes(&self) -> &'a [u8; REPLAY_RESERVED_GAP_BYTES] {
-        self.bytes[REPLAY_RESERVED_GAP_OFFSET..REPLAY_RESERVED_GAP_OFFSET + REPLAY_RESERVED_GAP_BYTES]
+        self.bytes
+            [REPLAY_RESERVED_GAP_OFFSET..REPLAY_RESERVED_GAP_OFFSET + REPLAY_RESERVED_GAP_BYTES]
             .try_into()
             .expect("fixed reserved-gap slice length")
     }
@@ -680,7 +688,10 @@ impl<'a> ReplayRegionAView<'a> {
 
     /// Moving-object slot `index` (`0..500`, `+0x195c + index * 0xa0`).
     #[must_use]
-    pub fn object_record_bytes(&self, index: usize) -> Option<&'a [u8; REPLAY_OBJECT_RECORD_BYTES]> {
+    pub fn object_record_bytes(
+        &self,
+        index: usize,
+    ) -> Option<&'a [u8; REPLAY_OBJECT_RECORD_BYTES]> {
         let offset = replay_object_record_offset(index)?;
         self.bytes
             .get(offset..offset + REPLAY_OBJECT_RECORD_BYTES)?
@@ -934,7 +945,8 @@ impl ReplayObjectHeader {
         }
         let region_a = REPLAY_OBJECT_HEADER_BYTES;
         let region_b = region_a.checked_add(n_frames.checked_mul(REPLAY_INITIAL_STATE_BYTES)?)?;
-        let region_b_bytes = n_frames.checked_mul(n_ticks.checked_mul(REPLAY_TICK_RECORD_BYTES)?)?;
+        let region_b_bytes =
+            n_frames.checked_mul(n_ticks.checked_mul(REPLAY_TICK_RECORD_BYTES)?)?;
         let region_c = region_b.checked_add(region_b_bytes)?;
         Some((region_a, region_b, region_c))
     }
@@ -1023,7 +1035,9 @@ impl<'a> ReplayFileView<'a> {
         if frame_idx >= self.recorded_frames() {
             return None;
         }
-        let start = self.region_c_offset.checked_add(frame_idx.checked_mul(2)?)?;
+        let start = self
+            .region_c_offset
+            .checked_add(frame_idx.checked_mul(2)?)?;
         let raw: [u8; 2] = self.bytes.get(start..start + 2)?.try_into().ok()?;
         let end_cursor = u16::from_le_bytes(raw);
         if usize::from(end_cursor) > self.n_ticks() {
@@ -1378,7 +1392,10 @@ mod tests {
         assert_eq!(unpacked[8], 0);
         assert_eq!(unpacked[9], 0);
         assert_eq!(unpacked[10], 0xffe4);
-        assert_eq!(&unpacked[12..16], &[0x10_0000, -0x2_0000, 0x45_0000, 0x1_0000]);
+        assert_eq!(
+            &unpacked[12..16],
+            &[0x10_0000, -0x2_0000, 0x45_0000, 0x1_0000]
+        );
     }
 
     #[test]
@@ -1535,7 +1552,11 @@ mod tests {
         let (records, mut stepper) = view.frame_playback(0).unwrap();
         assert_eq!(records.len(), 2);
         assert_eq!(
-            stepper.step_tick_46dc20(&records).unwrap().actuators.throttle,
+            stepper
+                .step_tick_46dc20(&records)
+                .unwrap()
+                .actuators
+                .throttle,
             -66
         );
 

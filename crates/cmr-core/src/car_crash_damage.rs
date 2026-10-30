@@ -280,9 +280,12 @@ impl CarDamage {
     /// `FUN_0041d710`: `[L, R]` detached latches (`S+0xbb8[S.ccc]`, `S+0xbb8[S.ccd]`).
     #[must_use]
     pub fn detached_lights_lr(&self) -> [bool; 2] {
-        self.layout
-            .lights_ccc
-            .map(|idx| self.detached_bb8.get(usize::from(idx)).copied().unwrap_or(false))
+        self.layout.lights_ccc.map(|idx| {
+            self.detached_bb8
+                .get(usize::from(idx))
+                .copied()
+                .unwrap_or(false)
+        })
     }
 
     /// Build the parts from a car `.C3D`: the direct children of its body
@@ -685,11 +688,7 @@ mod tests {
         let mut damage = CarDamage::new((6..=13).map(|id| part(id, 2)).collect(), false, 0);
         damage.set_night_pod_lamps(
             true,
-            vec![
-                [HALF, 0, -0x4000],
-                [HALF, 0, 0x1000],
-                [HALF, 0, 0x4000],
-            ],
+            vec![[HALF, 0, -0x4000], [HALF, 0, 0x1000], [HALF, 0, 0x4000]],
         );
         // First hit pushes front deform_788[7] above 0x3333 -> breaks nearest pod lamp (index 1).
         damage.dent([HALF, 0, 0], 0x8000);

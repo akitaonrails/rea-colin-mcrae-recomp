@@ -1771,64 +1771,63 @@ impl RaceState {
                 Fixed16::from_raw(r[2]),
             )
         };
-        let build_car_state = |car: &CarState,
-                               prev_xz: PreviousCarXz,
-                               mass_48: Fixed16,
-                               car_type: i8|
-         -> Result<
-            CarVsCarState,
-            LiveStaticCollisionStepError<D::Error>,
-        > {
-            let primary_cell =
-                build_active_cell_record(&parsed.grid, &parsed.main_cell_centers, car.position)
-                    .map_err(LiveStaticCollisionStepError::ActiveCell)?;
-            let deformation = car
-                .motion
-                .upper_hull_deformation
-                .bind(car.motion.basis[0], car.motion.basis[2]);
-            let live = build_live_static_collision_car_frame(LiveStaticCollisionCarFrameInput {
-                previous_center_xz: prev_xz,
-                current_center: car.position,
-                current_basis: car.motion.basis,
-                half_extents: car.motion.compiled_half_words,
-                projection_axis_258: car.motion.basis[0],
-                projection_axis_264: car.motion.basis[1],
-                deformation: Some(deformation),
-                primary_cell,
-            });
-            let radius_44 = car.ground.map_or_else(
-                || {
-                    sqrt_q16(
-                        car.motion
-                            .compiled_half_words
-                            .dot(car.motion.compiled_half_words)
-                            .raw() as u32,
-                    ) as i32
-                },
-                |g| g.radius_44,
-            );
-            let flag_743 = car.ground.map_or(0, |g| g.thresholds.flag_743);
-            Ok(CarVsCarState {
-                position_c8: raw_v(car.position),
-                previous_xz_3e4: [prev_xz.x.raw(), prev_xz.z.raw()],
-                velocity_d4: raw_v(car.velocity),
-                hull_points_fc: live.collision_hull.map(raw_v),
-                radius_44,
-                mass_48: mass_48.raw(),
-                contact_limits_2c: raw_v(car.motion.compiled_half_words),
-                axis_258: raw_v(car.motion.basis[0]),
-                axis_264: raw_v(car.motion.basis[1]),
-                basis_2a0: car.motion.basis.map(raw_v),
-                linear_correction_3cc: raw_v(car.collision.pending_linear_3cc),
-                angular_correction_3d8: raw_v(car.motion.moment),
-                contact_3f0: [0; 3],
-                opponent_hit_6e4: false,
-                car_type_738: car_type,
-                car_subtype_739: 0,
-                flag_743,
-                active_cells_750: live.active_cells,
-            })
-        };
+        let build_car_state =
+            |car: &CarState,
+             prev_xz: PreviousCarXz,
+             mass_48: Fixed16,
+             car_type: i8|
+             -> Result<CarVsCarState, LiveStaticCollisionStepError<D::Error>> {
+                let primary_cell =
+                    build_active_cell_record(&parsed.grid, &parsed.main_cell_centers, car.position)
+                        .map_err(LiveStaticCollisionStepError::ActiveCell)?;
+                let deformation = car
+                    .motion
+                    .upper_hull_deformation
+                    .bind(car.motion.basis[0], car.motion.basis[2]);
+                let live =
+                    build_live_static_collision_car_frame(LiveStaticCollisionCarFrameInput {
+                        previous_center_xz: prev_xz,
+                        current_center: car.position,
+                        current_basis: car.motion.basis,
+                        half_extents: car.motion.compiled_half_words,
+                        projection_axis_258: car.motion.basis[0],
+                        projection_axis_264: car.motion.basis[1],
+                        deformation: Some(deformation),
+                        primary_cell,
+                    });
+                let radius_44 = car.ground.map_or_else(
+                    || {
+                        sqrt_q16(
+                            car.motion
+                                .compiled_half_words
+                                .dot(car.motion.compiled_half_words)
+                                .raw() as u32,
+                        ) as i32
+                    },
+                    |g| g.radius_44,
+                );
+                let flag_743 = car.ground.map_or(0, |g| g.thresholds.flag_743);
+                Ok(CarVsCarState {
+                    position_c8: raw_v(car.position),
+                    previous_xz_3e4: [prev_xz.x.raw(), prev_xz.z.raw()],
+                    velocity_d4: raw_v(car.velocity),
+                    hull_points_fc: live.collision_hull.map(raw_v),
+                    radius_44,
+                    mass_48: mass_48.raw(),
+                    contact_limits_2c: raw_v(car.motion.compiled_half_words),
+                    axis_258: raw_v(car.motion.basis[0]),
+                    axis_264: raw_v(car.motion.basis[1]),
+                    basis_2a0: car.motion.basis.map(raw_v),
+                    linear_correction_3cc: raw_v(car.collision.pending_linear_3cc),
+                    angular_correction_3d8: raw_v(car.motion.moment),
+                    contact_3f0: [0; 3],
+                    opponent_hit_6e4: false,
+                    car_type_738: car_type,
+                    car_subtype_739: 0,
+                    flag_743,
+                    active_cells_750: live.active_cells,
+                })
+            };
 
         let mut car_a = build_car_state(&self.car, previous_center_xz_a, mass_a_48, 0)?;
         let mut car_b = build_car_state(&other.car, previous_center_xz_b, mass_b_48, 1)?;

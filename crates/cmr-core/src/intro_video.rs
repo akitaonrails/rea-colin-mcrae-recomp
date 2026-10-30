@@ -7,11 +7,19 @@
 //! using the **`avivideo`** device type (Video for Windows `.avi` via
 //! `mciSendCommandA`, winmm.dll). There is no DirectShow, no `AVIStreamOpen`,
 //! and no Smacker/Bink. The publisher/developer "logos" are static `.bmp`
-//! images, not video; the only true FMV is a generic MCI AVI player
-//! (`FUN_004af8a0`) invoked as opcodes inside the frontend's scripted pan /
-//! response-script (`.rsp`) sequence: one opcode plays a fixed
-//! `...\game\rallschl\avi\zoom.avi` transition (`FUN_0046f7d0`), and one plays a
-//! difficulty- and language-selected clip (`FUN_0046f920`).
+//! images, not video; the only true FMV in `Rally.exe` is the generic MCI AVI
+//! player (`FUN_004af8a0`), which has exactly two call sites in the entire
+//! binary, both in the Rally School menu render (`FUN_0046f670`):
+//! - `0x46f897` (`FUN_0046f7d0`): plays the fixed
+//!   `\game\rallschl\avi\zoom.avi` transition;
+//! - `0x46fc5a` (`FUN_0046f920`): plays the instructor briefing speech WAV
+//!   followed by the difficulty- and task-selected clip
+//!   `\game\rallschl\AVI\<EASY|MEDIUM|HARD>\<task>.avi` (in window rectangle
+//!   `{x: 80, y: 32, w: 320, h: 208}`).
+//!
+//! (Note: `.rsp` files loaded by `FUN_0046de70` are Rally School Pan replay
+//! files, not FMV scripts; any CD intro movie is played by the separate
+//! `Game.exe` launcher executable before spawning `Rally.exe`.)
 //!
 //! The player (`FUN_004af8a0`) opens the `avivideo` device (`FUN_004afbd0`:
 //! `MCI_OPEN` with `MCI_OPEN_ELEMENT | MCI_DGV_OPEN_WS | MCI_DGV_OPEN_PARENT`,
@@ -181,15 +189,61 @@ pub fn avi_language_dir(language: Language) -> &'static str {
 }
 
 /// The recovered path *prefix* for a variant clip: the difficulty subdirectory
-/// followed by the language directory. The full filename suffix (the format
-/// string `DAT_004ed6e8`) was not transcribed, so this is the directory prefix,
-/// not the complete path.
+/// followed by the language directory (used by the briefing WAV half of
+/// `FUN_0046f920` at `0x46f97d..0x46fb1c`).
 pub fn avi_variant_prefix(difficulty: Difficulty, language: Language) -> String {
     format!(
         "{}{}",
         avi_difficulty_subdir(difficulty),
         avi_language_dir(language)
     )
+}
+
+/// Format string `DAT_004ed6e8` (`"%d"`) used by `FUN_0046f920` (`0x46fbe8`) to
+/// format the task index `(cfg[+0x6c0] >> 5)`.
+pub const BRIEFING_TASK_FORMAT_4ED6E8: &str = "%d";
+
+/// Extension literal `DAT_004f4c1c` (`".avi"`) appended by `FUN_0046f920` (`0x46fc27`).
+pub const AVI_EXTENSION_4F4C1C: &str = ".avi";
+
+/// Window placement rectangle `{x: 80, y: 32, w: 320, h: 208}` (`0x46f93b..0x46f950`)
+/// passed to `FUN_004af8a0` for the Rally School briefing AVI.
+pub const BRIEFING_AVI_RECT_46F93B: [u16; 4] = [80, 32, 320, 208];
+
+/// Build the complete relative path for the Rally School briefing `.avi` clip
+/// (`FUN_0046f920`, `0x46fb20..0x46fc5f`):
+/// `\game\rallschl\AVI\<EASY|MEDIUM|HARD>\<task>.avi` where
+/// `difficulty = (cfg[+0x6c0] >> 3) & 3` and `task = cfg[+0x6c0] >> 5`.
+#[must_use]
+pub fn briefing_avi_relative_path_46f920(config_byte_6c0: u8) -> Option<String> {
+    let difficulty = difficulty_from_config(config_byte_6c0)?;
+    let task = config_byte_6c0 >> 5;
+    Some(format!(
+        "{}{}{}{}",
+        VARIANT_RELATIVE_ROOT,
+        avi_difficulty_subdir(difficulty),
+        task,
+        AVI_EXTENSION_4F4C1C
+    ))
+}
+
+/// Build the relative path prefix + task stem for the Rally School briefing speech
+/// `.wav` (`FUN_0046f920`, `0x46f97d..0x46fb1c`):
+/// `AVI\<EASY|MEDIUM|HARD>\<LANGUAGE>\<task>.wav`.
+#[must_use]
+pub fn briefing_wav_relative_path_46f920(
+    config_byte_6c0: u8,
+    config_byte_18: u8,
+) -> Option<String> {
+    let difficulty = difficulty_from_config(config_byte_6c0)?;
+    let language = language_from_config(config_byte_18)?;
+    let task = config_byte_6c0 >> 5;
+    Some(format!(
+        "{}{}\\{}.wav",
+        avi_difficulty_subdir(difficulty),
+        avi_language_dir(language),
+        task
+    ))
 }
 
 /// Whether the intro `.rsp` pan-script (and thus the intro FMV) is loaded for a
@@ -427,5 +481,32 @@ mod tests {
         assert!(!is_skip_key(VK_SPACE));
         assert!(is_pause_key(VK_SPACE));
         assert!(!is_pause_key(VK_RETURN));
+    }
+
+    #[test]
+    fn briefing_avi_and_wav_paths_match_fun_0046f920() {
+        assert_eq!(BRIEFING_TASK_FORMAT_4ED6E8, "%d");
+        assert_eq!(AVI_EXTENSION_4F4C1C, ".avi");
+        assert_eq!(BRIEFING_AVI_RECT_46F93B, [80, 32, 320, 208]);
+
+        // Easy (level 0), task 2 -> cfg_6c0 = (2 << 5) | (0 << 3) = 0x40
+        assert_eq!(
+            briefing_avi_relative_path_46f920(0x40).as_deref(),
+            Some(r"\game\rallschl\AVI\EASY\2.avi")
+        );
+        // Hard (level 2), task 4 -> cfg_6c0 = (4 << 5) | (2 << 3) = 0x90
+        assert_eq!(
+            briefing_avi_relative_path_46f920(0x90).as_deref(),
+            Some(r"\game\rallschl\AVI\HARD\4.avi")
+        );
+        // Invalid level 3 returns None
+        assert_eq!(briefing_avi_relative_path_46f920(0x18), None);
+
+        // Briefing WAV path includes the uppercase language directory
+        assert_eq!(
+            briefing_wav_relative_path_46f920(0x48, 2).as_deref(),
+            Some(r"AVI\MEDIUM\GERMAN\2.wav")
+        );
+        assert_eq!(briefing_wav_relative_path_46f920(0x48, 5), None);
     }
 }

@@ -216,33 +216,47 @@ tyre inputs (`DAT_004f6b50/6f10/777c` are now in `SessionTyreTables`).
 
 ## Latest state (read first)
 
-`.SSR`/`.RSP` file parsing and pointer relocation (`ReplayObjectHeader`,
-`ReplayFileView`, `FUN_0046ddc0`/`FUN_0046de30`), Rally School `.rsp` path
-selection (`school_intro_rsp_path_46de70`, `school_exit_rsp_path_46de70`),
-`CarState`/`RaceState` Region-A seeding (`seed_from_replay_region_a_46d460`,
-`Controls::from_decoded_replay_control`), and `GameplaySession` State 7/9
-`intro.rsp`/`exit.rsp` playback and `FUN_0046edd0` pre-pan car restore
-(`SchoolReplayTrack`, `set_school_replays`, `skip_school_replay`) are now
-reconstructed and wired into `cmr-app::start_school_task`
-(`impl.replay-file-and-school-rsp`). Replay snapshot keyframes
-(`SnapshotKeyframe`, `SnapshotCarLane`), Region-A seed views
-(`ReplayRegionAView`), and RLE input-trace playback (`ReplayPlaybackStepper`)
-are also complete (`impl.replay-snapshot-and-region-a`), as are all 14 stage
-bundle sibling decoders and `.moj` kinematic object motion (`E08` -> complete,
-`118 / 119` items complete; `impl.stage-bundle-all-14-siblings-and-moj`).
+All **119 / 119** items in `docs/DECOMP_MAP.md` are now complete (`completed=119`,
+`partial=0`, `not_started=0`, `blocked=0`).
 
-## Highest-priority remaining work
+- Bound `.moj` kinematic scene-object slots (`FUN_0045bde0`..`FUN_0045c9c0`) are
+  wired end to end through `StageRenderResources::build_moj_slots`,
+  `GameplaySession` (`set_moj_slots`, per-tick `step_moj_slot_45c1b0`,
+  `interpolate_moj_slot_45c9c0` with optional `.hpc` ground-Y snap in
+  `moving_object_node_locals`, and stage-reentry restore), and `cmr-app` stage
+  load/reload (`impl.moj-session-wiring-and-i14-closure`).
+- Full call-graph audit of `Rally.exe` MCI `avivideo` (`0x4af600..0x4afe00`)
+  confirms `FUN_0046f7d0` (`zoom.avi`) and `FUN_0046f920` (instructor briefing
+  `.wav` + `<task>.avi`, formatted with `0x4ed6e8 = "%d"` + `0x4f4c1c = ".avi"`
+  in `[80, 32, 320, 208]`) are the sole FMV call sites in `Rally.exe`, all using
+  8-bit Microsoft Video 1 (`msvc`/`CRAM`) decoded by
+  `cmr-formats::avi::decode_msvideo1_8bit` (`rea.official-eu.mci-avivideo-callgraph-and-moj-wiring`).
+- `.SSR`/`.RSP` file parsing and pointer relocation (`ReplayObjectHeader`,
+  `ReplayFileView`, `FUN_0046ddc0`/`FUN_0046de30`), Rally School `.rsp` path
+  selection (`school_intro_rsp_path_46de70`, `school_exit_rsp_path_46de70`),
+  `CarState`/`RaceState` Region-A seeding (`seed_from_replay_region_a_46d460`,
+  `Controls::from_decoded_replay_control`), and `GameplaySession` State 7/9
+  `intro.rsp`/`exit.rsp` playback and `FUN_0046edd0` pre-pan car restore
+  (`SchoolReplayTrack`, `set_school_replays`, `skip_school_replay`) are
+  reconstructed and wired into `cmr-app::start_school_task`
+  (`impl.replay-file-and-school-rsp`).
+- Replay snapshot keyframes (`SnapshotKeyframe`, `SnapshotCarLane`), Region-A
+  seed views (`ReplayRegionAView`), and RLE input-trace playback
+  (`ReplayPlaybackStepper`) are complete (`impl.replay-snapshot-and-region-a`),
+  as are all 14 stage bundle sibling decoders and `.moj` kinematic object motion
+  (`E08` -> complete; `impl.stage-bundle-all-14-siblings-and-moj`).
 
-The earlier items (four-wheel path, contact flags, the static damage owner,
-the body basis, moving objects, night headlights, car-vs-car collision, stage
-sibling sections/`.moj` motion, and `.SSR`/`.RSP` replay seeding and Rally School
-pan playback) are done; see `docs/CONVERSION_TIMELINE.md` for the history. Open
-now, in order:
+## Optional follow-up work
 
-1. The intro FMV codec (IV50 / Indeo 5) for the front end's opening movie and
-   final `I14` closure.
+All 119 roadmap items in `docs/DECOMP_MAP.md` are complete. Optional follow-up
+enhancements (outside the completed single-player compatibility baseline):
 
-The next `docs/DECOMP_MAP.md` focus stays on the gameplay gaps above.
+1. Multi-car split-screen / network session orchestration over the already
+   reconstructed `cmr-core::car_vs_car_collision` and `cmr-core::net_tcp`
+   modules.
+2. Zero-copy GPU window presentation skipping the `R8Uint` index readback
+   (host optimization noted under `I09`).
+3. Environmental verification on a native Windows host (`I04`/`I12`/`I13`).
 
 ## Evidence and boundaries
 

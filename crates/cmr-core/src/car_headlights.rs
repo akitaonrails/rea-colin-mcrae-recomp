@@ -839,14 +839,15 @@ impl CarLampState {
         render_mode_6: bool,
     ) -> CarLampDrawPlan {
         let mut plan = CarLampDrawPlan::default();
-        if pose.out_of_bounds_75c
-            || pose.aliengoo
-            || pose.penalty_760
-            || pose.special_event_514478
+        if pose.out_of_bounds_75c || pose.aliengoo || pose.penalty_760 || pose.special_event_514478
         {
             return plan;
         }
-        let cam_world = [camera_world_q16[12], camera_world_q16[13], camera_world_q16[14]];
+        let cam_world = [
+            camera_world_q16[12],
+            camera_world_q16[13],
+            camera_world_q16[14],
+        ];
         let body_t = [
             pose.body_world_d4[12],
             pose.body_world_d4[13],
@@ -1183,7 +1184,9 @@ impl CarLampState {
         };
 
         if pose.night_stage {
-            let end = base_m.saturating_add(cnt_m).min(self.front_world_positions.len());
+            let end = base_m
+                .saturating_add(cnt_m)
+                .min(self.front_world_positions.len());
             for r in base_m..end {
                 let k = r - base_m;
                 if !pose.broken_pod_lamps_ca8.get(k).copied().unwrap_or(true) {
@@ -1650,7 +1653,10 @@ mod tests {
             NIGHT_AMBIENT_BYTE
         );
         // Quirk Q9: d == 0 wraps low byte of 0x100 to 0 -> clamped to 0x28.
-        assert_eq!(pool_grey_4a8750(lp, lp, POOL_RADIUS_Q16), NIGHT_AMBIENT_BYTE);
+        assert_eq!(
+            pool_grey_4a8750(lp, lp, POOL_RADIUS_Q16),
+            NIGHT_AMBIENT_BYTE
+        );
         // Near centre (d = 1.0) -> bright grey (> 240).
         let near = pool_grey_4a8750(lp, [ONE_Q16, 0, 0], POOL_RADIUS_Q16);
         assert!(near > 240, "expected bright pool near centre, got {near}");

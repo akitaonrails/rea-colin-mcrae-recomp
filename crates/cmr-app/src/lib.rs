@@ -2438,6 +2438,32 @@ impl StageRenderResources {
         ))
     }
 
+    /// Bind active `.moj` kinematic records (`FUN_0045bde0`..`FUN_0045c160`) to
+    /// the stage's `.obj` scene-graph nodes.
+    #[must_use]
+    pub fn build_moj_slots(
+        &self,
+        double_rate_551af0: bool,
+    ) -> Vec<cmr_core::stage_moj_motion::MojRuntimeSlot> {
+        let (Some(objects), Some(moj)) = (self.bundle.objects(), self.bundle.moving_object_paths())
+        else {
+            return Vec::new();
+        };
+        let active = cmr_formats::stage::filter_active_moj_records(moj);
+        if active.is_empty() {
+            return Vec::new();
+        }
+        let locals: Vec<[i32; 16]> = objects
+            .group0_records()
+            .map(|node| node.affine_matrix_q16())
+            .collect();
+        cmr_core::stage_moj_motion::bind_all_moj_records_45c160(
+            &active,
+            &locals,
+            double_rate_551af0,
+        )
+    }
+
     /// Update the `.obj` scene-graph local matrix overrides for any dynamic
     /// trackside objects that have moved (`FUN_00452b70`).
     pub fn set_object_locals(&mut self, locals: Vec<(usize, [i32; 16])>) {
@@ -2831,13 +2857,9 @@ impl StageRenderResources {
                 AssetStore::open(runtime_data, &reviewed, DecodeLimits::default()).ok()
             });
         let load_bmp = |path: &str| {
-            store
-                .as_ref()?
-                .load(path)
-                .ok()
-                .and_then(|bytes| {
-                    cmr_formats::bitmap::parse_indexed_bitmap(&bytes, BitmapLimits::default()).ok()
-                })
+            store.as_ref()?.load(path).ok().and_then(|bytes| {
+                cmr_formats::bitmap::parse_indexed_bitmap(&bytes, BitmapLimits::default()).ok()
+            })
         };
         let (Some(headglow), Some(bglow2)) = (
             load_bmp("Game/Images/HEADGLOW.BMP"),
@@ -8486,6 +8508,7 @@ fn reload_stage_for_event<'a>(
     if let Some(objects) = resources.build_moving_objects() {
         session.set_moving_objects(objects);
     }
+    session.set_moj_slots(resources.build_moj_slots(false));
     // The school's stage load (`FUN_004716b0`) and setup (`FUN_0046ee70`).
     if session.event().globals.school_d3ca88 {
         start_school_task(
@@ -9286,6 +9309,7 @@ pub fn run_windowed_game_session(
     if let Some(objects) = resources.build_moving_objects() {
         session.set_moving_objects(objects);
     }
+    session.set_moj_slots(resources.build_moj_slots(false));
     let mut analog = AnalogDriver::new();
     let response = DriveResponse {
         max_forward_force: Fixed16::from_raw(GAME_SESSION_DRIVE_FORCE_Q16),

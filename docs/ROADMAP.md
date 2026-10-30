@@ -2097,7 +2097,11 @@ relocation (`FUN_0046ddc0`/`FUN_0046de30`), `CarState`/`RaceState` Region-A
 seeding, and Rally School `intro.rsp`/`exit.rsp` playback (`FUN_0046de70`,
 `FUN_00437ef0`, `FUN_004384a0`, `FUN_0046edd0`) are reconstructed in
 `cmr-core::replay`, `cmr-core::race_state`, `cmr-core::gameplay_session`, and
-`cmr-app`.
+`cmr-app`. Bound `.moj` kinematic scene-object slots (`FUN_0045bde0`..`FUN_0045c9c0`)
+are wired end to end through `StageRenderResources::build_moj_slots` and
+`GameplaySession`, and `FUN_0046f920` briefing `.avi`/`.wav` path formatting
+(`"%d"` + `".avi"`, `[80, 32, 320, 208]`) is pinned in `cmr-core::intro_video`,
+completing `I14` (`119 / 119` items complete).
 The reset trigger remains an explicit input, and no unsupported position-snap,
 time penalty, or damage-performance mapping is claimed.
 

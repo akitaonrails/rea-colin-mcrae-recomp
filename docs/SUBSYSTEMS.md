@@ -2707,7 +2707,11 @@ languages rather than fabricating or silently aliasing Italian assets.
   (`FUN_0046ddc0`/`FUN_0046de30`), `CarState`/`RaceState` Region-A seeding, and
   Rally School `intro.rsp`/`exit.rsp` playback (`FUN_0046de70`, `FUN_00437ef0`,
   `FUN_004384a0`, `FUN_0046edd0`) are reconstructed in `cmr-core::replay`,
-  `cmr-core::race_state`, `cmr-core::gameplay_session`, and `cmr-app`.
+  `cmr-core::race_state`, `cmr-core::gameplay_session`, and `cmr-app`, and bound
+  `.moj` kinematic scene-object slots (`FUN_0045bde0`..`FUN_0045c9c0`) are wired
+  end to end through `StageRenderResources::build_moj_slots` and
+  `GameplaySession` (`moving_object_node_locals`), completing `I14` (`119 / 119`
+  items complete).
 - Suspension/surface recovery is composed end to end: authenticated HPC data
   feeds the complete eight-lane initializer, and the four-wheel producer shares
   its force/contact results with geometric postprocess, translation, angular

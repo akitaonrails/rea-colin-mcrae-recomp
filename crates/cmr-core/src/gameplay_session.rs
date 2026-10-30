@@ -264,6 +264,10 @@ pub struct GameplaySession<'a> {
     moving_objects: Option<MovingObjects>,
     moving_objects_initial: Option<MovingObjects>,
     object_hit_cache: MovingObjectHitCache,
+    /// Bound `.moj` kinematic scene objects (`FUN_0045bde0`..`FUN_0045c9c0`) and
+    /// their stage-start snapshot.
+    moj_slots: Vec<crate::stage_moj_motion::MojRuntimeSlot>,
+    moj_slots_initial: Vec<crate::stage_moj_motion::MojRuntimeSlot>,
     /// `DAT_00552f68`: whether `FUN_0043f790` recorded an object contact this tick.
     last_object_contact_552f68: bool,
     /// `DAT_00558fb0`: the last static or moving-object hit's surface material byte.
@@ -884,6 +888,8 @@ impl<'a> GameplaySession<'a> {
             moving_objects: None,
             moving_objects_initial: None,
             object_hit_cache: MovingObjectHitCache::default(),
+            moj_slots: Vec::new(),
+            moj_slots_initial: Vec::new(),
             last_object_contact_552f68: false,
             last_contact_material_558fb0: 0,
             rng: crate::game_rng::GameLcg::new(1),
@@ -972,13 +978,56 @@ impl<'a> GameplaySession<'a> {
         self.moving_objects.as_ref()
     }
 
+    /// Attach the stage's bound `.moj` kinematic scene-object slots
+    /// (`FUN_0045bde0`..`FUN_0045c160`).
+    pub fn set_moj_slots(&mut self, slots: Vec<crate::stage_moj_motion::MojRuntimeSlot>) {
+        self.moj_slots_initial.clone_from(&slots);
+        self.moj_slots = slots;
+    }
+
+    /// The live bound `.moj` kinematic scene-object slots (`DAT_00573a88`).
+    #[must_use]
+    pub fn moj_slots(&self) -> &[crate::stage_moj_motion::MojRuntimeSlot] {
+        &self.moj_slots
+    }
+
     /// The `.obj` scene-graph `(node_index, local_matrix_q16)` overrides from
-    /// any dynamic trackside objects that have moved (`FUN_00452b70`).
+    /// any dynamic trackside objects (`FUN_00452b70`) and bound `.moj` kinematic
+    /// scene objects (`FUN_0045c9c0`).
     #[must_use]
     pub fn moving_object_node_locals(&self) -> Vec<(usize, [i32; 16])> {
-        self.moving_objects
+        let mut locals = self
+            .moving_objects
             .as_ref()
-            .map_or_else(Vec::new, |o| o.node_locals().collect())
+            .map_or_else(Vec::new, |o| o.node_locals().collect());
+        for slot in &self.moj_slots {
+            let ground_y = if slot.record.terrain_snap_flag != 0
+                && let Some(geometry) = self.ground_geometry
+            {
+                use crate::moving_objects::ObjectGround as _;
+                let mut ground = CompiledObjectGround(geometry.provider());
+                let mut handle = -1;
+                let (y, _) = ground.query(
+                    [
+                        slot.curr_tf_48[12],
+                        slot.curr_tf_48[13],
+                        slot.curr_tf_48[14],
+                    ],
+                    &mut handle,
+                    slot.curr_tf_48[13],
+                );
+                Some(y)
+            } else {
+                None
+            };
+            let tf = crate::stage_moj_motion::interpolate_moj_slot_45c9c0(
+                slot,
+                crate::stage_moj_motion::ONE_Q16,
+                ground_y,
+            );
+            locals.push((slot.scene_node_index, tf));
+        }
+        locals
     }
 
     /// Run the trigger walk `FUN_00403a00` each four-wheel tick over these
@@ -1215,6 +1264,11 @@ impl<'a> GameplaySession<'a> {
                 objects.update(&mut ground, dt, trig);
             }
         }
+        // Kinematic `.moj` object motion (`FUN_0045c1b0`, `0x43b388..0x43b397`)
+        // runs immediately after dynamic `.obj` physics in `FUN_0043afd0`.
+        for slot in &mut self.moj_slots {
+            crate::stage_moj_motion::step_moj_slot_45c1b0(slot);
+        }
         // The render-spin block (`0x43b3a4`) runs before the per-car loop,
         // whose order is `FUN_00417e20`, the ground pass (ending in
         // `FUN_00410350`), `FUN_00415df0` and the reset.
@@ -1290,6 +1344,7 @@ impl<'a> GameplaySession<'a> {
         if let Some(initial) = self.moving_objects_initial.as_ref() {
             self.moving_objects = Some(initial.clone());
         }
+        self.moj_slots.clone_from(&self.moj_slots_initial);
         self.object_hit_cache.clear();
         self.last_object_contact_552f68 = false;
         self.last_contact_material_558fb0 = 0;
@@ -1339,6 +1394,9 @@ impl<'a> GameplaySession<'a> {
                 }
                 sample
             } else {
+                for slot in &mut self.moj_slots {
+                    crate::stage_moj_motion::step_moj_slot_45c1b0(slot);
+                }
                 self.race.step(&controls, &self.params)
             })
         } else {
@@ -1505,10 +1563,15 @@ impl<'a> GameplaySession<'a> {
                 }
             }
             sample.car = self.race.car();
-            if four_wheel && let Err(error) = self.four_wheel_tail(&controls, progress, &mut sample)
-            {
-                self.race = race_before;
-                return Err(StaticGameplayAdvanceError::Wheel(error));
+            if four_wheel {
+                if let Err(error) = self.four_wheel_tail(&controls, progress, &mut sample) {
+                    self.race = race_before;
+                    return Err(StaticGameplayAdvanceError::Wheel(error));
+                }
+            } else {
+                for slot in &mut self.moj_slots {
+                    crate::stage_moj_motion::step_moj_slot_45c1b0(slot);
+                }
             }
             Some(sample)
         } else {
@@ -1929,8 +1992,10 @@ impl<'a> GameplaySession<'a> {
                 self.last_brake_308 != 0
             };
         let reverse_6fc = four.gearbox.gear_43a < 0;
-        let (detached_lights_lr, broken_pod_lamps_ca8) =
-            self.car_damage.as_ref().map_or(([false; 2], [false; 6]), |d| {
+        let (detached_lights_lr, broken_pod_lamps_ca8) = self
+            .car_damage
+            .as_ref()
+            .map_or(([false; 2], [false; 6]), |d| {
                 (d.detached_lights_lr(), d.broken_pod_lamps_ca8)
             });
         crate::car_headlights::CarLampPoseInput {
@@ -3194,5 +3259,54 @@ mod tests {
             "State 9 seeded car from exit.rsp Region A (0x88_0000)"
         );
         assert_eq!(states, [7, 5, 9, 0xb, 2]);
+    }
+
+    #[test]
+    fn moj_slots_step_on_drive_tick_and_emit_node_locals() {
+        use crate::stage_moj_motion::{IDENTITY_4X4_Q16, bind_moj_scene_node_45be90};
+        use cmr_formats::stage::MojRecord;
+
+        let mut session = GameplaySession::new(params(), InRaceScript::gameplay_harness());
+        let record = MojRecord {
+            terrain_snap_flag: 0,
+            initial_angle_bam: 0,
+            angle_padding: 0,
+            orbit_diameter_q16: 0x20_0000,
+            reserved_0c: 0,
+            position_or_target_q16: [0, 0x10_0000, 0],
+            translation_period_seconds: 1,
+            rotation_period_seconds: [1, 0, 0],
+            motion_mode: 4,
+        };
+        let mut node_tf = IDENTITY_4X4_Q16;
+        node_tf[13] = 0x10_0000;
+        let slot = bind_moj_scene_node_45be90(record, 42, &node_tf, false).unwrap();
+        session.set_moj_slots(vec![slot]);
+
+        let initial_locals = session.moving_object_node_locals();
+        assert_eq!(initial_locals.len(), 1);
+        assert_eq!(initial_locals[0].0, 42);
+        assert_eq!(initial_locals[0].1[14], 0);
+
+        let nodes = line();
+        let mut progress = StageProgress::new(&nodes, 0);
+        let mut steps = 0;
+        for _ in 0..1000 {
+            let frame = session
+                .try_advance(&StationaryClock, frontend_menu(), forward(), &mut progress)
+                .unwrap();
+            if frame.stepped {
+                steps += 1;
+                if steps == 2 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(session.sim_ticks(), 2);
+        assert_eq!(session.moj_slots()[0].tick_counters_d4[0], 2);
+        let stepped_locals = session.moving_object_node_locals();
+        assert_eq!(stepped_locals.len(), 1);
+        assert_eq!(stepped_locals[0].0, 42);
+        assert!(stepped_locals[0].1[14] > 0);
     }
 }

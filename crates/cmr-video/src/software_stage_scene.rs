@@ -375,26 +375,23 @@ impl StageSceneFrame {
                     let at = usize::from(y) * usize::from(width) + usize::from(x);
                     let under = pixels[at];
                     let bayer = BAYER_4X4[usize::from(y & 3)][usize::from(x & 3)];
-                    pixels[at] =
-                        *cache
-                            .entry((under, add_rgb, bayer))
-                            .or_insert_with(|| {
-                                let base = palette[usize::from(under)];
-                                let offset = (f32::from(bayer) - 7.5) * DITHER_STEP;
-                                let add = |b: u8, s: u8| {
-                                    (f32::from(b) + f32::from(s) + offset)
-                                        .round()
-                                        .clamp(0.0, 255.0) as u8
-                                };
-                                nearest_index(
-                                    [
-                                        add(base.red, add_rgb[0]),
-                                        add(base.green, add_rgb[1]),
-                                        add(base.blue, add_rgb[2]),
-                                    ],
-                                    &palette,
-                                )
-                            });
+                    pixels[at] = *cache.entry((under, add_rgb, bayer)).or_insert_with(|| {
+                        let base = palette[usize::from(under)];
+                        let offset = (f32::from(bayer) - 7.5) * DITHER_STEP;
+                        let add = |b: u8, s: u8| {
+                            (f32::from(b) + f32::from(s) + offset)
+                                .round()
+                                .clamp(0.0, 255.0) as u8
+                        };
+                        nearest_index(
+                            [
+                                add(base.red, add_rgb[0]),
+                                add(base.green, add_rgb[1]),
+                                add(base.blue, add_rgb[2]),
+                            ],
+                            &palette,
+                        )
+                    });
                 },
             )?;
         }
@@ -472,18 +469,12 @@ impl StageSceneFrame {
                 let nx = ((x as f32 + 0.5) / w_half) - 1.0;
                 let x_view = (nx * z_view) / m00;
                 let y_view = y_coeff * z_view;
-                let wx = cam_pos[0]
-                    + x_view * cam_right[0]
-                    + y_view * cam_up[0]
-                    + z_view * cam_fwd[0];
-                let wy = cam_pos[1]
-                    + x_view * cam_right[1]
-                    + y_view * cam_up[1]
-                    + z_view * cam_fwd[1];
-                let wz = cam_pos[2]
-                    + x_view * cam_right[2]
-                    + y_view * cam_up[2]
-                    + z_view * cam_fwd[2];
+                let wx =
+                    cam_pos[0] + x_view * cam_right[0] + y_view * cam_up[0] + z_view * cam_fwd[0];
+                let wy =
+                    cam_pos[1] + x_view * cam_right[1] + y_view * cam_up[1] + z_view * cam_fwd[1];
+                let wz =
+                    cam_pos[2] + x_view * cam_right[2] + y_view * cam_up[2] + z_view * cam_fwd[2];
                 if let Some((cc, r2)) = car_excl {
                     let dx = wx - cc[0];
                     let dy = wy - cc[1];

@@ -1622,10 +1622,7 @@ mod tests {
         sections.insert(CAT_EXTENSION, vec![0u8; CAT_NODE_STRIDE]);
         sections.insert(SPL_EXTENSION, vec![0x99]);
         sections.insert(ANM_EXTENSION, vec![0u8; ANM_RECORD_STRIDE * 2]);
-        sections.insert(
-            RSF_EXTENSION,
-            vec![0u8; crate::school_rsf::RSF_BLOCK_SIZE],
-        );
+        sections.insert(RSF_EXTENSION, vec![0u8; crate::school_rsf::RSF_BLOCK_SIZE]);
         sections.insert(FUZ_EXTENSION, vec![0x77, 0x88]);
         assert_eq!(sections.len(), STAGE_EXTENSIONS.len());
 
@@ -1645,6 +1642,9 @@ mod tests {
             bundle.school_reference().unwrap().records.len(),
             crate::school_rsf::RSF_RECORDS
         );
-        assert_eq!(bundle.fuz_section().unwrap().unconsumed_bytes(), &[0x77, 0x88]);
+        assert_eq!(
+            bundle.fuz_section().unwrap().unconsumed_bytes(),
+            &[0x77, 0x88]
+        );
     }
 }
