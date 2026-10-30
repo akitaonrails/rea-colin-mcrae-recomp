@@ -32,6 +32,8 @@
 //! section layout are recovered. Unknowns (not reproduced): the explicit `.SSR`
 //! write path and the network wire framing.
 
+use crate::camera_crossfade::blend_pose;
+use crate::drivetrain::cross_q16;
 use crate::fixed_point::Fixed16;
 
 /// Per-car input-trace ticks at 25 Hz (`0x1d4c` = 7500 = 300 s).
@@ -49,20 +51,26 @@ pub const REPLAY_INITIAL_STATE_BYTES: usize = 0x151ec;
 /// Dwords of the Region-A block (`0x151ec / 4 = 0x547b`).
 pub const REPLAY_INITIAL_STATE_DWORDS: usize = 0x547b;
 
-/// Region-A car-type block size (`0xcd0`).
+/// Region-A car-type block offset (`0x0000`) and size (`0xcd0`).
+pub const REPLAY_CAR_TYPE_OFFSET: usize = 0x0000;
 pub const REPLAY_CAR_TYPE_BYTES: usize = 0xcd0;
 /// Region-A control-block offset (`0xcd0`) and size (`0x464`).
 pub const REPLAY_CONTROL_OFFSET: usize = 0xcd0;
 pub const REPLAY_CONTROL_BYTES: usize = 0x464;
+/// Region-A reserved header gap (`0x1134..0x11f4`, `0xc0` bytes) before the physics block.
+pub const REPLAY_RESERVED_GAP_OFFSET: usize = 0x1134;
+pub const REPLAY_RESERVED_GAP_BYTES: usize = 0x00c0;
 /// Region-A physics-block offset (`0x11f4`) and size (`0x768`).
 pub const REPLAY_PHYSICS_OFFSET: usize = 0x11f4;
 pub const REPLAY_PHYSICS_BYTES: usize = 0x768;
 /// Region-A object-record offset (`0x195c`) and stride (`0xa0`).
 pub const REPLAY_OBJECTS_OFFSET: usize = 0x195c;
 pub const REPLAY_OBJECT_RECORD_BYTES: usize = 0xa0;
-/// Region-A trailing state/timer offsets (`0x151dc`/`0x151e8`).
+/// Region-A trailing state/timer offsets (`0x151dc`/`0x151e8`) and sizes (`12`/`4`).
 pub const REPLAY_TRAILING_STATE_OFFSET: usize = 0x151dc;
+pub const REPLAY_TRAILING_STATE_BYTES: usize = 12;
 pub const REPLAY_TIMER_OFFSET: usize = 0x151e8;
+pub const REPLAY_TIMER_BYTES: usize = 4;
 /// Maximum object records before the trailing 12-byte state block (`0x1f4`).
 pub const REPLAY_MAX_OBJECTS: usize = 0x1f4;
 
@@ -409,6 +417,393 @@ pub fn snapshot_interp_factor(subframe: u32) -> Fixed16 {
     Fixed16::from_raw((subframe & 3) as i32 * SNAPSHOT_INTERP_STEP)
 }
 
+/// Orientation-axis decompression scale (`FUN_0046c910`: `(c as i64 * 0x20000) >> 16` = `(c as i32) << 1`).
+pub const ORIENTATION_DECOMPRESS_SCALE: i64 = 0x2_0000;
+
+/// Per-axis position jump threshold (`0x14_0000` = `20.0` in Q16.16) above which
+/// `FUN_0046ca70` suppresses interpolation and teleports to the current keyframe.
+pub const SNAPSHOT_TELEPORT_THRESHOLD_Q16: i32 = 0x14_0000;
+
+/// Decompress one `i16` orientation component back into Q16.16 (`FUN_0046c910`).
+#[must_use]
+pub const fn decompress_orientation(compressed: i16) -> i32 {
+    ((compressed as i64 * ORIENTATION_DECOMPRESS_SCALE) >> 16) as i32
+}
+
+/// One 24-byte (`0x18`) render-snapshot keyframe (`DAT_00592f84` element).
+///
+/// Layout (`FUN_0046c7d0` / `FUN_0046c910`):
+/// - `+0x00..+0x0c`: `[i32; 3]` Q16.16 position `(x, y, z)` from `[car_render_tf + 0x30..+0x3c]`.
+/// - `+0x0c..+0x12`: `[i16; 3]` compressed Row 0 (Right / X-axis from `[car_render_tf + 0x00..+0x0c]`).
+/// - `+0x12..+0x18`: `[i16; 3]` compressed Row 1 (Up / Y-axis from `[car_render_tf + 0x10..+0x1c]`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SnapshotKeyframe {
+    pub pos: [i32; 3],
+    pub row0_compressed: [i16; 3],
+    pub row1_compressed: [i16; 3],
+}
+
+impl SnapshotKeyframe {
+    /// Capture a keyframe from a 4x4 Q16.16 render transform (`FUN_0046c7d0`).
+    #[must_use]
+    pub fn from_transform_46c7d0(tf: &[i32; 16]) -> Self {
+        Self {
+            pos: [tf[12], tf[13], tf[14]],
+            row0_compressed: [
+                compress_orientation(Fixed16::from_raw(tf[0])),
+                compress_orientation(Fixed16::from_raw(tf[1])),
+                compress_orientation(Fixed16::from_raw(tf[2])),
+            ],
+            row1_compressed: [
+                compress_orientation(Fixed16::from_raw(tf[4])),
+                compress_orientation(Fixed16::from_raw(tf[5])),
+                compress_orientation(Fixed16::from_raw(tf[6])),
+            ],
+        }
+    }
+
+    /// Unpack a keyframe into a 4x4 Q16.16 render transform (`FUN_0046c910`),
+    /// reconstructing Row 2 via `FUN_0048e810` (`cross_q16(row0, row1)`).
+    #[must_use]
+    pub fn to_transform_46c910(&self) -> [i32; 16] {
+        let r0 = [
+            decompress_orientation(self.row0_compressed[0]),
+            decompress_orientation(self.row0_compressed[1]),
+            decompress_orientation(self.row0_compressed[2]),
+        ];
+        let r1 = [
+            decompress_orientation(self.row1_compressed[0]),
+            decompress_orientation(self.row1_compressed[1]),
+            decompress_orientation(self.row1_compressed[2]),
+        ];
+        let r2 = cross_q16(r0, r1);
+        [
+            r0[0],
+            r0[1],
+            r0[2],
+            0,
+            r1[0],
+            r1[1],
+            r1[2],
+            0,
+            r2[0],
+            r2[1],
+            r2[2],
+            0,
+            self.pos[0],
+            self.pos[1],
+            self.pos[2],
+            0x1_0000,
+        ]
+    }
+
+    /// Serialize to the exact 24-byte (`0x18`) little-endian representation.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; SNAPSHOT_RECORD_BYTES] {
+        let mut out = [0u8; SNAPSHOT_RECORD_BYTES];
+        out[0..4].copy_from_slice(&self.pos[0].to_le_bytes());
+        out[4..8].copy_from_slice(&self.pos[1].to_le_bytes());
+        out[8..12].copy_from_slice(&self.pos[2].to_le_bytes());
+        out[12..14].copy_from_slice(&self.row0_compressed[0].to_le_bytes());
+        out[14..16].copy_from_slice(&self.row0_compressed[1].to_le_bytes());
+        out[16..18].copy_from_slice(&self.row0_compressed[2].to_le_bytes());
+        out[18..20].copy_from_slice(&self.row1_compressed[0].to_le_bytes());
+        out[20..22].copy_from_slice(&self.row1_compressed[1].to_le_bytes());
+        out[22..24].copy_from_slice(&self.row1_compressed[2].to_le_bytes());
+        out
+    }
+
+    /// Parse from a 24-byte (`0x18`) little-endian slice.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != SNAPSHOT_RECORD_BYTES {
+            return None;
+        }
+        Some(Self {
+            pos: [
+                i32::from_le_bytes(bytes[0..4].try_into().ok()?),
+                i32::from_le_bytes(bytes[4..8].try_into().ok()?),
+                i32::from_le_bytes(bytes[8..12].try_into().ok()?),
+            ],
+            row0_compressed: [
+                i16::from_le_bytes(bytes[12..14].try_into().ok()?),
+                i16::from_le_bytes(bytes[14..16].try_into().ok()?),
+                i16::from_le_bytes(bytes[16..18].try_into().ok()?),
+            ],
+            row1_compressed: [
+                i16::from_le_bytes(bytes[18..20].try_into().ok()?),
+                i16::from_le_bytes(bytes[20..22].try_into().ok()?),
+                i16::from_le_bytes(bytes[22..24].try_into().ok()?),
+            ],
+        })
+    }
+}
+
+/// Whether two snapshot positions exceed the `20.0` (`0x14_0000`) per-axis
+/// teleport threshold in `FUN_0046ca70`.
+#[must_use]
+pub fn snapshot_exceeds_teleport_threshold_46ca70(prev_pos: [i32; 3], curr_pos: [i32; 3]) -> bool {
+    (0..3).any(|i| {
+        let diff = prev_pos[i].wrapping_sub(curr_pos[i]);
+        let abs_diff = if diff < 0 { diff.wrapping_neg() } else { diff };
+        abs_diff > SNAPSHOT_TELEPORT_THRESHOLD_Q16
+    })
+}
+
+/// Per-car render-snapshot keyframe lane (`0x8ca` = 2250 capacity, `FUN_0046c7d0` / `FUN_0046ca70`).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SnapshotCarLane {
+    frames: Vec<SnapshotKeyframe>,
+}
+
+impl SnapshotCarLane {
+    #[must_use]
+    pub fn new() -> Self {
+        Self { frames: Vec::new() }
+    }
+
+    #[must_use]
+    pub fn keyframes(&self) -> &[SnapshotKeyframe] {
+        &self.frames
+    }
+
+    /// Capture a keyframe on every 4th physics tick (`(subframe_counter & 3) == 0`)
+    /// up to `SNAPSHOT_CAPACITY_PER_CAR` (`0x8ca` = 2250), reproducing `FUN_0046c7d0`.
+    pub fn capture_tick_46c7d0(&mut self, subframe_counter: u32, tf: &[i32; 16]) -> bool {
+        if (subframe_counter & 3) != 0 || self.frames.len() >= SNAPSHOT_CAPACITY_PER_CAR {
+            return false;
+        }
+        self.frames.push(SnapshotKeyframe::from_transform_46c7d0(tf));
+        true
+    }
+
+    /// Evaluate the playback render transform at `(keyframe_index, subframe)` (`FUN_0046ca70`).
+    ///
+    /// - When `(subframe & 3) == 0`, unpacks `frames[keyframe_index]` directly (`FUN_0046c910`).
+    /// - When `(subframe & 3)` is `1..=3`, unpacks `frames[keyframe_index - 1]` and
+    ///   `frames[keyframe_index]`; if any axis delta exceeds `0x14_0000` (`20.0`), snaps
+    ///   directly to `frames[keyframe_index]`, otherwise blends via `FUN_00435400` (`blend_pose`)
+    ///   with `alpha = (subframe & 3) * 0x4000`.
+    #[must_use]
+    pub fn evaluate_playback_46ca70(&self, keyframe_index: usize, subframe: u32) -> Option<[i32; 16]> {
+        let sub = subframe & 3;
+        let curr = self.frames.get(keyframe_index)?;
+        let curr_tf = curr.to_transform_46c910();
+        if sub == 0 {
+            return Some(curr_tf);
+        }
+        let prev_idx = keyframe_index.checked_sub(1)?;
+        let prev = self.frames.get(prev_idx)?;
+        if snapshot_exceeds_teleport_threshold_46ca70(prev.pos, curr.pos) {
+            return Some(curr_tf);
+        }
+        let prev_tf = prev.to_transform_46c910();
+        let alpha = snapshot_interp_factor(sub).raw();
+        Some(blend_pose(&prev_tf, &curr_tf, alpha))
+    }
+}
+
+/// Borrowed view over a `0x151ec`-byte Region-A initial-state seed block
+/// (`FUN_0046d370` save / `FUN_0046d460` restore).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReplayRegionAView<'a> {
+    bytes: &'a [u8; REPLAY_INITIAL_STATE_BYTES],
+}
+
+impl<'a> ReplayRegionAView<'a> {
+    /// Wrap an exact `0x151ec`-byte array.
+    #[must_use]
+    pub const fn new(bytes: &'a [u8; REPLAY_INITIAL_STATE_BYTES]) -> Self {
+        Self { bytes }
+    }
+
+    /// Borrow from a byte slice if its length is `REPLAY_INITIAL_STATE_BYTES` (`0x151ec`).
+    #[must_use]
+    pub fn from_slice(slice: &'a [u8]) -> Option<Self> {
+        let array: &'a [u8; REPLAY_INITIAL_STATE_BYTES] = slice.try_into().ok()?;
+        Some(Self { bytes: array })
+    }
+
+    /// Borrow the Region-A block of frame `frame_index` from a full serialized `.SSR`/`.RSP` buffer.
+    #[must_use]
+    pub fn from_replay_object(
+        object_bytes: &'a [u8],
+        n_ticks: u32,
+        n_frames: u32,
+        frame_index: u32,
+    ) -> Option<Self> {
+        if frame_index >= n_frames || !replay_file_size_valid(object_bytes.len(), n_ticks, n_frames) {
+            return None;
+        }
+        let start = REPLAY_OBJECT_HEADER_BYTES + (frame_index as usize) * REPLAY_INITIAL_STATE_BYTES;
+        let end = start + REPLAY_INITIAL_STATE_BYTES;
+        Self::from_slice(object_bytes.get(start..end)?)
+    }
+
+    /// Car-type / suspension / wheel setup block (`+0x0000..+0x0cd0`, `0x50d950 + car * 0xcd0`).
+    #[must_use]
+    pub fn car_type_bytes(&self) -> &'a [u8; REPLAY_CAR_TYPE_BYTES] {
+        self.bytes[REPLAY_CAR_TYPE_OFFSET..REPLAY_CAR_TYPE_OFFSET + REPLAY_CAR_TYPE_BYTES]
+            .try_into()
+            .expect("fixed car-type slice length")
+    }
+
+    /// Control / drivetrain struct (`+0x0cd0..+0x1134`, `0x5fffc8 + car * 0x464`).
+    #[must_use]
+    pub fn control_bytes(&self) -> &'a [u8; REPLAY_CONTROL_BYTES] {
+        self.bytes[REPLAY_CONTROL_OFFSET..REPLAY_CONTROL_OFFSET + REPLAY_CONTROL_BYTES]
+            .try_into()
+            .expect("fixed control slice length")
+    }
+
+    /// Reserved header gap (`+0x1134..+0x11f4`, `0xc0` bytes) skipped before `FUN_0046d010`.
+    #[must_use]
+    pub fn reserved_gap_bytes(&self) -> &'a [u8; REPLAY_RESERVED_GAP_BYTES] {
+        self.bytes[REPLAY_RESERVED_GAP_OFFSET..REPLAY_RESERVED_GAP_OFFSET + REPLAY_RESERVED_GAP_BYTES]
+            .try_into()
+            .expect("fixed reserved-gap slice length")
+    }
+
+    /// Physics body struct (`+0x11f4..+0x195c`, `0x700300 + car * 0x9c0`).
+    #[must_use]
+    pub fn physics_bytes(&self) -> &'a [u8; REPLAY_PHYSICS_BYTES] {
+        self.bytes[REPLAY_PHYSICS_OFFSET..REPLAY_PHYSICS_OFFSET + REPLAY_PHYSICS_BYTES]
+            .try_into()
+            .expect("fixed physics slice length")
+    }
+
+    /// Moving-object slot `index` (`0..500`, `+0x195c + index * 0xa0`).
+    #[must_use]
+    pub fn object_record_bytes(&self, index: usize) -> Option<&'a [u8; REPLAY_OBJECT_RECORD_BYTES]> {
+        let offset = replay_object_record_offset(index)?;
+        self.bytes
+            .get(offset..offset + REPLAY_OBJECT_RECORD_BYTES)?
+            .try_into()
+            .ok()
+    }
+
+    /// Trailing 3 dwords (`+0x151dc..+0x151e8`: `[0x57ae70[car], 0x5515fc[car], 0x57b030[car]]`).
+    #[must_use]
+    pub fn trailing_state_dwords(&self) -> [i32; 3] {
+        let base = REPLAY_TRAILING_STATE_OFFSET;
+        [
+            i32::from_le_bytes(self.bytes[base..base + 4].try_into().unwrap()),
+            i32::from_le_bytes(self.bytes[base + 4..base + 8].try_into().unwrap()),
+            i32::from_le_bytes(self.bytes[base + 8..base + 12].try_into().unwrap()),
+        ]
+    }
+
+    /// Trailing stage timer (`+0x151e8..+0x151ec`, `0x57b0ac[car]` in centiseconds).
+    #[must_use]
+    pub fn timer_centiseconds(&self) -> i32 {
+        let base = REPLAY_TIMER_OFFSET;
+        i32::from_le_bytes(self.bytes[base..base + 4].try_into().unwrap())
+    }
+
+    /// Read the car's Q16.16 world position (`physics + 0xc8..+0xd4`) from the physics block.
+    #[must_use]
+    pub fn physics_position_q16(&self) -> [i32; 3] {
+        let p = self.physics_bytes();
+        [
+            i32::from_le_bytes(p[0xc8..0xcc].try_into().unwrap()),
+            i32::from_le_bytes(p[0xcc..0xd0].try_into().unwrap()),
+            i32::from_le_bytes(p[0xd0..0xd4].try_into().unwrap()),
+        ]
+    }
+
+    /// Read the car's Q16.16 world velocity (`physics + 0xd4..+0xe0`) from the physics block.
+    #[must_use]
+    pub fn physics_velocity_q16(&self) -> [i32; 3] {
+        let p = self.physics_bytes();
+        [
+            i32::from_le_bytes(p[0xd4..0xd8].try_into().unwrap()),
+            i32::from_le_bytes(p[0xd8..0xdc].try_into().unwrap()),
+            i32::from_le_bytes(p[0xdc..0xe0].try_into().unwrap()),
+        ]
+    }
+
+    /// Read the car's 3x3 Q16.16 orientation basis rows (`physics + 0x258..+0x27c`).
+    #[must_use]
+    pub fn physics_basis_rows_q16(&self) -> [[i32; 3]; 3] {
+        let p = self.physics_bytes();
+        let mut rows = [[0i32; 3]; 3];
+        for (r, row) in rows.iter_mut().enumerate() {
+            for (c, cell) in row.iter_mut().enumerate() {
+                let off = 0x258 + (r * 3 + c) * 4;
+                *cell = i32::from_le_bytes(p[off..off + 4].try_into().unwrap());
+            }
+        }
+        rows
+    }
+
+    /// Restore the control block into `dest`, reproducing `FUN_0046d150`:
+    /// preserves the first two dwords (`dest[0..8]`) and copies `+0x08..+0x464`.
+    pub fn restore_control_46d150(&self, dest: &mut [u8; REPLAY_CONTROL_BYTES]) {
+        let src = self.control_bytes();
+        dest[8..].copy_from_slice(&src[8..]);
+    }
+
+    /// Restore moving-object slot `index` into `dest`, reproducing `FUN_0046d2b0`:
+    /// preserves the first dword (`dest[0..4]`, scene-node pointer) and copies `+0x04..+0xa0`.
+    pub fn restore_object_slot_46d2b0(
+        &self,
+        index: usize,
+        dest: &mut [u8; REPLAY_OBJECT_RECORD_BYTES],
+    ) -> bool {
+        let Some(src) = self.object_record_bytes(index) else {
+            return false;
+        };
+        dest[4..].copy_from_slice(&src[4..]);
+        true
+    }
+}
+
+/// Run-length-encoded input-trace playback stepper (`FUN_0046dc20`).
+///
+/// Advances through Region-B records in `0..end_cursor`: each tick decodes the
+/// current 4-byte `ReplayControlRecord` with the running repeat counter, resets
+/// the repeat counter and increments `cursor` when `repeat_complete` is reached,
+/// and stops once `cursor >= end_cursor`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ReplayPlaybackStepper {
+    pub cursor: usize,
+    pub end_cursor: u16,
+    pub repeat_counter: u8,
+}
+
+impl ReplayPlaybackStepper {
+    #[must_use]
+    pub const fn new(end_cursor: u16) -> Self {
+        Self {
+            cursor: 0,
+            end_cursor,
+            repeat_counter: 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_finished(&self) -> bool {
+        self.cursor >= self.end_cursor as usize
+    }
+
+    /// Step one physics tick of replay input playback (`FUN_0046dc20`).
+    pub fn step_tick_46dc20(
+        &mut self,
+        records: &[ReplayControlRecord],
+    ) -> Option<ReplayDecodedControl> {
+        if self.cursor >= usize::from(self.end_cursor) {
+            return None;
+        }
+        let record = *records.get(self.cursor)?;
+        let decoded = decode_replay_control(record, self.repeat_counter);
+        self.repeat_counter = decoded.next_repeat;
+        if decoded.repeat_complete {
+            self.cursor += 1;
+        }
+        Some(decoded)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,5 +1049,144 @@ mod tests {
         assert_eq!(snapshot_interp_factor(3), Fixed16::from_raw(0xc000)); // 0.75
         // Subframe wraps modulo 4.
         assert_eq!(snapshot_interp_factor(4), Fixed16::ZERO);
+    }
+
+    #[test]
+    fn snapshot_keyframe_packs_24_bytes_and_reconstructs_cross_row() {
+        let tf = [
+            0x1_0000, 0, 0, 0, // Row 0 = +X
+            0, 0x1_0000, 0, 0, // Row 1 = +Y
+            0, 0, 0x1_0000, 0, // Row 2 = +Z
+            0x10_0000, -0x2_0000, 0x45_0000, 0x1_0000,
+        ];
+        let kf = SnapshotKeyframe::from_transform_46c7d0(&tf);
+        assert_eq!(kf.pos, [0x10_0000, -0x2_0000, 0x45_0000]);
+        assert_eq!(kf.row0_compressed, [0x7ff9, 0, 0]);
+        assert_eq!(kf.row1_compressed, [0, 0x7ff9, 0]);
+
+        let bytes = kf.to_bytes();
+        assert_eq!(bytes.len(), SNAPSHOT_RECORD_BYTES);
+        assert_eq!(SnapshotKeyframe::from_bytes(&bytes), Some(kf));
+        assert!(SnapshotKeyframe::from_bytes(&bytes[..23]).is_none());
+
+        let unpacked = kf.to_transform_46c910();
+        // 0x7ff9 << 1 = 0xfff2
+        assert_eq!(unpacked[0], 0xfff2);
+        assert_eq!(unpacked[5], 0xfff2);
+        // Row 2 = cross(row0, row1) = (0, 0, (0xfff2 * 0xfff2) >> 16) = (0, 0, 0xffe4)
+        assert_eq!(unpacked[8], 0);
+        assert_eq!(unpacked[9], 0);
+        assert_eq!(unpacked[10], 0xffe4);
+        assert_eq!(&unpacked[12..16], &[0x10_0000, -0x2_0000, 0x45_0000, 0x1_0000]);
+    }
+
+    #[test]
+    fn snapshot_car_lane_captures_every_fourth_tick_and_interpolates_or_teleports() {
+        let mut lane = SnapshotCarLane::new();
+        let tf0 = [
+            0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000,
+        ];
+        let tf1 = [
+            0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0x4_0000, 0, 0, 0x1_0000,
+        ];
+        let tf_teleport = [
+            0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0x20_0000, 0, 0, 0x1_0000,
+        ];
+
+        assert!(lane.capture_tick_46c7d0(0, &tf0));
+        assert!(!lane.capture_tick_46c7d0(1, &tf0));
+        assert!(!lane.capture_tick_46c7d0(2, &tf0));
+        assert!(!lane.capture_tick_46c7d0(3, &tf0));
+        assert!(lane.capture_tick_46c7d0(4, &tf1));
+        assert!(lane.capture_tick_46c7d0(8, &tf_teleport));
+        assert_eq!(lane.keyframes().len(), 3);
+
+        // Subframe 2 between keyframe 0 (x=0) and keyframe 1 (x=4.0) interpolates to x=2.0
+        let mid = lane.evaluate_playback_46ca70(1, 2).unwrap();
+        assert_eq!(mid[12], 0x2_0000);
+
+        // Subframe 2 between keyframe 1 (x=4.0) and keyframe 2 (x=32.0, delta=28.0 > 20.0) teleports to x=32.0
+        let tele = lane.evaluate_playback_46ca70(2, 2).unwrap();
+        assert_eq!(tele[12], 0x20_0000);
+    }
+
+    #[test]
+    fn region_a_view_slices_and_partial_preserve_restores_match_binary() {
+        let mut seed = Box::new([0u8; REPLAY_INITIAL_STATE_BYTES]);
+        // Set control bytes at +0xcd0..+0x1134
+        seed[REPLAY_CONTROL_OFFSET..REPLAY_CONTROL_OFFSET + 8]
+            .copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        seed[REPLAY_CONTROL_OFFSET + 8..REPLAY_CONTROL_OFFSET + 12]
+            .copy_from_slice(&0xdead_beefu32.to_le_bytes());
+
+        // Set physics position at +0x11f4 + 0xc8
+        let pos_off = REPLAY_PHYSICS_OFFSET + 0xc8;
+        seed[pos_off..pos_off + 4].copy_from_slice(&0x11_0000i32.to_le_bytes());
+        seed[pos_off + 4..pos_off + 8].copy_from_slice(&0x22_0000i32.to_le_bytes());
+        seed[pos_off + 8..pos_off + 12].copy_from_slice(&0x33_0000i32.to_le_bytes());
+
+        // Set object 0 at +0x195c
+        seed[REPLAY_OBJECTS_OFFSET..REPLAY_OBJECTS_OFFSET + 4]
+            .copy_from_slice(&0xaaaa_bbbbu32.to_le_bytes());
+        seed[REPLAY_OBJECTS_OFFSET + 4..REPLAY_OBJECTS_OFFSET + 8]
+            .copy_from_slice(&0x1234_5678u32.to_le_bytes());
+
+        // Set trailing state & timer
+        seed[REPLAY_TRAILING_STATE_OFFSET..REPLAY_TRAILING_STATE_OFFSET + 4]
+            .copy_from_slice(&7i32.to_le_bytes());
+        seed[REPLAY_TIMER_OFFSET..REPLAY_TIMER_OFFSET + 4].copy_from_slice(&100i32.to_le_bytes());
+
+        let view = ReplayRegionAView::new(&seed);
+        assert_eq!(
+            view.physics_position_q16(),
+            [0x11_0000, 0x22_0000, 0x33_0000]
+        );
+        assert_eq!(view.trailing_state_dwords()[0], 7);
+        assert_eq!(view.timer_centiseconds(), 100);
+
+        // Control restore preserves first 8 bytes (2 dwords)
+        let mut ctl_dest = [0x99u8; REPLAY_CONTROL_BYTES];
+        view.restore_control_46d150(&mut ctl_dest);
+        assert_eq!(&ctl_dest[0..8], &[0x99; 8]);
+        assert_eq!(
+            u32::from_le_bytes(ctl_dest[8..12].try_into().unwrap()),
+            0xdead_beef
+        );
+
+        // Object slot restore preserves first 4 bytes (scene node pointer)
+        let mut obj_dest = [0x77u8; REPLAY_OBJECT_RECORD_BYTES];
+        assert!(view.restore_object_slot_46d2b0(0, &mut obj_dest));
+        assert_eq!(&obj_dest[0..4], &[0x77; 4]);
+        assert_eq!(
+            u32::from_le_bytes(obj_dest[4..8].try_into().unwrap()),
+            0x1234_5678
+        );
+        assert!(!view.restore_object_slot_46d2b0(REPLAY_MAX_OBJECTS, &mut obj_dest));
+    }
+
+    #[test]
+    fn replay_playback_stepper_expands_rle_repeats_until_end_cursor() {
+        let records = [
+            ReplayControlRecord([0x04, 0x00, 0x02, 0x00]), // digital throttle, repeat = 2 ticks
+            ReplayControlRecord([0x00, 0x04, 0x01, 0x00]), // digital brake, repeat = 1 tick
+            ReplayControlRecord([0x04, 0x00, 0x05, 0x00]), // beyond end_cursor=2 (must not be read)
+        ];
+        let mut stepper = ReplayPlaybackStepper::new(2);
+        let t0 = stepper.step_tick_46dc20(&records).unwrap();
+        assert_eq!(t0.actuators.throttle, -66);
+        assert!(!t0.repeat_complete);
+        assert_eq!(stepper.cursor, 0);
+
+        let t1 = stepper.step_tick_46dc20(&records).unwrap();
+        assert_eq!(t1.actuators.throttle, -66);
+        assert!(t1.repeat_complete);
+        assert_eq!(stepper.cursor, 1);
+
+        let t2 = stepper.step_tick_46dc20(&records).unwrap();
+        assert_eq!(t2.actuators.brake, -66);
+        assert!(t2.repeat_complete);
+        assert_eq!(stepper.cursor, 2);
+        assert!(stepper.is_finished());
+        assert!(stepper.step_tick_46dc20(&records).is_none());
     }
 }

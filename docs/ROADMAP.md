@@ -2089,9 +2089,12 @@ depenetration, inelastic impulse/torque, and crash-damage response
 `.dat`, `.obj`, `.moj`, `.sht`, `.ars`, `.hzn`, `.tsc`, `.csp`, `.cat`, `.spl`,
 `.anm`, `.rsf`, and `.fuz`) are integrated in `cmr-formats::stage::StageBundle`
 (closing E08), and `.moj` kinematic object motion (`FUN_0045bde0`..`FUN_0045c9c0`)
-is reconstructed in `cmr-core::stage_moj_motion`. The reset trigger remains an
-explicit input, and no unsupported position-snap, time penalty, or
-damage-performance mapping is claimed.
+is reconstructed in `cmr-core::stage_moj_motion`. Replay snapshot keyframes
+(`FUN_0046c7d0`/`FUN_0046c910`/`FUN_0046ca70`), Region-A initial-state seed
+views and partial-preserve restores (`FUN_0046d370`/`FUN_0046d460`), and RLE
+input-trace playback (`FUN_0046dc20`) are reconstructed in `cmr-core::replay`.
+The reset trigger remains an explicit input, and no unsupported position-snap,
+time penalty, or damage-performance mapping is claimed.
 
 G03 is complete at the safe portable-contract boundary. The authenticated HPC
 provider runs the complete compiled-initializer spine, and the four-wheel

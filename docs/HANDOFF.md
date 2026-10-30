@@ -216,17 +216,14 @@ tyre inputs (`DAT_004f6b50/6f10/777c` are now in `SessionTyreTables`).
 
 ## Latest state (read first)
 
-Stage bundle sibling decoders and `.moj` kinematic object motion (`E08` ->
-complete, `118 / 119` items complete; `impl.stage-bundle-all-14-siblings-and-moj`)
-are now complete: `cmr-formats::stage::StageBundle` and `load_stage` integrate
-all 14 `STAGE_EXTENSIONS` (`.c3d`, `.dat`, `.obj`, `.moj`, `.sht`, `.ars`,
-`.hzn`, `.tsc`, `.csp`, `.cat`, `.spl`, `.anm`, `.rsf`, and `.fuz`), and
-`cmr-core::stage_moj_motion` reconstructs `.moj` scene-node binding
-(`FUN_0045be90`/`FUN_0045c160`), X/Y/X rotation (`FUN_0045c770`/`FUN_0045c890`),
-circular and linear translation modes `1..=4` (`FUN_0045c1b0`), and pose
-interpolation (`FUN_0045c9c0`). Car-vs-car collision and response
-(`impl.car-vs-car-collision`) are also complete in
-`cmr-core::car_vs_car_collision` and bridged onto `RaceState`.
+Replay snapshot keyframes (`SnapshotKeyframe`, `SnapshotCarLane`), Region-A
+initial-state seed views and partial-preserve restores (`ReplayRegionAView`,
+`FUN_0046d370`/`FUN_0046d460`), and RLE input-trace playback
+(`ReplayPlaybackStepper`, `FUN_0046dc20`) are now reconstructed in
+`cmr-core::replay` (`impl.replay-snapshot-and-region-a`). Stage bundle sibling
+decoders and `.moj` kinematic object motion (`E08` -> complete, `118 / 119`
+items complete; `impl.stage-bundle-all-14-siblings-and-moj`) are also complete
+in `cmr-formats::stage` and `cmr-core::stage_moj_motion`.
 
 ## Highest-priority remaining work
 
