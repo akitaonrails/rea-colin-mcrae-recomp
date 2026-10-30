@@ -28,6 +28,8 @@ use crate::game_session::{GameSession, SessionBand};
 use crate::game_state::GameState;
 use crate::host_loop::HostClock;
 use crate::live_static_collision_car_frame::PreviousCarXz;
+use crate::moving_object_collision::MovingObjectHitCache;
+use crate::moving_objects::{CompiledObjectGround, FlatGround, MovingObjects};
 use crate::race_state::{
     CarState, Controls, FourWheelIterationParams, LiveStaticCollisionStepError, RaceState,
     ResetOutcome, SimParams, WheelPostprocessError,
@@ -256,6 +258,15 @@ pub struct GameplaySession<'a> {
     /// words that outlive it.
     school: Option<SchoolTask>,
     school_statics: crate::school_race::SchoolStatics,
+    /// Dynamic trackside objects (`.obj` cones/signs/markers, `FUN_00461090`),
+    /// their stage-start snapshot, and their per-car collision hit cache.
+    moving_objects: Option<MovingObjects>,
+    moving_objects_initial: Option<MovingObjects>,
+    object_hit_cache: MovingObjectHitCache,
+    /// `DAT_00552f68`: whether `FUN_0043f790` recorded an object contact this tick.
+    last_object_contact_552f68: bool,
+    /// `DAT_00558fb0`: the last static or moving-object hit's surface material byte.
+    last_contact_material_558fb0: u8,
     /// The game's `rand()` (`DAT_0050b690`) as the session draws on it; the
     /// host copies its generator in before an advance and back after.
     rng: crate::game_rng::GameLcg,
@@ -313,6 +324,7 @@ impl SchoolTask {
 /// the kind is not written (the caller's zero).
 struct CrashDamageOwner<'a, D> {
     inner: &'a mut D,
+    school: bool,
     damage: Option<&'a mut crate::car_crash_damage::CarDamage>,
     /// Per committed contact: its impact table (with the damage on) and its
     /// severity.
@@ -327,7 +339,7 @@ impl<D: StaticDamageOwner> StaticDamageOwner for CrashDamageOwner<'_, D> {
     }
 
     fn capture_debug_material(&self) -> bool {
-        self.inner.capture_debug_material()
+        self.school || self.inner.capture_debug_material()
     }
 
     fn commit_contact(
@@ -749,6 +761,11 @@ impl<'a> GameplaySession<'a> {
             car_760: false,
             school: None,
             school_statics: crate::school_race::SchoolStatics::default(),
+            moving_objects: None,
+            moving_objects_initial: None,
+            object_hit_cache: MovingObjectHitCache::default(),
+            last_object_contact_552f68: false,
+            last_contact_material_558fb0: 0,
             rng: crate::game_rng::GameLcg::new(1),
         }
     }
@@ -819,6 +836,29 @@ impl<'a> GameplaySession<'a> {
     #[must_use]
     pub fn last_reset(&self) -> ResetOutcome {
         self.last_reset
+    }
+
+    /// Attach the stage's dynamic trackside objects (`FUN_00461090`).
+    pub fn set_moving_objects(&mut self, objects: MovingObjects) {
+        self.moving_objects_initial = Some(objects.clone());
+        self.moving_objects = Some(objects);
+        self.object_hit_cache.clear();
+        self.last_object_contact_552f68 = false;
+    }
+
+    /// The live dynamic trackside objects (`FUN_00461090`), if attached.
+    #[must_use]
+    pub const fn moving_objects(&self) -> Option<&MovingObjects> {
+        self.moving_objects.as_ref()
+    }
+
+    /// The `.obj` scene-graph `(node_index, local_matrix_q16)` overrides from
+    /// any dynamic trackside objects that have moved (`FUN_00452b70`).
+    #[must_use]
+    pub fn moving_object_node_locals(&self) -> Vec<(usize, [i32; 16])> {
+        self.moving_objects
+            .as_ref()
+            .map_or_else(Vec::new, |o| o.node_locals().collect())
     }
 
     /// Run the trigger walk `FUN_00403a00` each four-wheel tick over these
@@ -1040,6 +1080,20 @@ impl<'a> GameplaySession<'a> {
             }
             self.last_trigger_events = events;
         }
+        // Dynamic trackside object physics (`FUN_00462330` -> `FUN_00450d40`,
+        // `0x43b358`) runs after the trigger walk and before the per-car ground
+        // pass.
+        if let Some(objects) = self.moving_objects.as_mut() {
+            let dt = wheel.lane_time_step.raw();
+            let trig = self.race.trig();
+            if let Some(geometry) = self.ground_geometry {
+                let mut ground = CompiledObjectGround(geometry.provider());
+                objects.update(&mut ground, dt, trig);
+            } else {
+                let mut ground = FlatGround(0);
+                objects.update(&mut ground, dt, trig);
+            }
+        }
         // The render-spin block (`0x43b3a4`) runs before the per-car loop,
         // whose order is `FUN_00417e20`, the ground pass (ending in
         // `FUN_00410350`), `FUN_00415df0` and the reset.
@@ -1112,6 +1166,12 @@ impl<'a> GameplaySession<'a> {
         if let Some(triggers) = self.stage_triggers.as_mut() {
             triggers.runtime.clone_from(&triggers.initial);
         }
+        if let Some(initial) = self.moving_objects_initial.as_ref() {
+            self.moving_objects = Some(initial.clone());
+        }
+        self.object_hit_cache.clear();
+        self.last_object_contact_552f68 = false;
+        self.last_contact_material_558fb0 = 0;
         progress.restart();
         self.last_reset = ResetOutcome::default();
         self.last_trigger_events.clear();
@@ -1245,8 +1305,13 @@ impl<'a> GameplaySession<'a> {
                 self.race.step(&controls, &self.params)
             };
             let enabled = self.damage_enabled();
+            if let Some(objects) = self.moving_objects.as_mut() {
+                objects.rebucket(&parsed.grid);
+            }
+            let school_material_capture = self.session.event().globals.school_d3ca88;
             let mut owner = CrashDamageOwner {
                 inner: damage_owner,
+                school: school_material_capture,
                 damage: self.car_damage.as_mut().filter(|_| enabled),
                 impacts: Vec::new(),
             };
@@ -1260,10 +1325,56 @@ impl<'a> GameplaySession<'a> {
                 Ok(step) => {
                     self.commit_static_damage(&committed, &step.contact_effects);
                     self.last_static_impacts = step.impacts;
+                    if let Some(mat) = step.debug_material_558fb0 {
+                        self.last_contact_material_558fb0 = mat;
+                    }
                 }
                 Err(error) => {
                     self.race = race_before;
                     return Err(StaticGameplayAdvanceError::Collision(error));
+                }
+            }
+            self.last_object_contact_552f68 = false;
+            if let Some(mut objects) = self.moving_objects.take() {
+                let mass_48 = self
+                    .wheel
+                    .as_ref()
+                    .map_or(Fixed16::from_raw(1200 << 16), |w| {
+                        w.angular.momentum.moment_scale
+                    });
+                let double_rate = self.fade.flag_551af0;
+                let mut hit_cache = std::mem::take(&mut self.object_hit_cache);
+                let mut obj_owner = CrashDamageOwner {
+                    inner: damage_owner,
+                    school: school_material_capture,
+                    damage: self.car_damage.as_mut().filter(|_| enabled),
+                    impacts: Vec::new(),
+                };
+                let obj_result = self.race.resolve_moving_object_collision_after_step(
+                    previous_center_xz,
+                    parsed,
+                    &mut objects,
+                    &mut hit_cache,
+                    double_rate,
+                    mass_48,
+                    &mut obj_owner,
+                );
+                let obj_committed = std::mem::take(&mut obj_owner.impacts);
+                self.moving_objects = Some(objects);
+                self.object_hit_cache = hit_cache;
+                match obj_result {
+                    Ok((obj_step, object_contact)) => {
+                        self.commit_static_damage(&obj_committed, &obj_step.contact_effects);
+                        self.last_static_impacts.extend(obj_step.impacts);
+                        if let Some(mat) = obj_step.debug_material_558fb0 {
+                            self.last_contact_material_558fb0 = mat;
+                        }
+                        self.last_object_contact_552f68 = object_contact;
+                    }
+                    Err(error) => {
+                        self.race = race_before;
+                        return Err(StaticGameplayAdvanceError::Collision(error));
+                    }
                 }
             }
             sample.car = self.race.car();
@@ -1594,8 +1705,8 @@ impl<'a> GameplaySession<'a> {
         self.school.as_mut().and_then(|task| task.marks_out.take())
     }
 
-    /// The car words the school reads. No moving objects (cones) are
-    /// reconstructed, so there is never an object contact.
+    /// The car words the school reads, including moving-object contact
+    /// (`DAT_00552f68`) and the last contact surface byte (`DAT_00558fb0`).
     fn school_car(&self, progress: Option<&StageProgress>) -> crate::school_race::SchoolCar {
         let car = self.race.car();
         let four = &car.four_wheel;
@@ -1614,8 +1725,8 @@ impl<'a> GameplaySession<'a> {
             handbrake: four.pedals.handbrake_torque_2f4,
             throttle: 0,
             gear: four.gearbox.gear_43a as u8,
-            object_contact: false,
-            contact_surface: 0,
+            object_contact: self.last_object_contact_552f68,
+            contact_surface: self.last_contact_material_558fb0 as i8,
             brake_demand: 0,
             handbrake_demand: 0,
             analog_throttle: false,
@@ -2603,5 +2714,94 @@ mod tests {
         }
         assert!(!progress.finished());
         assert!(!session.is_stopped());
+    }
+
+    #[test]
+    fn moving_object_collision_steps_object_and_feeds_school_car() {
+        let trig = crate::fixed_point::build_sine_table();
+        let mut wheel = four_wheel_params(&trig);
+        let identity_basis = [
+            Vec3::new(Fixed16::ONE, Fixed16::ZERO, Fixed16::ZERO),
+            Vec3::new(Fixed16::ZERO, Fixed16::ONE, Fixed16::ZERO),
+            Vec3::new(Fixed16::ZERO, Fixed16::ZERO, Fixed16::ONE),
+        ];
+        wheel.angular.basis = identity_basis;
+        wheel.angular.momentum.moment_scale = Fixed16::from_raw(1200 << 16);
+        wheel.postprocess.base_force = Vec3::ZERO;
+        let mut car = CarState::at_rest();
+        car.motion.basis = identity_basis;
+        car.motion.compiled_half_words = Vec3::new(
+            Fixed16::from_raw(1 << 16),
+            Fixed16::from_raw(0x8000),
+            Fixed16::from_raw(2 << 16),
+        );
+        car.position = Vec3::new(
+            Fixed16::from_raw(4 << 16),
+            Fixed16::from_raw(0x8000),
+            Fixed16::from_raw(2 << 16),
+        );
+        car.velocity = Vec3::new(Fixed16::ZERO, Fixed16::ZERO, Fixed16::from_raw(1 << 16));
+        car.four_wheel.speed_ec = 1 << 16;
+        let mut session = GameplaySession::new_with_four_wheel_and_car(
+            params(),
+            InRaceScript::school_harness(),
+            wheel,
+            car,
+        );
+        let mut parsed = empty_collision_scene(1);
+        parsed.grid.max_z = 0x20_0000;
+        let cone = crate::moving_objects::MovingObject {
+            node: 7,
+            position: [4 << 16, 0x8000, 4 << 16],
+            half: [0x8000, 0x8000, 0x8000],
+            velocity: [0; 3],
+            angular: [0; 3],
+            torque: [0; 3],
+            impulse: [0; 3],
+            inverse_inertia: [0x8000, 0x8000, 0x8000],
+            rows: [[0x1_0000, 0, 0], [0, 0x1_0000, 0], [0, 0, 0x1_0000]],
+            base: [4 << 16, 0, 4 << 16],
+            radius: 0xe000,
+            ground_height: 0,
+            id_material: (1 << 5) | 5,
+            ground_handle: -1,
+            cell: 0,
+            flags: 0,
+            rest_axes: 7,
+            row_scale: [0x1_0000, 0x1_0000, 0x1_0000],
+            ground_normal: [0, 0x1_0000, 0],
+            next: None,
+            prev: None,
+        };
+        let objects = MovingObjects::from_objects_for_test(vec![cone], &parsed.grid);
+        session.set_moving_objects(objects);
+
+        let nodes = line();
+        let mut progress = StageProgress::new(&nodes, 0);
+        for _ in 0..1000 {
+            let frame = session
+                .try_advance_with_static_collision(
+                    &StationaryClock,
+                    frontend_menu(),
+                    forward(),
+                    &mut progress,
+                    &parsed,
+                    &mut NoStaticDamageOwner,
+                )
+                .unwrap();
+            if frame.stepped {
+                break;
+            }
+        }
+        assert_eq!(session.sim_ticks(), 1);
+        let school_car = session.school_car(Some(&progress));
+        assert!(school_car.object_contact);
+        assert_eq!(school_car.contact_surface, 5);
+        assert_eq!(
+            session.moving_objects().unwrap().objects[0].state(),
+            crate::moving_objects::state::MOVING
+        );
+        assert_eq!(session.moving_object_node_locals().len(), 1);
+        assert_eq!(session.moving_object_node_locals()[0].0, 7);
     }
 }

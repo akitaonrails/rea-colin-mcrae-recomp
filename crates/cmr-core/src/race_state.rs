@@ -55,6 +55,11 @@ use crate::live_static_collision_car_frame::{
     LiveStaticCollisionFrameBridgeError, PreviousCarXz, UpperHullDeformationScalars,
     build_active_cell_record, build_live_static_collision_car_frame,
 };
+use crate::moving_object_collision::{
+    MovingObjectCarState, MovingObjectCollisionError, MovingObjectHitCache,
+    resolve_moving_object_collisions,
+};
+use crate::moving_objects::MovingObjects;
 use crate::pedal_response::{
     PedalInputs, PedalResponseParams, PedalResponseState, RawPedals, apply_pedal_responses,
 };
@@ -62,7 +67,7 @@ use crate::stage_timing::{advance_stage_clock, elapsed_centiseconds, stage_clock
 use crate::static_collision_kernel::{
     RecoveredStaticCollisionKernel, StaticKernelContext, StaticKernelError,
 };
-use crate::static_collision_response::{ResponseBasis, StaticDamageOwner};
+use crate::static_collision_response::{ResponseBasis, StaticDamageOwner, StaticResponseHistory};
 use crate::static_collision_scene_builder::ParsedStaticCollisionScene;
 use crate::static_world_collision::{
     StaticCollisionExecutionError, StaticContactHistory, resolve_static_world_collisions,
@@ -802,6 +807,8 @@ pub struct StaticCollisionStep {
     /// The breakage cues (`FUN_0046a2a0`): the damage's kind and the world
     /// contact, in hit order.
     pub contact_effects: Vec<(i32, [i32; 3])>,
+    /// The last normal hit's surface material byte (`DAT_00558fb0`).
+    pub debug_material_558fb0: Option<u8>,
 }
 
 /// Orientation and angular inputs shared by the native motion/contact passes.
@@ -834,6 +841,8 @@ pub struct LiveCollisionState {
     /// owner [`MotionState::moment`].
     pub pending_linear_3cc: Vec3,
     pub history: StaticContactHistory,
+    /// Moving-object repeat-contact table at `+0x71e..+0x733`.
+    pub object_history: StaticResponseHistory,
     pub response_state_680: bool,
     pub recovery_latch_688: bool,
     /// `+0xbc/+0xc0/+0xc4`, written by the angular pass's moment-overflow
@@ -984,6 +993,13 @@ impl CarState {
                     current_len: 0,
                     current_overflow: false,
                 },
+                object_history: StaticContactHistory {
+                    previous_ids: [0; crate::static_world_collision::STATIC_CONTACT_CAPACITY],
+                    previous_len: 0,
+                    current_ids: [0; crate::static_world_collision::STATIC_CONTACT_CAPACITY],
+                    current_len: 0,
+                    current_overflow: false,
+                },
                 response_state_680: false,
                 recovery_latch_688: false,
                 out_of_control_axis_bc: Vec3::ZERO,
@@ -1127,6 +1143,7 @@ pub enum LiveStaticCollisionStepError<E> {
     ActiveCell(ActiveCellRecordBuildError),
     Frame(LiveStaticCollisionFrameBridgeError),
     Execute(StaticCollisionExecutionError<StaticKernelError<E>>),
+    MovingObject(MovingObjectCollisionError<E>),
 }
 
 /// The deterministic offline race state: a stage clock plus one car, stepped at
@@ -1332,11 +1349,189 @@ impl RaceState {
             })
             .flatten()
             .collect();
+        let debug_material_558fb0 = kernel
+            .hits()
+            .iter()
+            .filter_map(|hit| match hit {
+                crate::static_collision_kernel::StaticKernelHit::Normal { response, .. } => {
+                    response.debug_material_write
+                }
+                crate::static_collision_kernel::StaticKernelHit::Alternate { .. } => None,
+            })
+            .next_back();
         Ok(StaticCollisionStep {
             contacts,
             impacts,
             contact_effects,
+            debug_material_558fb0,
         })
+    }
+
+    /// The 5120-word Q16.16 sine/cosine table (`DAT_00557940`).
+    #[must_use]
+    pub const fn trig(&self) -> &[i32; TRIG_TABLE_LEN] {
+        &self.trig
+    }
+
+    /// Resolve the current car state against the stage's dynamic trackside
+    /// objects (`FUN_0043f790`, `0x43f790..0x43fa09`).
+    ///
+    /// Runs right after [`Self::resolve_static_collision_after_step`] and
+    /// returns the impact/breakage cues plus `DAT_00552f68` (whether the car
+    /// touched any moving object this tick).
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_moving_object_collision_after_step<D: StaticDamageOwner>(
+        &mut self,
+        previous_center_xz: PreviousCarXz,
+        parsed: &ParsedStaticCollisionScene,
+        objects: &mut MovingObjects,
+        hit_cache: &mut MovingObjectHitCache,
+        double_rate_551af0: bool,
+        mass_48: Fixed16,
+        damage_owner: &mut D,
+    ) -> Result<(StaticCollisionStep, bool), LiveStaticCollisionStepError<D::Error>> {
+        let car = self.car;
+        let primary_cell =
+            build_active_cell_record(&parsed.grid, &parsed.main_cell_centers, car.position)
+                .map_err(LiveStaticCollisionStepError::ActiveCell)?;
+        let deformation = car
+            .motion
+            .upper_hull_deformation
+            .bind(car.motion.basis[0], car.motion.basis[2]);
+        let live = build_live_static_collision_car_frame(LiveStaticCollisionCarFrameInput {
+            previous_center_xz,
+            current_center: car.position,
+            current_basis: car.motion.basis,
+            half_extents: car.motion.compiled_half_words,
+            projection_axis_258: car.motion.basis[0],
+            projection_axis_264: car.motion.basis[1],
+            deformation: Some(deformation),
+            primary_cell,
+        });
+        let frame = live
+            .into_static_frame(
+                car.collision.pending_linear_3cc,
+                car.motion.moment,
+                Vec3::ZERO,
+                car.motion.compiled_half_words,
+            )
+            .map_err(LiveStaticCollisionStepError::Frame)?;
+        let speed_ec = sqrt_q16(car.velocity.dot(car.velocity).raw() as u32) as i32;
+        let radius_44 = car.ground.map_or_else(
+            || {
+                sqrt_q16(
+                    car.motion
+                        .compiled_half_words
+                        .dot(car.motion.compiled_half_words)
+                        .raw() as u32,
+                ) as i32
+            },
+            |g| g.radius_44,
+        );
+        let flag_743 = car.ground.map_or(0, |g| g.thresholds.flag_743);
+        let raw_v = |v: Vec3| [v.x.raw(), v.y.raw(), v.z.raw()];
+        let v3 = |r: [i32; 3]| {
+            Vec3::new(
+                Fixed16::from_raw(r[0]),
+                Fixed16::from_raw(r[1]),
+                Fixed16::from_raw(r[2]),
+            )
+        };
+        let mut car_state = MovingObjectCarState {
+            position_c8: raw_v(car.position),
+            previous_xz_3e4: [previous_center_xz.x.raw(), previous_center_xz.z.raw()],
+            velocity_d4: raw_v(car.velocity),
+            velocity_normalizer_ec: speed_ec,
+            hull_points_fc: live.collision_hull.map(raw_v),
+            radius_44,
+            mass_48: mass_48.raw(),
+            contact_limits_2c: raw_v(car.motion.compiled_half_words),
+            axis_258: raw_v(car.motion.basis[0]),
+            axis_264: raw_v(car.motion.basis[1]),
+            projected_axis_270: raw_v(car.motion.basis[2]),
+            basis_2a0: car.motion.basis.map(raw_v),
+            linear_correction_3cc: raw_v(car.collision.pending_linear_3cc),
+            angular_correction_3d8: raw_v(car.motion.moment),
+            contact_3f0: [0; 3],
+            contact_count_674: car.motion.contact_count_674,
+            out_of_control_680: car.collision.response_state_680,
+            out_of_control_688: car.collision.recovery_latch_688,
+            flag_743,
+            car_type_738: 0,
+            car_subtype_739: 0,
+            active_nodes_750: frame.active_nodes,
+            object_history: car.collision.object_history,
+        };
+        let effects = resolve_moving_object_collisions(
+            objects,
+            &mut car_state,
+            hit_cache,
+            double_rate_551af0,
+            damage_owner,
+        )
+        .map_err(LiveStaticCollisionStepError::MovingObject)?;
+        let mut committed = car;
+        committed.position = v3(car_state.position_c8);
+        committed.velocity = v3(car_state.velocity_d4);
+        committed.collision.pending_linear_3cc = v3(car_state.linear_correction_3cc);
+        committed.motion.moment = v3(car_state.angular_correction_3d8);
+        committed.collision.response_state_680 = car_state.out_of_control_680;
+        committed.collision.recovery_latch_688 = car_state.out_of_control_688;
+        committed.collision.object_history = car_state.object_history;
+        self.car = committed;
+
+        let contacts = effects.contacts.len();
+        let impacts = effects
+            .contacts
+            .iter()
+            .flat_map(|c| {
+                c.events.iter().filter_map(|event| match *event {
+                    crate::static_collision_response::StaticResponseEvent::MaterialImpact {
+                        severity,
+                        world_contact,
+                        material,
+                    } => Some(StaticMaterialImpact {
+                        severity: severity.raw(),
+                        world_contact: [
+                            world_contact.x.raw(),
+                            world_contact.y.raw(),
+                            world_contact.z.raw(),
+                        ],
+                        material,
+                    }),
+                    _ => None,
+                })
+            })
+            .collect();
+        let contact_effects = effects
+            .contacts
+            .iter()
+            .flat_map(|c| {
+                c.events.iter().filter_map(|event| match *event {
+                    crate::static_collision_response::StaticResponseEvent::ContactEffect {
+                        handle,
+                        world_contact,
+                    } => Some((
+                        handle,
+                        [
+                            world_contact.x.raw(),
+                            world_contact.y.raw(),
+                            world_contact.z.raw(),
+                        ],
+                    )),
+                    _ => None,
+                })
+            })
+            .collect();
+        Ok((
+            StaticCollisionStep {
+                contacts,
+                impacts,
+                contact_effects,
+                debug_material_558fb0: effects.debug_material_558fb0,
+            },
+            effects.object_contact_552f68,
+        ))
     }
 
     /// The unit forward vector for the current heading on the x/z plane.
@@ -2766,6 +2961,7 @@ mod tests {
                 previous_len: 1,
                 ..StaticContactHistory::default()
             },
+            object_history: StaticResponseHistory::default(),
             response_state_680: true,
             recovery_latch_688: true,
             out_of_control_axis_bc: Vec3::ZERO,

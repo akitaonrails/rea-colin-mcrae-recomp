@@ -436,6 +436,7 @@ The engine sound (`FUN_00488d60`, `FUN_00487e00`, `FUN_00488ab0`) and its listen
 Escape pauses the race (`FUN_00449580` Escape block, `FUN_00468200`), and the pause menu (`FUN_00468260`, `FUN_00468ed0`, `FUN_00438970`) resumes, restarts or quits; the hub (`FUN_00438b90`) follows its observed branch order.
 The pause menu draws its text and panel (`FUN_00468dd0`, `FUN_00497b40`) with the in-game fonts and strings.
 The surface roll/skid (`FUN_00489890`), landing thumps (`FUN_0046a030`) and barrier impacts (`FUN_00469e80`) play over the extracted surface-audio tables, followed by the wet-tyre/rain tick (`FUN_0048d4c0`); scenery hits (`FUN_0043d760`) play their impact sounds too.
+Dynamic trackside moving objects (`.obj` admission `FUN_00482140`, cell bucketing `FUN_004622b0`, car-object OBB collision and two-body impulse/torque response `FUN_0043f790`/`FUN_00440d90`/`FUN_0043faf0`, per-tick gravity/ground/damping and cone settle `FUN_00450d40`, rally-school `DAT_00552f68`/`DAT_00558fb0` contact flags, and dynamic `.obj` node-local rendering in both software and GPU renderers) are reconstructed and wired.
 
 ## Update rules
 
@@ -446,14 +447,14 @@ watched with `tail`; recompute its counters from the checklist instead of
 estimating them.
 
 <!-- PROGRESS-TAIL-BEGIN -->
-updated_utc=2026-11-02T03:30:00Z
-milestone=moving-objects-core-parked
+updated_utc=2026-11-02T05:00:00Z
+milestone=moving-objects-collision-and-wiring
 completed=117
 partial=2
 not_started=0
 blocked=0
 total=119
-current_focus=four-wheel-handling-out-of-control-path-and-car-animation
-next_exit_gate=championship-progression-and-remaining-impacts
+current_focus=night-headlights-and-car-vs-car-collision
+next_exit_gate=night-headlights-replays-and-remaining-impacts
 auxiliary_reference=psx-p0-complete-p1-static-map-partial-p2-replay-cursor-resolved
 <!-- PROGRESS-TAIL-END -->

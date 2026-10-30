@@ -2684,7 +2684,13 @@ languages rather than fabricating or silently aliasing Italian assets.
   latch, both basis-row modes, snap/blend, normalization and totalled completion.
   Contact geometry comes from the recovered HPC provider. Reset triggering is a
   caller input; position-snap, time penalties, and damage-performance mapping
-  are not inferred.
+  are not inferred. Dynamic trackside objects (`cmr-core::moving_objects` and
+  `cmr-core::moving_object_collision`) are loaded from `.obj` (`FUN_00482140`),
+  bucketed into the cell grid (`FUN_004622b0`), resolved against the car each
+  tick (`FUN_0043f790`/`FUN_00440d90`/`FUN_0043faf0`) with crash damage and
+  school cone-contact flags (`DAT_00552f68`, `DAT_00558fb0`), simulated over
+  the `.hpc` ground (`FUN_00450d40`), and rendered with live node locals in both
+  the software and GPU renderers.
 - Suspension/surface recovery is composed end to end: authenticated HPC data
   feeds the complete eight-lane initializer, and the four-wheel producer shares
   its force/contact results with geometric postprocess, translation, angular

@@ -2007,21 +2007,15 @@ impl WgpuStageRenderer {
     fn compose(
         &mut self,
         camera: &[i32; 16],
-        dynamic_worlds: Option<&[[i32; 16]]>,
+        dynamic_world_sets: &[&[[i32; 16]]],
         horizon_worlds: Option<&[[i32; 16]]>,
         post: Option<&PostBlend<'_>>,
     ) -> Result<SoftwarePresentedFrame, StageFrameError> {
         let frame = if self.prepared.dynamic_world_set_count() == 0 {
             self.prepared.prepared_frame_for(camera)
         } else {
-            let dynamic_worlds = dynamic_worlds.ok_or(StageFrameError::GpuPrepare(
-                PreparedRawStageError::DynamicWorldSetCount {
-                    expected: 1,
-                    actual: 0,
-                },
-            ))?;
             self.prepared
-                .prepared_frame_for_worlds(camera, &[dynamic_worlds])
+                .prepared_frame_for_worlds(camera, dynamic_world_sets)
                 .map_err(StageFrameError::GpuPrepare)?
         };
         let indexed = if let (Some(horizon_prepared), Some(horizon_scene)) =
@@ -2272,6 +2266,8 @@ pub struct StageRenderResources {
     particles: Option<StageParticles>,
     sprite_draws: Vec<SpriteDraw>,
     mark_draws: Vec<([[f32; 3]; 3], [u32; 3])>,
+    /// `.obj` scene-graph local matrix overrides for hit/moving objects (`FUN_00452b70`).
+    object_locals: Vec<(usize, [i32; 16])>,
     palette: [PaletteEntry; 256],
     node_count: usize,
     draw_ops: usize,
@@ -2374,6 +2370,7 @@ impl StageRenderResources {
             particles: None,
             sprite_draws: Vec::new(),
             mark_draws: Vec::new(),
+            object_locals: Vec::new(),
             palette,
             node_count,
             draw_ops,
@@ -2399,6 +2396,24 @@ impl StageRenderResources {
     #[must_use]
     pub fn static_collision_scene(&self) -> Option<&ParsedStaticCollisionScene> {
         self.static_collision_scene.as_ref()
+    }
+
+    /// Build the stage's dynamic trackside objects (`FUN_00461090`) from the
+    /// retained `.obj` scene and static collision grid, when both are present.
+    #[must_use]
+    pub fn build_moving_objects(&self) -> Option<cmr_core::moving_objects::MovingObjects> {
+        let objects = self.bundle.objects()?;
+        let parsed = self.static_collision_scene.as_ref()?;
+        Some(cmr_core::moving_objects::MovingObjects::load(
+            objects,
+            &parsed.grid,
+        ))
+    }
+
+    /// Update the `.obj` scene-graph local matrix overrides for any dynamic
+    /// trackside objects that have moved (`FUN_00452b70`).
+    pub fn set_object_locals(&mut self, locals: Vec<(usize, [i32; 16])>) {
+        self.object_locals = locals;
     }
 
     fn prepare_gpu_foreground(&self) -> Result<PreparedRawStage, StageFrameError> {
@@ -2433,9 +2448,14 @@ impl StageRenderResources {
             })
             .transpose()
             .map_err(StageFrameError::Scene)?;
+        let has_car = car.is_some() && self.car_textures.is_some();
         let mut layers = vec![PreparedRawStageLayer::opaque(&main, &self.textures)];
         if let (Some(scene), Some(textures)) = (objects.as_ref(), self.object_textures.as_ref()) {
-            layers.push(PreparedRawStageLayer::keyed(scene, textures, 0));
+            if has_car {
+                layers.push(PreparedRawStageLayer::keyed_dynamic(scene, textures, 0, 1));
+            } else {
+                layers.push(PreparedRawStageLayer::keyed(scene, textures, 0));
+            }
         }
         if let (Some(scene), Some(textures)) = (scenery.as_ref(), self.scenery_textures.as_ref()) {
             layers.push(PreparedRawStageLayer::keyed(scene, textures, 0));
@@ -3022,6 +3042,17 @@ impl StageRenderResources {
                 wheels,
             )
         });
+        let object_node_worlds = if car_node_worlds.is_some() && self.object_textures.is_some() {
+            self.bundle.objects().map(|objects| {
+                cmr_core::c3d_transform::scene_world_transforms_with_locals(
+                    objects.group0_records(),
+                    &MATRIX_IDENTITY_Q16,
+                    &self.object_locals,
+                )
+            })
+        } else {
+            None
+        };
         let horizon_node_worlds =
             self.bundle
                 .horizon()
@@ -3052,12 +3083,14 @@ impl StageRenderResources {
             let post: Option<&PostBlend<'_>> =
                 (shadow.is_some() || !self.sprite_draws.is_empty() || !self.mark_draws.is_empty())
                     .then_some(&blend);
-            match gpu.compose(
-                camera,
-                car_node_worlds.as_deref(),
-                horizon_node_worlds.as_deref(),
-                post,
-            ) {
+            let mut dynamic_sets: Vec<&[[i32; 16]]> = Vec::with_capacity(2);
+            if let Some(car_worlds) = car_node_worlds.as_deref() {
+                dynamic_sets.push(car_worlds);
+            }
+            if let Some(obj_worlds) = object_node_worlds.as_deref() {
+                dynamic_sets.push(obj_worlds);
+            }
+            match gpu.compose(camera, &dynamic_sets, horizon_node_worlds.as_deref(), post) {
                 Ok(frame) => {
                     return Ok(RenderedStageFrameOutput {
                         stage: self.stage.clone(),
@@ -3129,15 +3162,28 @@ impl StageRenderResources {
                 .map_err(StageFrameError::Compose)?;
         }
 
-        for (graph, graph_textures) in [
-            (self.bundle.objects(), self.object_textures.as_ref()),
-            (self.bundle.scenery(), self.scenery_textures.as_ref()),
+        for (graph, graph_textures, locals) in [
+            (
+                self.bundle.objects(),
+                self.object_textures.as_ref(),
+                self.object_locals.as_slice(),
+            ),
+            (
+                self.bundle.scenery(),
+                self.scenery_textures.as_ref(),
+                &[][..],
+            ),
         ] {
             let (Some(graph), Some(graph_textures)) = (graph, graph_textures) else {
                 continue;
             };
-            let graph_scene = StageScene::from_c3d(graph, &MATRIX_IDENTITY_Q16, VERTEXTYPE_LVERTEX)
-                .map_err(StageFrameError::Scene)?;
+            let graph_scene = StageScene::from_c3d_with_locals(
+                graph,
+                &MATRIX_IDENTITY_Q16,
+                VERTEXTYPE_LVERTEX,
+                locals,
+            )
+            .map_err(StageFrameError::Scene)?;
             let graph_frame = compose_stage_scene_frame_color_key(
                 &graph_scene,
                 camera,
@@ -5255,6 +5301,7 @@ fn advance_game_frame<C: HostClock>(
         };
         resources.plan_shadow(session, &camera_world, camera.interior());
         resources.plan_particles(session, &camera_world, camera.interior(), single_alpha);
+        resources.set_object_locals(session.moving_object_node_locals());
         let world = resources
             .compose_with_posed_car(&camera_world, Some(&car_world), &wheels)
             .map(|rendered| rendered.frame)?;
@@ -8175,6 +8222,9 @@ fn reload_stage_for_event<'a>(
     if let Some(damage) = resources.fresh_car_damage(model) {
         session.attach_car_damage(damage);
     }
+    if let Some(objects) = resources.build_moving_objects() {
+        session.set_moving_objects(objects);
+    }
     // The school's stage load (`FUN_004716b0`) and setup (`FUN_0046ee70`).
     if session.event().globals.school_d3ca88 {
         start_school_task(session, loaded, config, results, &mut camera.rng);
@@ -8945,6 +8995,9 @@ pub fn run_windowed_game_session(
     )
     .with_stage_triggers(&statics.trigger_volumes, &statics.cell_centers)
     .map_err(WindowedStageFrameError::StageTriggers)?;
+    if let Some(objects) = resources.build_moving_objects() {
+        session.set_moving_objects(objects);
+    }
     let mut analog = AnalogDriver::new();
     let response = DriveResponse {
         max_forward_force: Fixed16::from_raw(GAME_SESSION_DRIVE_FORCE_Q16),

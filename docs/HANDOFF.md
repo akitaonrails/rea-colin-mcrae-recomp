@@ -1,13 +1,13 @@
 # Reconstruction handoff
 
-Updated: 2026-11-02 (PARKED: see "Parked" below; tag `recomp-parked-2026-11-02`)
+Updated: 2026-11-02
 
 ## Resume point
 
 Work resumes from the `main` commit whose subject is:
 
 ```text
-feat: reconstruct the moving objects' load and update (parked)
+feat: reconstruct moving-object collision and wire dynamic props end to end
 ```
 
 Start by confirming the checkout and progress footer:
@@ -18,9 +18,11 @@ git log -8 --oneline
 tail -n 12 docs/DECOMP_MAP.md
 ```
 
-This milestone wires the recovered static collision pass into the live planar
-windowed session and corrects the confirmed keyboard/gamepad steering inversion.
-It does **not** establish a finished or fully accurate game.
+This milestone completes the moving-objects pipeline (`.obj` admission, cell
+bucketing, car-object OBB narrow phase and two-body impulse/torque response,
+per-tick physics/ground/settle update, rally-school cone-contact flags, and
+software+GPU dynamic `.obj` node-local rendering). It does **not** establish a
+finished or fully accurate game.
 
 ## What is now implemented
 
@@ -213,63 +215,40 @@ render the car body from `MotionState::basis`, then the out-of-control path
 `FUN_004115d0`, suspension/wheel animation `FUN_00410350`, and the remaining
 tyre inputs (`DAT_004f6b50/6f10/777c` are now in `SessionTyreTables`).
 
-## Parked (2026-11-02)
+## Latest state (read first)
 
-The source reconstruction is paused in favour of a separate, thinner effort:
-running the original `Rally.exe` on modern systems through replacement
-libraries. This tree is kept as the reference; nothing here was removed. The
-tag `recomp-parked-2026-11-02` marks the stop point.
-
-Where it stopped:
-
-- Moving objects (item 1 below) are half done. `cmr-core::moving_objects`
-  (committed, unit-tested, **not wired**) loads them from the stage `.obj`
-  (`FUN_00482140`), buckets them in the cell grid and runs the per-tick update
-  (`FUN_00450d40`: impulses, gravity, ground contact, damping, the rest-pose
-  settle, cones). Still to write: the car-object pass `FUN_0043f790` /
-  `FUN_0043fa10` / `FUN_00440a10` / `FUN_00441b80` / `FUN_00440d90` /
-  `FUN_0043faf0` / `FUN_004439b0` (pseudocode in `.work/moving-objects-notes.md`
-  §4; reuse `build_live_car_projection`, `produce_static_response_input`, the
-  static response's crash constants and the session's `CrashDamageOwner`),
-  then the wiring: load at state 4 next to the static scene, the pass right
-  after the static pass, the update after the trigger walk and before the
-  ground pass, the school flags (`DAT_00552f68`, `DAT_00558fb0`), and drawing
-  the objects' node locals in both renderers (the `.obj` GPU layer must become
-  a dynamic world set). Every shipped stage has moving objects (typically 7;
-  school tasks 18-41 cones).
-- Night headlights (item 2) are fully recovered in `.work/headlights-notes.md`
-  but not reconstructed: front/pod/rear lamp flares (additive sprites), the
-  electrics flicker, pod-lamp breakage, and the night light pool that relights
-  the stage's vertex colours around each car (without it night stages render
-  unlit). The notes also say `BreakageKind::Headlight` is probably the rear
-  lamps.
-- Fixed just before parking: the static y-gate swap (`5f37427`) and the OBB
-  corner order (`bc07a27`).
-
-`.work/` (git-ignored) holds all the recovery notes; keep it with the tree.
+Dynamic trackside moving objects (`impl.moving-objects-and-collision`) are now
+complete end to end: `cmr-core::moving_objects` loads dynamic `.obj` props
+(`FUN_00482140`), buckets them into the cell grid (`FUN_004622b0`), and steps
+their gravity, `.hpc` ground contact, damping, and rest-pose settle
+(`FUN_00450d40`); `cmr-core::moving_object_collision` runs the 3-slot hit cache
+(`FUN_00441b80`), two-pass XZ OBB narrow phase with mass-shared depenetration
+(`FUN_00440d90`), and two-body impulse/torque response (`FUN_0043faf0`) right
+after the static pass (`FUN_0043f790`); `GameplaySession` feeds `DAT_00552f68`
+and `DAT_00558fb0` into `SchoolCar` (so rally-school cone tasks count hits and
+trigger instructor speech) and resets objects on stage restart; and `cmr-app`
+loads moving objects at stage setup and reload and updates `.obj` node locals
+per frame in both the software renderer and the GPU `keyed_dynamic` world set 1.
 
 ## Highest-priority remaining work
 
 The earlier items (four-wheel path, contact flags, the static damage owner,
-the body basis) are done; see `docs/CONVERSION_TIMELINE.md` for the history.
-Open now, in order:
+the body basis, and moving objects) are done; see `docs/CONVERSION_TIMELINE.md`
+for the history. Open now, in order:
 
-1. Moving objects (`FUN_0043f790`/`FUN_0043faf0`/`FUN_00440d90`): the
-   knockable props, including the rally school's cones. Without them the
-   school's cone tasks never count a hit, the instructor's object speech never
-   fires and the object impacts never damage the car. Notes in progress:
-   `.work/moving-objects-notes.md`.
-2. Night headlights (`FUN_0044add0` cluster): the flare draw, the electrics
-   flicker `FUN_0044b000` and the lamp breakage `FUN_0044a770`. Notes in
-   progress: `.work/headlights-notes.md`.
-3. Car-vs-car contact (`FUN_00441f30`/`FUN_00442860`) for the head-to-head
+1. Night headlights (`FUN_00462b30`/`FUN_00462930`/`FUN_00463730`/`FUN_004628a0`
+   cluster in `.work/headlights-notes.md`): lamp node discovery (`FUN_00480e60`),
+   pod-lamp breakage (`FUN_004628a0`), electrics flicker, flare and beam quads,
+   and the night headlight ground-polygon projection (`FUN_00462b30`) drawn with
+   additive blending (`FUN_004a3fd0`).
+2. Car-vs-car contact (`FUN_00441f30`/`FUN_00442860`) for the head-to-head
    stages; the contact point is in `.work/car-damage-contact-notes.md`.
-4. Replays (`replay.rs` has the trace format): the input-trace re-simulation
+3. Replays (`replay.rs` has the trace format): the input-trace re-simulation
    behind the school's demonstration runs (`Pans/*/exit.rsp`,
    `Pans/Skid/intro.rsp`) and the `.ssr` files. Playback re-runs the physics
    from a raw car-state seed, so it needs the seed mapped onto `RaceState` and
    a bit-exact sim; until then the binary's no-replay path runs.
-5. The intro FMV codec (IV50) for the front end's opening movie.
+4. The intro FMV codec (IV50) for the front end's opening movie.
 
 The next `docs/DECOMP_MAP.md` focus stays on the gameplay gaps above.
 

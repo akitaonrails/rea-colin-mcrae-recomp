@@ -118,6 +118,7 @@ pub mod live_static_collision_car_frame;
 pub mod load_interstitial;
 pub mod localization;
 pub mod localization_assets;
+pub mod moving_object_collision;
 pub mod moving_objects;
 pub mod music_player;
 pub mod net_tcp;

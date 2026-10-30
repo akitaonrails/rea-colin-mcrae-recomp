@@ -158,9 +158,9 @@ pub struct MovingObject {
     pub row_scale: [i32; 3],
     /// The last ground normal (the probe's stack local when no triangle
     /// is found).
-    ground_normal: [i32; 3],
-    next: Option<usize>,
-    prev: Option<usize>,
+    pub(crate) ground_normal: [i32; 3],
+    pub(crate) next: Option<usize>,
+    pub(crate) prev: Option<usize>,
 }
 
 impl MovingObject {
@@ -376,6 +376,18 @@ impl MovingObjects {
         };
         objects.build_cells(grid);
         objects
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_objects_for_test(objects: Vec<MovingObject>, grid: &CellGrid) -> Self {
+        let mut set = Self {
+            objects,
+            cells: Vec::new(),
+            active: Vec::new(),
+            scratch_rows: [[0; 3]; 3],
+        };
+        set.build_cells(grid);
+        set
     }
 
     /// `FUN_0043c010`: every object appended at the tail of its cell's list.
