@@ -25,6 +25,9 @@ use crate::car_reset::{
     select_reset_target, step_reset_fade,
 };
 use crate::car_setup::CarSetupBlock;
+use crate::car_vs_car_collision::{
+    CarVsCarSessionState, CarVsCarState, resolve_car_vs_car_collision_442740,
+};
 use crate::compiled_car_initializer::{
     CompiledControlClearLoop, CompiledControlFamilies, CompiledFourWheelConstants,
     CompiledHalfSignState, CompiledLaneThresholdEffects, CompiledLaneThresholdInputs,
@@ -1532,6 +1535,163 @@ impl RaceState {
             },
             effects.object_contact_552f68,
         ))
+    }
+
+    /// Run `FUN_00442740` (`FUN_004438a0` -> `FUN_00442860` -> `FUN_00441f30`)
+    /// between `self` (`car_a`) and `other` (`car_b`) after both cars' static
+    /// and moving-object collision passes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_car_vs_car_collision_after_step<D: StaticDamageOwner>(
+        &mut self,
+        other: &mut Self,
+        previous_center_xz_a: PreviousCarXz,
+        previous_center_xz_b: PreviousCarXz,
+        parsed: &ParsedStaticCollisionScene,
+        session: &mut CarVsCarSessionState,
+        mode_d3ca88: i32,
+        replay_car_count_550c08: i32,
+        mass_a_48: Fixed16,
+        mass_b_48: Fixed16,
+        damage_owner: &mut D,
+    ) -> Result<StaticCollisionStep, LiveStaticCollisionStepError<D::Error>> {
+        let raw_v = |v: Vec3| [v.x.raw(), v.y.raw(), v.z.raw()];
+        let v3 = |r: [i32; 3]| {
+            Vec3::new(
+                Fixed16::from_raw(r[0]),
+                Fixed16::from_raw(r[1]),
+                Fixed16::from_raw(r[2]),
+            )
+        };
+        let build_car_state = |car: &CarState,
+                               prev_xz: PreviousCarXz,
+                               mass_48: Fixed16,
+                               car_type: i8|
+         -> Result<
+            CarVsCarState,
+            LiveStaticCollisionStepError<D::Error>,
+        > {
+            let primary_cell =
+                build_active_cell_record(&parsed.grid, &parsed.main_cell_centers, car.position)
+                    .map_err(LiveStaticCollisionStepError::ActiveCell)?;
+            let deformation = car
+                .motion
+                .upper_hull_deformation
+                .bind(car.motion.basis[0], car.motion.basis[2]);
+            let live = build_live_static_collision_car_frame(LiveStaticCollisionCarFrameInput {
+                previous_center_xz: prev_xz,
+                current_center: car.position,
+                current_basis: car.motion.basis,
+                half_extents: car.motion.compiled_half_words,
+                projection_axis_258: car.motion.basis[0],
+                projection_axis_264: car.motion.basis[1],
+                deformation: Some(deformation),
+                primary_cell,
+            });
+            let radius_44 = car.ground.map_or_else(
+                || {
+                    sqrt_q16(
+                        car.motion
+                            .compiled_half_words
+                            .dot(car.motion.compiled_half_words)
+                            .raw() as u32,
+                    ) as i32
+                },
+                |g| g.radius_44,
+            );
+            let flag_743 = car.ground.map_or(0, |g| g.thresholds.flag_743);
+            Ok(CarVsCarState {
+                position_c8: raw_v(car.position),
+                previous_xz_3e4: [prev_xz.x.raw(), prev_xz.z.raw()],
+                velocity_d4: raw_v(car.velocity),
+                hull_points_fc: live.collision_hull.map(raw_v),
+                radius_44,
+                mass_48: mass_48.raw(),
+                contact_limits_2c: raw_v(car.motion.compiled_half_words),
+                axis_258: raw_v(car.motion.basis[0]),
+                axis_264: raw_v(car.motion.basis[1]),
+                basis_2a0: car.motion.basis.map(raw_v),
+                linear_correction_3cc: raw_v(car.collision.pending_linear_3cc),
+                angular_correction_3d8: raw_v(car.motion.moment),
+                contact_3f0: [0; 3],
+                opponent_hit_6e4: false,
+                car_type_738: car_type,
+                car_subtype_739: 0,
+                flag_743,
+                active_cells_750: live.active_cells,
+            })
+        };
+
+        let mut car_a = build_car_state(&self.car, previous_center_xz_a, mass_a_48, 0)?;
+        let mut car_b = build_car_state(&other.car, previous_center_xz_b, mass_b_48, 1)?;
+        let resolved = resolve_car_vs_car_collision_442740(
+            &mut car_a,
+            &mut car_b,
+            session,
+            mode_d3ca88,
+            replay_car_count_550c08,
+            damage_owner,
+        )
+        .map_err(|err| {
+            LiveStaticCollisionStepError::MovingObject(
+                crate::moving_object_collision::MovingObjectCollisionError::Damage(err),
+            )
+        })?;
+
+        self.car.position = v3(car_a.position_c8);
+        self.car.collision.pending_linear_3cc = v3(car_a.linear_correction_3cc);
+        self.car.motion.moment = v3(car_a.angular_correction_3d8);
+
+        other.car.position = v3(car_b.position_c8);
+        other.car.collision.pending_linear_3cc = v3(car_b.linear_correction_3cc);
+        other.car.motion.moment = v3(car_b.angular_correction_3d8);
+
+        let Some(contact) = resolved else {
+            return Ok(StaticCollisionStep::default());
+        };
+        let impacts = contact
+            .events
+            .iter()
+            .filter_map(|event| match *event {
+                crate::static_collision_response::StaticResponseEvent::MaterialImpact {
+                    severity,
+                    world_contact,
+                    material,
+                } => Some(StaticMaterialImpact {
+                    severity: severity.raw(),
+                    world_contact: [
+                        world_contact.x.raw(),
+                        world_contact.y.raw(),
+                        world_contact.z.raw(),
+                    ],
+                    material,
+                }),
+                _ => None,
+            })
+            .collect();
+        let contact_effects = contact
+            .events
+            .iter()
+            .filter_map(|event| match *event {
+                crate::static_collision_response::StaticResponseEvent::ContactEffect {
+                    handle,
+                    world_contact,
+                } => Some((
+                    handle,
+                    [
+                        world_contact.x.raw(),
+                        world_contact.y.raw(),
+                        world_contact.z.raw(),
+                    ],
+                )),
+                _ => None,
+            })
+            .collect();
+        Ok(StaticCollisionStep {
+            contacts: 1,
+            impacts,
+            contact_effects,
+            debug_material_558fb0: None,
+        })
     }
 
     /// The unit forward vector for the current heading on the x/z plane.

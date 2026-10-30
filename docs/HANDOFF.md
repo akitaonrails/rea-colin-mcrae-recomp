@@ -7,7 +7,7 @@ Updated: 2026-11-02
 Work resumes from the `main` commit whose subject is:
 
 ```text
-feat: reconstruct night headlights, car lamps, and road light pool
+feat: reconstruct car-vs-car collision and response
 ```
 
 Start by confirming the checkout and progress footer:
@@ -18,10 +18,10 @@ git log -8 --oneline
 tail -n 12 docs/DECOMP_MAP.md
 ```
 
-This milestone completes the car headlights, brake/tail/pod lamps, electrics
-flicker, pod-lamp crash breakage, additive flare/beam sprites, and night road
-light pool pipeline (`cmr-core::car_headlights`, `cmr-video`, `cmr-app`). It
-does **not** establish a finished or fully accurate game.
+This milestone completes the car-vs-car collision and response pipeline
+(`FUN_00442740`, `FUN_004438a0`, `FUN_00442860`, `FUN_00441f30` in
+`cmr-core::car_vs_car_collision` and `RaceState`). It does **not** establish a
+finished or fully accurate game.
 
 ## What is now implemented
 
@@ -216,36 +216,30 @@ tyre inputs (`DAT_004f6b50/6f10/777c` are now in `SessionTyreTables`).
 
 ## Latest state (read first)
 
-Night headlights, brake/tail/pod lamps, electrics flicker, pod-lamp breakage,
-and the night road light pool (`impl.car-headlights-and-night-pool`) are now
-complete end to end: `cmr-core::car_headlights` loads the 14-model car lamp
-tables (`0x4ef5d8..0x4f0d08`, extracted as `car_lamp_tables` in
-`profiles/official-eu-static-tables-v1.json`), computes vertex-averaged lamp
-centroids (`FUN_00449e60`), steps electrics flicker (`FUN_0044b000` over the
-500-entry `FUN_0048bc00` rand table), updates world lamp positions and camera
-side tests (`FUN_0044a950`/`FUN_0044add0`), plans additive `hlight.bmp` and
-`lbeam.bmp` flare/beam quads (`FUN_0044bbc0`), projects ground overlay triangles
-(`FUN_0044c610`/`FUN_0044c8c0`), and computes the night road light pool
-position and falloff (`FUN_004a8750`/`FUN_004a9490`/`FUN_004853e0`);
-`CarCrashDamage` breaks pod lamps on night stages when front-part damage
-thresholds cross (`FUN_0044a770`); `StageSceneFrame` applies the night road
-light pool and additive lamp sprites; and `cmr-app` runs `StageLamps` per tick
-and frame in both the software and GPU renderers.
+Car-vs-car collision and response (`impl.car-vs-car-collision`) are now complete
+in `cmr-core::car_vs_car_collision` and bridged onto `RaceState`:
+`should_run_car_vs_car_43b2cc` (`FUN_00485bb0` / `FUN_00401060` mode gates),
+`cars_share_cell_442767` (4×4 active-cell equality), `car_sphere_overlap_4438a0`
+(`FUN_004438a0`), `resolve_car_vs_car_narrow_phase_442860` (`FUN_00442860`
+two-pass XZ OBB narrow phase with 50/50 depenetration and `-5.0` fast-contact Y
+lever-arm drop), `apply_car_vs_car_response_441f30` (`FUN_00441f30` X/Z-only
+contact clamp, inelastic normal impulse, grounded Y-transfer via `+0x743 != 1`,
+`±8/±4/±8` torque clamp, dual-car `FUN_0041f630` crash damage with doubled and
+saturated severity, and `DAT_00552f5c`-gated material `5` impact sound and FFB),
+and `resolve_car_vs_car_collision_442740`.
 
 ## Highest-priority remaining work
 
 The earlier items (four-wheel path, contact flags, the static damage owner,
-the body basis, moving objects, and night headlights) are done; see
-`docs/CONVERSION_TIMELINE.md` for the history. Open now, in order:
+the body basis, moving objects, night headlights, and car-vs-car collision) are
+done; see `docs/CONVERSION_TIMELINE.md` for the history. Open now, in order:
 
-1. Car-vs-car contact (`FUN_00441f30`/`FUN_00442860`) for the head-to-head
-   stages; the contact point is in `.work/car-damage-contact-notes.md`.
-2. Replays (`replay.rs` has the trace format): the input-trace re-simulation
+1. Replays (`replay.rs` has the trace format): the input-trace re-simulation
    behind the school's demonstration runs (`Pans/*/exit.rsp`,
    `Pans/Skid/intro.rsp`) and the `.ssr` files. Playback re-runs the physics
    from a raw car-state seed, so it needs the seed mapped onto `RaceState` and
    a bit-exact sim; until then the binary's no-replay path runs.
-3. The intro FMV codec (IV50) for the front end's opening movie.
+2. The intro FMV codec (IV50) for the front end's opening movie.
 
 The next `docs/DECOMP_MAP.md` focus stays on the gameplay gaps above.
 

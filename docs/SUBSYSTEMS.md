@@ -2694,7 +2694,9 @@ languages rather than fabricating or silently aliasing Italian assets.
   electrics flicker (`FUN_0044b000`), additive flare/beam sprites
   (`FUN_0044bbc0`), and the night road light pool (`FUN_004a8750`/`FUN_004a9490`)
   are reconstructed in `cmr-core::car_headlights` and wired into `cmr-video` and
-  `cmr-app`.
+  `cmr-app`. Car-vs-car collision (`FUN_00442740`/`FUN_004438a0`/`FUN_00442860`/
+  `FUN_00441f30`) is reconstructed in `cmr-core::car_vs_car_collision` and
+  bridged onto `RaceState`.
 - Suspension/surface recovery is composed end to end: authenticated HPC data
   feeds the complete eight-lane initializer, and the four-wheel producer shares
   its force/contact results with geometric postprocess, translation, angular

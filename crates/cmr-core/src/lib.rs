@@ -40,6 +40,7 @@ pub mod car_reset;
 pub mod car_resources;
 pub mod car_setup;
 pub mod car_shadow;
+pub mod car_vs_car_collision;
 pub mod championship_assets;
 pub mod championship_bitmap_raster;
 pub mod championship_car_execute;
