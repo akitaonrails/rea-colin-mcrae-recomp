@@ -2144,7 +2144,11 @@ and split tick marks, `FUN_0047fe50` bottom-left latched split time and
 top-center split delta (`plan_race_checkpoint_hud`), `FUN_004088c0` forward-axis
 `driven_smoothing.scalars.longitudinal` (`dot(velocity, basis[0])` instead of
 `basis[2]`), and `FUN_00404440`/`FUN_004b98b0` live player car setup options
-(`PlayerCarSetupOptions`, defaults `[0, 1, 1, 1, 2]`).
+(`PlayerCarSetupOptions`, defaults `[0, 1, 1, 1, 2]`, passing `common_flags_025`
+to `derive_compiled_four_wheel_constants` and `derive_compiled_gearbox_tables`
+and `compiled_center_split_q16(brake_balance_095)` to `control_word_170` so the
+engine rev limiter, automatic gearbox upshift thresholds, and normal `0x9999`
+gravity stay aligned).
 The reset trigger remains an explicit input, and no unsupported position-snap,
 time penalty, or damage-performance mapping is claimed.
 

@@ -8143,16 +8143,19 @@ impl SessionCompiledPose {
     }
 }
 
-/// Player 1's five car-setup options (`live[0x91, 0x93, 0x95, 0x97, 0x99]`),
+/// Player 1's car-setup options (`live[0x91, 0x93, 0x95, 0x97, 0x99]`),
 /// initialized by `default_player` (`FUN_004b98b0`) to `[0, 1, 1, 1, 2]` and
-/// updated by the Service/Setup screen (`FUN_0047a420` / `0x4f5fc8`):
+/// updated by the Service/Setup screen (`FUN_0047a420` / `0x4f5fc8`), plus
+/// the common-prefix flags byte (`live[0x25]`):
+/// - `common_flags_025` (`+0x25`): cheat/common prefix flags (`0` normally)
 /// - `tyre_091` (`+0x91 & 7`): tyre compound fallback (`derive_compiled_state_word_758`)
 /// - `suspension_093` (`+0x93 & 7`): suspension stiffness (`FUN_00407270`, default `1`)
-/// - `brake_balance_095` (`+0x95 & 7`): brake bias (`FUN_00404120`, default `1` = `0x8000` balanced)
+/// - `brake_balance_095` (`+0x95 & 7`): brake bias (`FUN_00404100`, default `1` = `0x8000` balanced)
 /// - `steering_097` (`+0x97 & 7`): steering sensitivity (`FUN_0041b160`, default `1` = medium)
 /// - `gearbox_099` (`+0x99 & 7`): gearbox ratio spread (`FUN_00404070`, default `2` = neutral)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PlayerCarSetupOptions {
+    common_flags_025: u8,
     tyre_091: u8,
     suspension_093: u8,
     brake_balance_095: u8,
@@ -8163,6 +8166,7 @@ struct PlayerCarSetupOptions {
 impl Default for PlayerCarSetupOptions {
     fn default() -> Self {
         Self {
+            common_flags_025: 0,
             tyre_091: 0,
             suspension_093: 1,
             brake_balance_095: 1,
@@ -8177,7 +8181,19 @@ impl PlayerCarSetupOptions {
         if live.len() <= 0x99 {
             return Self::default();
         }
+        // `default_player` (`FUN_004b98b0`) writes non-zero slider metadata
+        // (`[0x03, 0x0f, 0x0a, 0x0c, 0x14]`) into the even bytes `live[0x90, 0x92, 0x94, 0x96, 0x98]`.
+        // All-zero even bytes mean the live block has not been committed yet.
+        if live[0x90] == 0
+            && live[0x92] == 0
+            && live[0x94] == 0
+            && live[0x96] == 0
+            && live[0x98] == 0
+        {
+            return Self::default();
+        }
         Self {
+            common_flags_025: live[0x25],
             tyre_091: live[0x91] & 7,
             suspension_093: live[0x93] & 7,
             brake_balance_095: live[0x95] & 7,
@@ -8200,15 +8216,15 @@ struct SessionCompiledCar {
 
 impl SessionCompiledPose {
     /// Derive the selected car's four-wheel inputs from its direct case words
-    /// and the player's setup options (`live[0x91, 0x93, 0x95, 0x97, 0x99]`).
+    /// and the player's setup options (`live[0x25]` and `live[0x91, 0x93, 0x95, 0x97, 0x99]`).
     fn compiled_car(
         &self,
         setup: PlayerCarSetupOptions,
     ) -> Result<SessionCompiledCar, SessionCompiledPoseError> {
         use cmr_core::compiled_car_initializer::{
-            derive_compiled_control_families, derive_compiled_four_wheel_constants,
-            derive_compiled_gearbox_tables, derive_compiled_state_word_758,
-            transform_compiled_control_family,
+            compiled_center_split_q16, derive_compiled_control_families,
+            derive_compiled_four_wheel_constants, derive_compiled_gearbox_tables,
+            derive_compiled_state_word_758, transform_compiled_control_family,
         };
         let words = self
             .direct_cases
@@ -8221,10 +8237,12 @@ impl SessionCompiledPose {
         .map_err(|error| {
             SessionCompiledPoseError::CarInputs(RecoveredCompiledStageError::Family(error))
         })?;
-        let constants = derive_compiled_four_wheel_constants(words, setup.brake_balance_095)
+        let mut constants = derive_compiled_four_wheel_constants(words, setup.common_flags_025)
             .map_err(SessionCompiledPoseError::CarInputs)?;
-        let gearbox_tables = derive_compiled_gearbox_tables(words, setup.gearbox_099, &families)
-            .map_err(SessionCompiledPoseError::CarInputs)?;
+        constants.control_word_170 = compiled_center_split_q16(setup.brake_balance_095);
+        let gearbox_tables =
+            derive_compiled_gearbox_tables(words, setup.common_flags_025, &families)
+                .map_err(SessionCompiledPoseError::CarInputs)?;
         let half_state = derive_compiled_half_sign_state([
             words.state_words[0],
             words.state_words[1],
@@ -8880,6 +8898,12 @@ fn reload_stage_for_event<'a>(
 ) -> Result<(), WindowedStageFrameError> {
     if session.state().id() != 4 {
         return Ok(());
+    }
+    if session.event().globals.school_d3ca88 {
+        let school = session.event().cfg.school_6c0;
+        let (level, task) = ((school >> 3) & 3, school >> 5);
+        let live = cmr_core::config_commit::live_mut(&mut config.image);
+        cmr_core::school_race::force_setup(live, level, task);
     }
     let setup = PlayerCarSetupOptions::from_live(cmr_core::config_commit::live(&config.image));
     reload_changed_stage(
@@ -14377,5 +14401,92 @@ mod tests {
         let mixer: SharedSoftwareMixer = std::sync::Arc::new(std::sync::Mutex::new(software));
         pause.play_frontend_cue(&mixer, 3, true, 100);
         assert!(pause.frontend_bank.is_some(), "every wave loaded");
+    }
+
+    #[test]
+    fn player_car_setup_options_keep_redline_gravity_and_brake_split_aligned() {
+        let config = FrontEndConfig::new("AU1", 0);
+        let setup = PlayerCarSetupOptions::from_live(cmr_core::config_commit::live(&config.image));
+        assert_eq!(setup, PlayerCarSetupOptions::default());
+
+        let uncommitted = [0u8; cmr_core::config_commit::LIVE_LEN];
+        assert_eq!(
+            PlayerCarSetupOptions::from_live(&uncommitted),
+            PlayerCarSetupOptions::default()
+        );
+
+        let mut words = CompiledCaseWords::default();
+        words.control_words[0] = 0x1_0000;
+        words.control_words[2] = 0x1_0000;
+        words.control_words[3] = 0x5_0000; // redline +0x15c
+        words.control_words[5] = 0xeb85; // upper_190[1] (~0.92)
+        words.control_words[6] = 0xeb85; // upper_190[2]
+        words.control_words[7] = 0xeb85; // upper_190[3]
+        words.control_words[8] = 0xeb85; // upper_190[4]
+        words.control_words[9] = 0xeb85; // upper_190[5]
+        words.control_words[11] = 0x8000; // lower_1b0[2]
+        words.control_words[12] = 0x8000; // lower_1b0[3]
+        words.control_words[13] = 0x8000; // lower_1b0[4]
+        words.control_words[14] = 0x8000; // lower_1b0[5]
+        words.control_words[15] = 0x8000; // lower_1b0[6]
+        words.control_words[16..22]
+            .copy_from_slice(&[0x4_0000, 0x3_0000, 0x2_4000, 0x1_c000, 0x1_6000, 0x1_2000]);
+
+        let families = cmr_core::compiled_car_initializer::derive_compiled_control_families(
+            cmr_core::compiled_car_initializer::transform_compiled_control_family(
+                words.control_family(),
+                setup.gearbox_099,
+            ),
+        )
+        .unwrap();
+        let mut constants =
+            cmr_core::compiled_car_initializer::derive_compiled_four_wheel_constants(
+                words,
+                setup.common_flags_025,
+            )
+            .unwrap();
+        constants.control_word_170 =
+            cmr_core::compiled_car_initializer::compiled_center_split_q16(setup.brake_balance_095);
+        let gearbox_tables = cmr_core::compiled_car_initializer::derive_compiled_gearbox_tables(
+            words,
+            setup.common_flags_025,
+            &families,
+        )
+        .unwrap();
+
+        // Both engine limiter and gearbox shift thresholds share the unscaled redline (`0x5_0000`),
+        // gravity is normal (`0x9999`), and brake balance 1 maps to balanced (`0x8000`).
+        assert_eq!(constants.control_word_15c, 0x5_0000);
+        assert_eq!(gearbox_tables.redline_15c, constants.control_word_15c);
+        assert_eq!(constants.gravity_c5fc, 0x9999);
+        assert_eq!(constants.control_word_170, 0x8000);
+
+        // In automatic mode (`mode_3f0 = 2`), engine speed near redline (`0x4_f000 > 0.92 * 0x5_0000`)
+        // upshifts cleanly from 1st gear into 2nd gear.
+        let mut state = cmr_core::gearbox::GearboxState::at_setup(true);
+        for _ in 0..8 {
+            state = cmr_core::gearbox::apply_gearbox(
+                state,
+                cmr_core::gearbox::GearboxInputs {
+                    mode_3f0: 2,
+                    gear_command_314: 0,
+                    throttle_304: 0x1_0000,
+                    brake_308: 0,
+                    engine_2e0: 0x4_f000,
+                    wheel_flags_73a: [0; 4],
+                    gear_two_skip: false,
+                    player_locked: false,
+                    residual_43b: 0,
+                    brake_reverse_enabled: true,
+                },
+                &gearbox_tables,
+            )
+            .unwrap();
+        }
+        assert!(
+            state.gear_43a >= 2,
+            "automatic gearbox must upshift out of 1st gear, got gear {}",
+            state.gear_43a
+        );
     }
 }
