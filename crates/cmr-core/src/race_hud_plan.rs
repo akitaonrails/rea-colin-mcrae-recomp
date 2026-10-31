@@ -585,7 +585,7 @@ pub fn plan_race_countdown_overlay(
             let alpha = (((0x10000 - t_q16) * 255) >> 16).clamp(0, 255) as u8;
             Some(RaceHudCommand::TintedBitmap {
                 bitmap: RaceHudBitmap::CountdownGo,
-                source: HudRect::new(0, 0, 176, 115),
+                source: HudRect::new(0, 0, 128, 64),
                 destination: HudRect::new((vw - dst_w) / 2, (vh - dst_h) / 2, dst_w, dst_h),
                 color: HudColor::new(0xff, 0xff, 0xff, alpha),
                 legacy: LegacyBitmapArguments::TINTED_CALL,
@@ -971,9 +971,9 @@ mod tests {
             panic!("expected countdown GO command");
         };
         assert_eq!(go_bmp, RaceHudBitmap::CountdownGo);
-        assert_eq!(go_src.width, 176);
-        assert_eq!(go_src.height, 115);
-        assert!(go_dst.width > 176 && go_dst.height > 115);
+        assert_eq!(go_src.width, 128);
+        assert_eq!(go_src.height, 64);
+        assert!(go_dst.width > 128 && go_dst.height > 64);
         assert!(go_color.alpha > 0);
     }
 }

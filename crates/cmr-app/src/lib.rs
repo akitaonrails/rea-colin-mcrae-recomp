@@ -11379,6 +11379,7 @@ mod tests {
             start,
             front_end_event(),
         )
+        .with_start_sequence(true)
         .with_stage_triggers(&trigger_volumes, &trigger_cell_centers)
         .unwrap();
         assert!(session.is_four_wheel());
