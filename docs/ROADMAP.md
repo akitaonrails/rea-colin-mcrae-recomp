@@ -2133,6 +2133,18 @@ wheel-vs-hull force/moment split in `integrator_head::contact_force_and_moment`,
 and the column-major `R^T` angular-velocity contact basis projection in
 `FUN_00409f90` (`vehicle_dynamics::build_contact_basis_vectors`), restoring
 authentic rally acceleration and slide recovery.
+Stage checkpoint/split/classification HUD and 1:1 physics fidelity further
+reconstructed `FUN_004620f0`/`FUN_00462230`/`FUN_00462b70` `.cat` checkpoint
+gate progression (`StageProgress` ignoring the `CAT[0]` start-line split bit,
+testing forward crossing before regression, and finishing only at `cursor >=
+nodes.len()`, eliminating premature stage finishes at Split 7), `FUN_00464930`
+top-left 4-row driver classification bars/ranks/3-letter codes (`white.bmp`,
+`placenum.fon`, `result.fon`), `FUN_00463080` right progress-rail sector bars
+and split tick marks, `FUN_0047fe50` bottom-left latched split time and
+top-center split delta (`plan_race_checkpoint_hud`), `FUN_004088c0` forward-axis
+`driven_smoothing.scalars.longitudinal` (`dot(velocity, basis[0])` instead of
+`basis[2]`), and `FUN_00404440`/`FUN_004b98b0` live player car setup options
+(`PlayerCarSetupOptions`, defaults `[0, 1, 1, 1, 2]`).
 The reset trigger remains an explicit input, and no unsupported position-snap,
 time penalty, or damage-performance mapping is claimed.
 

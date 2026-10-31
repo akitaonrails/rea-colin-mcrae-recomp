@@ -82,6 +82,11 @@ pub enum StageEvent {
     },
 }
 
+/// Duration (in 25 Hz ticks) that a crossed split time and delta stay visible on
+/// the race HUD (`FUN_00462ac0` sets `0x5ffc2c = 0x78 = 120`, and `FUN_0047fe50`
+/// fades alpha over the final 24 ticks).
+pub const SPLIT_DISPLAY_TICKS: u8 = 120;
+
 /// A per-car cursor walking the `.cat` node spline, reproducing `FUN_00462ac0`.
 ///
 /// Construct one per car, then feed it the car's world position and the current
@@ -97,6 +102,16 @@ pub struct StageProgress<'a> {
     pending_bits: Vec<u8>,
     splits_passed: u32,
     split_times: Vec<i32>,
+    /// Cumulative 3D distance fractions (in Q16.16 `0..=0x1_0000`) for each
+    /// intermediate split gate along the `.cat` spline (`FUN_00462230`,
+    /// `0x57c2fc` / `0x57c3a8` / `0x57aff0`), used by `FUN_00463080` to draw
+    /// progress-rail split tick marks and colored sector bars.
+    split_progress_q16: Vec<i32>,
+    /// Countdown timer (`0x5ffc2c`, `120..=0`) showing the most recent split
+    /// time and top-center split delta (`FUN_0047fe50`).
+    split_display_ticks: u8,
+    /// Most recently latched split time in centiseconds (`0x5ffb30`).
+    last_split_centiseconds: Option<i32>,
     finished: bool,
     finish_centiseconds: Option<i32>,
     /// `DAT_0057b008[car]`: regressions since the last forward crossing,
@@ -111,13 +126,36 @@ impl<'a> StageProgress<'a> {
     /// reference.
     #[must_use]
     pub fn new(nodes: &'a [CatNode], car: u8) -> Self {
+        let car_bit = 1u8 << (car & 7);
+        let mut pending_bits: Vec<u8> = nodes.iter().map(|n| n.split_flag).collect();
+        // In `FUN_004620f0` (`0x462109..0x462119`), `0x57af9c[car]` is
+        // initialized to `-1` (`0xffffffff`). Normal `.cat` stage files flag 9
+        // nodes (`CAT[0]` start line + 7 intermediate splits + `CAT[last]`
+        // finish line): crossing `CAT[0]` increments `0x57af9c` from `-1` to `0`
+        // (start line) and does not count as Split 1 (`0x5ffb88` is only
+        // updated for `1..=7`). Clearing the start-line split bit when all 9
+        // gates are present keeps `splits_passed` aligned 1:1 with `1..=8`
+        // (7 intermediate splits + finish).
+        let split_count = pending_bits
+            .iter()
+            .filter(|&&bits| bits & car_bit != 0)
+            .count();
+        if split_count > FINISH_GATE_COUNT as usize
+            && let Some(first) = pending_bits.first_mut()
+        {
+            *first &= !car_bit;
+        }
+        let split_progress_q16 = compute_split_progress_q16(nodes, &pending_bits, car_bit);
         StageProgress {
             nodes,
-            car_bit: 1u8 << (car & 7),
+            car_bit,
             cursor: 0,
-            pending_bits: nodes.iter().map(|n| n.split_flag).collect(),
+            pending_bits,
             splits_passed: 0,
             split_times: Vec::new(),
+            split_progress_q16,
+            split_display_ticks: 0,
+            last_split_centiseconds: None,
             finished: false,
             finish_centiseconds: None,
             reverse_crossings: 0,
@@ -168,6 +206,38 @@ impl<'a> StageProgress<'a> {
         &self.split_times
     }
 
+    /// Normalized cumulative 3D distance fractions (`0..=0x1_0000`) for the
+    /// intermediate split gates along the stage (`FUN_00462230` / `FUN_00463080`).
+    #[must_use]
+    pub fn split_progress_q16(&self) -> &[i32] {
+        &self.split_progress_q16
+    }
+
+    /// Remaining HUD display ticks (`120..=0`, `0x5ffc2c`) for the most recent
+    /// split readout (`FUN_0047fe50`).
+    #[must_use]
+    pub fn split_display_ticks(&self) -> u8 {
+        self.split_display_ticks
+    }
+
+    /// Most recently latched split time in centiseconds (`0x5ffb30`).
+    #[must_use]
+    pub fn last_split_centiseconds(&self) -> Option<i32> {
+        self.last_split_centiseconds
+    }
+
+    /// Current distance progress (`0..=0x1_0000`) along the `.cat` node spline
+    /// (`FUN_00464130` / `FUN_00462ac0`).
+    #[must_use]
+    pub fn distance_progress_q16(&self) -> i32 {
+        if self.finished || self.nodes.len() <= 1 {
+            return 0x1_0000;
+        }
+        let max_idx = (self.nodes.len() - 1) as i64;
+        let cur = (self.cursor.min(self.nodes.len() - 1)) as i64;
+        ((cur << 16) / max_idx).clamp(0, 0x1_0000) as i32
+    }
+
     /// Whether the stage finish has been crossed.
     #[must_use]
     pub fn finished(&self) -> bool {
@@ -183,27 +253,19 @@ impl<'a> StageProgress<'a> {
     /// Advance the cursor for one physics tick given the car's world position
     /// and the current stage-clock readout in centiseconds.
     ///
-    /// Reproduces one pass of `FUN_00462ac0`: a regression step back when the car
-    /// has fallen behind the previous node, else a forward crossing test against
-    /// the current node (both the horizontal x-z Q16.16 dot). Once finished,
-    /// further calls are [`StageEvent::Idle`].
+    /// Reproduces one pass of `FUN_00462ac0`: a forward crossing test against
+    /// the current node first (`0x462b79..0x462e6e`), else a regression step
+    /// back when the car has fallen behind the previous node
+    /// (`0x462e73..0x462fbf`), then the finish check when `cursor >= nodes.len()`
+    /// (`0x462fc2..0x463013`). Once finished, further calls are
+    /// [`StageEvent::Idle`].
     pub fn update(&mut self, car_pos: Vec3, clock_centiseconds: i32) -> StageEvent {
+        self.split_display_ticks = self.split_display_ticks.saturating_sub(1);
         if self.finished || self.cursor >= self.nodes.len() {
             return StageEvent::Idle;
         }
 
-        // Regression: the car has moved back in front of the previous node.
-        if self.cursor > 0 && horizontal_dot(&self.nodes[self.cursor - 1], car_pos).raw() > 0 {
-            // At 5 the binary sets `DAT_0057b0a8 = 0xf` instead (not
-            // modelled: its consumer is not recovered).
-            if self.reverse_crossings != 5 {
-                self.reverse_crossings += 1;
-            }
-            self.cursor -= 1;
-            return StageEvent::Regressed { to: self.cursor };
-        }
-
-        // Forward crossing: the car is past the current node.
+        // Forward crossing (`0x462b79..0x462e6e`): tested first in `FUN_00462ac0`.
         if horizontal_dot(&self.nodes[self.cursor], car_pos).raw() < 0 {
             let node = self.cursor;
             let is_split = self.pending_bits[node] & self.car_bit != 0;
@@ -211,11 +273,17 @@ impl<'a> StageProgress<'a> {
                 self.pending_bits[node] &= !self.car_bit;
                 self.splits_passed += 1;
                 self.split_times.push(clock_centiseconds);
+                self.last_split_centiseconds = Some(clock_centiseconds);
+                self.split_display_ticks = SPLIT_DISPLAY_TICKS;
             }
             self.cursor += 1;
             self.reverse_crossings = 0;
 
-            if self.splits_passed >= FINISH_GATE_COUNT || self.cursor >= self.nodes.len() {
+            // `0x462fc2..0x463013`: stage finish triggers when `cursor` reaches
+            // `DAT_0057c448` (`nodes.len()`), or in synthetic tests where every
+            // node is a split and 8 splits have been crossed with no start-gate
+            // bit cleared.
+            if self.cursor >= self.nodes.len() {
                 self.finished = true;
                 self.finish_centiseconds = Some(clock_centiseconds);
                 return StageEvent::Finished {
@@ -233,8 +301,51 @@ impl<'a> StageProgress<'a> {
             return StageEvent::Advanced { node };
         }
 
+        // Regression (`0x462e73..0x462fbf`): tested in the `else` branch of
+        // `FUN_00462ac0` when the car has moved back in front of `cursor - 1`.
+        if self.cursor > 0 && horizontal_dot(&self.nodes[self.cursor - 1], car_pos).raw() > 0 {
+            if self.reverse_crossings != 5 {
+                self.reverse_crossings += 1;
+            }
+            self.cursor -= 1;
+            return StageEvent::Regressed { to: self.cursor };
+        }
+
         StageEvent::Idle
     }
+}
+
+/// Compute the normalized cumulative 3D spline distance (`0..=0x1_0000`) for
+/// each intermediate split node (`FUN_00462230`, `0x462230..0x4623c0`).
+fn compute_split_progress_q16(nodes: &[CatNode], pending_bits: &[u8], car_bit: u8) -> Vec<i32> {
+    if nodes.len() < 2 {
+        return Vec::new();
+    }
+    let mut cumulative = Vec::with_capacity(nodes.len());
+    cumulative.push(0.0_f64);
+    let mut total = 0.0_f64;
+    for pair in nodes.windows(2) {
+        let dx = f64::from(pair[1].position[0].wrapping_sub(pair[0].position[0])) / 65536.0;
+        let dy = f64::from(pair[1].position[1].wrapping_sub(pair[0].position[1])) / 65536.0;
+        let dz = f64::from(pair[1].position[2].wrapping_sub(pair[0].position[2])) / 65536.0;
+        total += (dx * dx + dy * dy + dz * dz).sqrt();
+        cumulative.push(total);
+    }
+    if total <= f64::EPSILON {
+        return Vec::new();
+    }
+    let last_node = nodes.len() - 1;
+    let mut splits = Vec::new();
+    for (idx, &bits) in pending_bits.iter().enumerate() {
+        if idx < last_node && bits & car_bit != 0 {
+            let q16 = ((cumulative[idx] / total) * 65536.0).round() as i32;
+            splits.push(q16.clamp(0, 0x1_0000));
+            if splits.len() == (FINISH_GATE_COUNT as usize).saturating_sub(1) {
+                break;
+            }
+        }
+    }
+    splits
 }
 
 /// Normalize the checkpoint delta exactly as `FUN_00461e90`. Components outside
@@ -479,28 +590,44 @@ mod tests {
     }
 
     #[test]
-    fn eight_gates_finish_on_the_split_count_not_the_node_count() {
-        // Ten split nodes along +x: the finish fires on the 8th gate, before the
-        // cursor reaches the end of the spline.
-        let nodes: Vec<CatNode> = (1..=10).map(|x| node([x, 0, 0], [1, 0, 0], 0b1)).collect();
+    fn nine_gate_cat_spline_ignores_start_gate_split_and_finishes_only_at_final_node() {
+        // Real `.cat` files have 9 split-flagged nodes: node 0 (start gate),
+        // 7 intermediate splits, and the final node (finish gate). Crossing the
+        // 7th intermediate split must NOT finish the stage prematurely; only
+        // crossing the final node finishes the stage.
+        let nodes: Vec<CatNode> = (1..=9).map(|x| node([x, 0, 0], [1, 0, 0], 0b1)).collect();
         let mut p = StageProgress::new(&nodes, 0);
-        let mut event = StageEvent::Idle;
-        for x in 2..=11 {
-            event = p.update(at(x, 0), x * 100);
-            if p.finished() {
-                break;
-            }
+        // Node 0's start-gate split bit was cleared at init, so crossing node 0
+        // advances without incrementing `splits_passed`.
+        assert_eq!(p.update(at(2, 0), 100), StageEvent::Advanced { node: 0 });
+        assert_eq!(p.splits_passed(), 0);
+
+        // Crossing nodes 1..=7 fires splits 1..=7 without finishing early.
+        for split_num in 1..=7 {
+            let x = (split_num as i32) + 2;
+            assert_eq!(
+                p.update(at(x, 0), x * 100),
+                StageEvent::Split {
+                    node: split_num as usize,
+                    split_number: split_num,
+                    centiseconds: x * 100,
+                }
+            );
+            assert!(!p.finished());
         }
-        // Node 7 (at x = 8) is crossed when the car is strictly past it at
-        // x = 9, so the 8th gate - the finish - latches clock 900.
+        assert_eq!(p.splits_passed(), 7);
+        assert_eq!(p.split_display_ticks(), SPLIT_DISPLAY_TICKS);
+
+        // Crossing the final node (index 8 at x = 9) finishes the stage.
         assert_eq!(
-            event,
+            p.update(at(10, 0), 1000),
             StageEvent::Finished {
-                node: 7,
-                centiseconds: 900
+                node: 8,
+                centiseconds: 1000
             }
         );
+        assert!(p.finished());
         assert_eq!(p.splits_passed(), FINISH_GATE_COUNT);
-        assert_eq!(p.cursor(), 8); // stopped at the 8th gate, not node 10
+        assert_eq!(p.cursor(), 9);
     }
 }

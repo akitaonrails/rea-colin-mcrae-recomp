@@ -2188,23 +2188,35 @@ pub struct RaceHudAssets {
     bottom_left_curve: IndexedBitmap,
     vertical_bar: IndexedBitmap,
     progress_bar_top: IndexedBitmap,
+    white_pixel: IndexedBitmap,
     countdown_digits: IndexedBitmap,
     countdown_go: IndexedBitmap,
     numbers: BitmapFont,
     time_numbers: BitmapFont,
+    place_numbers: BitmapFont,
+    result_font: BitmapFont,
 }
 
 impl RaceHudAssets {
     fn load(store: &AssetStore) -> Result<Self, StageFrameError> {
         let common_gauge = load_race_hud_bitmap(store, RaceHudBitmap::CommonGauge640)?;
+        let horizontal_bar = load_race_hud_bitmap(store, RaceHudBitmap::HorizontalBar)?;
+        let white_pixel = load_race_hud_bitmap(store, RaceHudBitmap::WhitePixel)
+            .unwrap_or_else(|_| horizontal_bar.clone());
         let countdown_digits = load_race_hud_bitmap(store, RaceHudBitmap::CountdownDigits)
             .unwrap_or_else(|_| common_gauge.clone());
         let countdown_go = load_race_hud_bitmap(store, RaceHudBitmap::CountdownGo)
             .unwrap_or_else(|_| common_gauge.clone());
+        let numbers = load_race_hud_font(store, RaceHudFont::Numbers640)?;
+        let time_numbers = load_race_hud_font(store, RaceHudFont::TimeNumbers640)?;
+        let place_numbers = load_race_hud_font(store, RaceHudFont::PlaceNumbers640)
+            .unwrap_or_else(|_| numbers.clone());
+        let result_font = load_race_hud_font(store, RaceHudFont::Result640)
+            .unwrap_or_else(|_| time_numbers.clone());
         Ok(Self {
             common_gauge,
             progress_red_spot: load_race_hud_bitmap(store, RaceHudBitmap::ProgressRedSpot)?,
-            horizontal_bar: load_race_hud_bitmap(store, RaceHudBitmap::HorizontalBar)?,
+            horizontal_bar,
             horizontal_bar_end: load_race_hud_bitmap(store, RaceHudBitmap::HorizontalBarEnd)?,
             horizontal_bar_end_right: load_race_hud_bitmap(
                 store,
@@ -2214,10 +2226,13 @@ impl RaceHudAssets {
             bottom_left_curve: load_race_hud_bitmap(store, RaceHudBitmap::BottomLeftCurve)?,
             vertical_bar: load_race_hud_bitmap(store, RaceHudBitmap::VerticalBar)?,
             progress_bar_top: load_race_hud_bitmap(store, RaceHudBitmap::ProgressBarTop)?,
+            white_pixel,
             countdown_digits,
             countdown_go,
-            numbers: load_race_hud_font(store, RaceHudFont::Numbers640)?,
-            time_numbers: load_race_hud_font(store, RaceHudFont::TimeNumbers640)?,
+            numbers,
+            time_numbers,
+            place_numbers,
+            result_font,
         })
     }
 
@@ -2234,6 +2249,7 @@ impl RaceHudAssets {
             RaceHudBitmap::BottomLeftCurve => &self.bottom_left_curve,
             RaceHudBitmap::VerticalBar => &self.vertical_bar,
             RaceHudBitmap::ProgressBarTop => &self.progress_bar_top,
+            RaceHudBitmap::WhitePixel => &self.white_pixel,
             RaceHudBitmap::CountdownDigits => &self.countdown_digits,
             RaceHudBitmap::CountdownGo => &self.countdown_go,
         }
@@ -2245,6 +2261,8 @@ impl RaceHudAssets {
         match font {
             RaceHudFont::Numbers640 => &self.numbers,
             RaceHudFont::TimeNumbers640 => &self.time_numbers,
+            RaceHudFont::PlaceNumbers640 => &self.place_numbers,
+            RaceHudFont::Result640 => &self.result_font,
         }
     }
 }
@@ -3926,18 +3944,181 @@ fn live_race_hud_inputs(
     }
 }
 
+/// Format a driver's 3-letter uppercase classification code (`FUN_00464130`
+/// `0x4644e5..0x464587`): when the name contains a space followed by at least
+/// 3 letters (e.g. `"Colin McRae"`), take the 3 characters after the first
+/// space (`"MCR"`); otherwise take the first 3 characters of the name.
+fn driver_three_letter_code(name: &[u8]) -> String {
+    let trimmed = name.split(|&b| b == 0).next().unwrap_or(name);
+    let candidate = if let Some(space_pos) = trimmed.iter().position(|&b| b == b' ') {
+        let after = &trimmed[space_pos + 1..];
+        if after.len() >= 3 { after } else { trimmed }
+    } else {
+        trimmed
+    };
+    let mut out = String::with_capacity(3);
+    for &b in candidate.iter().take(3) {
+        let ch = (b as char).to_ascii_uppercase();
+        if ch.is_ascii_alphanumeric() || ch == ' ' {
+            out.push(ch);
+        }
+    }
+    while out.len() < 3 {
+        out.push(' ');
+    }
+    out
+}
+
+/// Build the checkpoint HUD inputs (`FUN_00464130`, `FUN_00464930`,
+/// `FUN_00463080`, `FUN_0047fe50`) from the live stage progress, rival split
+/// table, and player configuration.
+fn build_race_checkpoint_hud_inputs(
+    progress: &StageProgress<'_>,
+    progress_q16: i32,
+    results: &RaceResults,
+    event: &EventState,
+    config: &FrontEndConfig,
+) -> cmr_core::race_hud_plan::RaceHudCheckpointInputs {
+    use cmr_core::race_hud_plan::{RaceHudCheckpointInputs, RaceHudClassificationRow};
+
+    let split_progress_q16 = progress.split_progress_q16().to_vec();
+    let split_times = progress.split_times();
+    let splits_passed = (progress.splits_passed() as usize).min(8);
+
+    // Per-sector green/red comparison against `hud_reference` (`FUN_00463080`).
+    let mut sector_gained = Vec::with_capacity(split_progress_q16.len());
+    for (idx, &player_cum_cs) in split_times.iter().take(7).enumerate() {
+        let prev_player_cs = if idx > 0 { split_times[idx - 1] } else { 0 };
+        let player_sector = (player_cum_cs - prev_player_cs).max(0) as u32;
+        let gained = if let Some(rivals) = results.rivals.as_ref() {
+            let ref_cur = rivals.hud_reference[idx + 1];
+            let ref_prev = if idx > 0 {
+                rivals.hud_reference[idx]
+            } else {
+                0
+            };
+            let ref_sector = ref_cur.saturating_sub(ref_prev);
+            ref_cur == 0 || player_sector <= ref_sector
+        } else {
+            true
+        };
+        sector_gained.push(gained);
+    }
+
+    let mut classification_rows = Vec::new();
+    let mut player_rank_gained_or_held = true;
+    let mut reference_split_centiseconds = None;
+
+    if splits_passed >= 1
+        && let Some(rivals) = results.rivals.as_ref()
+        && let Some(&player_slot) = rivals.player_slots.first()
+        && let Some(last_split_cs) = progress.last_split_centiseconds()
+    {
+        let player_time = last_split_cs.max(0) as u32;
+        let ref_cs = rivals.hud_reference[splits_passed];
+        if ref_cs > 0 {
+            reference_split_centiseconds = Some(ref_cs);
+        }
+
+        // `0x4643a2`: 8 drivers in Novice (`difficulty_018 & 0x18 == 0`), else 16.
+        let total_competitors: usize = if event.cfg.difficulty_018 & 0x18 == 0 {
+            8
+        } else {
+            16
+        };
+
+        let rank_order_at = |split_idx: usize, p_time: u32| -> (Vec<(u8, u32)>, usize) {
+            let mut entries: Vec<(u8, u32)> = (0..total_competitors)
+                .map(|slot_idx| {
+                    let slot = slot_idx as u8;
+                    if slot == player_slot {
+                        (slot, p_time)
+                    } else if split_idx < 8 {
+                        let split_row = &rivals.splits[split_idx];
+                        let time = split_row
+                            .iter()
+                            .find(|s| s.slot == u16::from(slot))
+                            .map_or(rivals.times[slot_idx], |s| s.time);
+                        (slot, time)
+                    } else {
+                        (slot, rivals.times[slot_idx])
+                    }
+                })
+                .collect();
+            entries.sort_by_key(|&(slot, time)| (time, slot));
+            let p_rank = entries
+                .iter()
+                .position(|&(slot, _)| slot == player_slot)
+                .unwrap_or(0);
+            (entries, p_rank)
+        };
+
+        let (entries, player_rank) = rank_order_at(splits_passed, player_time);
+        if splits_passed >= 2
+            && let Some(&prev_cs) = split_times.get(splits_passed - 2)
+        {
+            let (_, prev_rank) = rank_order_at(splits_passed - 1, prev_cs.max(0) as u32);
+            player_rank_gained_or_held = player_rank <= prev_rank;
+        }
+
+        // `FUN_00464710`: choose the 4 visible rows around `player_rank`.
+        let start_rank = if total_competitors <= 4 || player_rank == 0 {
+            0
+        } else if player_rank >= total_competitors - 2 {
+            total_competitors - 4
+        } else {
+            player_rank - 1
+        };
+
+        let live = cmr_core::config_commit::live(&config.image);
+        let player_name = live.get(0x2c..0x3c).unwrap_or(b"PLR");
+        for (offset, &(slot, _)) in entries.iter().skip(start_rank).take(4).enumerate() {
+            let rank = (start_rank + offset + 1) as u8;
+            let is_player = slot == player_slot;
+            let code = if is_player {
+                driver_three_letter_code(player_name)
+            } else {
+                let rival_name = results
+                    .names
+                    .get(usize::from(slot))
+                    .map_or(&b"RIV"[..], Vec::as_slice);
+                driver_three_letter_code(rival_name)
+            };
+            classification_rows.push(RaceHudClassificationRow {
+                rank,
+                code,
+                is_player,
+            });
+        }
+    }
+
+    RaceHudCheckpointInputs {
+        progress_q16,
+        split_progress_q16,
+        sector_gained,
+        classification_rows,
+        player_rank_gained_or_held,
+        split_display_ticks: progress.split_display_ticks(),
+        last_split_centiseconds: progress
+            .last_split_centiseconds()
+            .map(|cs| cs.max(0) as u32),
+        reference_split_centiseconds,
+    }
+}
+
 fn compose_live_race_hud(
     resources: &StageRenderResources,
     frame: SoftwarePresentedFrame,
     input: RaceHudPreparedInputs,
 ) -> Result<SoftwarePresentedFrame, StageFrameError> {
-    compose_live_race_hud_with_countdown(resources, frame, input, None)
+    compose_live_race_hud_with_countdown(resources, frame, input, None, None)
 }
 
 fn compose_live_race_hud_with_countdown(
     resources: &StageRenderResources,
     frame: SoftwarePresentedFrame,
     input: RaceHudPreparedInputs,
+    checkpoint: Option<&cmr_core::race_hud_plan::RaceHudCheckpointInputs>,
     countdown: Option<cmr_core::race_hud_plan::RaceHudCountdown>,
 ) -> Result<SoftwarePresentedFrame, StageFrameError> {
     let assets = resources
@@ -3947,6 +4128,12 @@ fn compose_live_race_hud_with_countdown(
         plan_common_gauge_border_fragments(input.viewport).map_err(StageFrameError::HudPlan)?;
     let plan = plan_normal_single_player_race_hud(input).map_err(StageFrameError::HudPlan)?;
     commands.extend_from_slice(plan.commands());
+    if let Some(checkpoint) = checkpoint {
+        commands.extend(cmr_core::race_hud_plan::plan_race_checkpoint_hud(
+            input.viewport,
+            checkpoint,
+        ));
+    }
     if let Some(countdown) = countdown
         && let Some(cmd) =
             cmr_core::race_hud_plan::plan_race_countdown_overlay(input.viewport, countdown)
@@ -5713,7 +5900,20 @@ fn advance_game_frame<C: HostClock>(
         if session.school_task().is_some_and(|task| !task.race.hud) {
             return Ok(world);
         }
-        compose_live_race_hud_with_countdown(resources, world, hud_input, session.hud_countdown())
+        let checkpoint_hud = build_race_checkpoint_hud_inputs(
+            progress,
+            hud_input.progress_q16,
+            results,
+            session.event(),
+            config,
+        );
+        compose_live_race_hud_with_countdown(
+            resources,
+            world,
+            hud_input,
+            Some(&checkpoint_hud),
+            session.hud_countdown(),
+        )
     })?;
     // The results director's cues: `FUN_00467ef0(0, 0, 1)` (FORWARD) on a
     // page change and `FUN_00467dd0` (UPDOWN) when the menu cursor moved;
@@ -6000,11 +6200,12 @@ impl SessionAuxControl {
         Ok(Self { set })
     }
 
-    /// Control words of the patch for the session's zero config: its option
-    /// byte selects the default policy, and the patch's global word is
+    /// Control words of the patch for the player's suspension option
+    /// (`live[0x93] & 7`, default `1`), with the global time-step word
     /// `DAT_004eac6c`.
     fn patch_words<const N: usize>(
         &self,
+        suspension_option: u8,
         state_word_48: i32,
         offsets: [u16; N],
     ) -> Result<[i32; N], String> {
@@ -6012,7 +6213,7 @@ impl SessionAuxControl {
         let patch = self
             .set
             .derive(
-                AuxControlOption::Resolved(0),
+                AuxControlOption::Resolved(suspension_option & 7),
                 state_word_48,
                 cmr_core::vehicle_dynamics::SOLVER_GLOBAL_CONSTANTS
                     .time_step
@@ -7942,8 +8143,51 @@ impl SessionCompiledPose {
     }
 }
 
-/// Everything the four-wheel step needs from one car's compiled case words,
-/// under the zero config the session's pose setup also uses.
+/// Player 1's five car-setup options (`live[0x91, 0x93, 0x95, 0x97, 0x99]`),
+/// initialized by `default_player` (`FUN_004b98b0`) to `[0, 1, 1, 1, 2]` and
+/// updated by the Service/Setup screen (`FUN_0047a420` / `0x4f5fc8`):
+/// - `tyre_091` (`+0x91 & 7`): tyre compound fallback (`derive_compiled_state_word_758`)
+/// - `suspension_093` (`+0x93 & 7`): suspension stiffness (`FUN_00407270`, default `1`)
+/// - `brake_balance_095` (`+0x95 & 7`): brake bias (`FUN_00404120`, default `1` = `0x8000` balanced)
+/// - `steering_097` (`+0x97 & 7`): steering sensitivity (`FUN_0041b160`, default `1` = medium)
+/// - `gearbox_099` (`+0x99 & 7`): gearbox ratio spread (`FUN_00404070`, default `2` = neutral)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlayerCarSetupOptions {
+    tyre_091: u8,
+    suspension_093: u8,
+    brake_balance_095: u8,
+    steering_097: u8,
+    gearbox_099: u8,
+}
+
+impl Default for PlayerCarSetupOptions {
+    fn default() -> Self {
+        Self {
+            tyre_091: 0,
+            suspension_093: 1,
+            brake_balance_095: 1,
+            steering_097: 1,
+            gearbox_099: 2,
+        }
+    }
+}
+
+impl PlayerCarSetupOptions {
+    fn from_live(live: &[u8]) -> Self {
+        if live.len() <= 0x99 {
+            return Self::default();
+        }
+        Self {
+            tyre_091: live[0x91] & 7,
+            suspension_093: live[0x93] & 7,
+            brake_balance_095: live[0x95] & 7,
+            steering_097: live[0x97] & 7,
+            gearbox_099: live[0x99] & 7,
+        }
+    }
+}
+
+/// Everything the four-wheel step needs from one car's compiled case words.
 #[derive(Clone, Copy, Debug)]
 struct SessionCompiledCar {
     families: CompiledControlFamilies,
@@ -7955,8 +8199,12 @@ struct SessionCompiledCar {
 }
 
 impl SessionCompiledPose {
-    /// Derive the selected car's four-wheel inputs from its direct case words.
-    fn compiled_car(&self) -> Result<SessionCompiledCar, SessionCompiledPoseError> {
+    /// Derive the selected car's four-wheel inputs from its direct case words
+    /// and the player's setup options (`live[0x91, 0x93, 0x95, 0x97, 0x99]`).
+    fn compiled_car(
+        &self,
+        setup: PlayerCarSetupOptions,
+    ) -> Result<SessionCompiledCar, SessionCompiledPoseError> {
         use cmr_core::compiled_car_initializer::{
             derive_compiled_control_families, derive_compiled_four_wheel_constants,
             derive_compiled_gearbox_tables, derive_compiled_state_word_758,
@@ -7968,25 +8216,21 @@ impl SessionCompiledPose {
             .words;
         let families = derive_compiled_control_families(transform_compiled_control_family(
             words.control_family(),
-            0,
+            setup.gearbox_099,
         ))
         .map_err(|error| {
             SessionCompiledPoseError::CarInputs(RecoveredCompiledStageError::Family(error))
         })?;
-        let constants = derive_compiled_four_wheel_constants(words, 0)
+        let constants = derive_compiled_four_wheel_constants(words, setup.brake_balance_095)
             .map_err(SessionCompiledPoseError::CarInputs)?;
-        let gearbox_tables = derive_compiled_gearbox_tables(words, 0, &families)
+        let gearbox_tables = derive_compiled_gearbox_tables(words, setup.gearbox_099, &families)
             .map_err(SessionCompiledPoseError::CarInputs)?;
-        // Under the zero config the prefix does not rescale the state words,
-        // so these are the effective words the pose setup also derives from.
         let half_state = derive_compiled_half_sign_state([
             words.state_words[0],
             words.state_words[1],
             words.state_words[2],
         ]);
-        // A zero config has a zero context, so the selector returns the `-1`
-        // sentinel and the record's zero fallback byte picks variant 0.
-        let variant_758 = derive_compiled_state_word_758(-1, 0).state_word_758;
+        let variant_758 = derive_compiled_state_word_758(-1, setup.tyre_091).state_word_758;
         Ok(SessionCompiledCar {
             families,
             constants,
@@ -7998,7 +8242,7 @@ impl SessionCompiledPose {
 
     /// The selected car's complete four-wheel inputs: the compiled constants,
     /// gearbox and tyre variant, the authenticated surface coefficients, the
-    /// car-setup reset values (no config setup bytes are read) and the static
+    /// car-setup reset values, the player's car setup options, and the static
     /// tyre tables.
     fn compiled_four_wheel_params<'a>(
         &self,
@@ -8006,9 +8250,10 @@ impl SessionCompiledPose {
         trig: &'a [i32],
         tyre_tables: &'a cmr_formats::pe_tyre_tables::TyreSurfaceTables,
         aux: &SessionAuxControl,
+        setup: PlayerCarSetupOptions,
     ) -> Result<FourWheelIterationParams<'a>, SessionFourWheelError> {
         let car = self
-            .compiled_car()
+            .compiled_car(setup)
             .map_err(SessionFourWheelError::CompiledCar)?;
         let mut wheel = inputs.four_wheel_params(
             trig,
@@ -8032,9 +8277,9 @@ impl SessionCompiledPose {
             variant_758: car.variant_758,
             surface_families: Some(inputs.store.families()),
         });
-        // `FUN_0041b160` reads the player's sensitivity option; the session's
-        // zero config selects option 0.
-        wheel.steering = cmr_core::steering_response::steering_sensitivity(wheel.steering, 0);
+        // `FUN_0041b160` reads the player's steering sensitivity option (`live[0x97] & 7`).
+        wheel.steering =
+            cmr_core::steering_response::steering_sensitivity(wheel.steering, setup.steering_097);
         let [
             crest_128,
             crest_12c,
@@ -8046,6 +8291,7 @@ impl SessionCompiledPose {
             rate_124,
         ] = aux
             .patch_words(
+                setup.suspension_093,
                 car.constants.state_word_48,
                 [0x128, 0x12c, 0x104, 0x108, 0x118, 0x11c, 0x120, 0x124],
             )
@@ -8635,7 +8881,10 @@ fn reload_stage_for_event<'a>(
     if session.state().id() != 4 {
         return Ok(());
     }
-    reload_changed_stage(session, resources, progress, audio, camera, loaded, context)?;
+    let setup = PlayerCarSetupOptions::from_live(cmr_core::config_commit::live(&config.image));
+    reload_changed_stage(
+        session, resources, progress, audio, camera, loaded, context, setup,
+    )?;
     // The car load reloads the model and sets its parts up afresh
     // (`FUN_00480e60`, `FUN_0041efe0`); the model index is `cfg[0xb6]`'s.
     let model = session.event().cfg.car_0b6 & 0xf;
@@ -8752,6 +9001,7 @@ fn reload_changed_stage<'a>(
     camera: &mut ViewHarness,
     loaded: &mut LoadedStageKey,
     context: &StageReloadContext<'a>,
+    setup: PlayerCarSetupOptions,
 ) -> Result<(), WindowedStageFrameError> {
     let Some(base) = cmr_core::stage_path::stage_base(session.event()) else {
         return Ok(());
@@ -8769,11 +9019,13 @@ fn reload_changed_stage<'a>(
     });
     if weather == loaded.weather
         && car == loaded.car
+        && setup == loaded.setup
         && base
             .rsplit('\\')
             .next()
             .is_some_and(|name| name.eq_ignore_ascii_case(&loaded.name))
     {
+        progress.restart();
         return Ok(());
     }
     let (dir, name) = context
@@ -8798,6 +9050,7 @@ fn reload_changed_stage<'a>(
         context.params,
         stage.start,
         session.event().clone(),
+        setup,
     )
     .with_start_sequence(session.is_start_sequence_enabled())
     .with_stage_triggers(&stage.statics.trigger_volumes, &stage.statics.cell_centers)
@@ -8825,17 +9078,19 @@ fn reload_changed_stage<'a>(
         weather,
         dir,
         car,
+        setup,
     };
     Ok(())
 }
 
-/// What the loaded stage is: its name, weather, directory and car.
+/// What the loaded stage is: its name, weather, directory, car, and setup options.
 #[derive(Debug)]
 struct LoadedStageKey {
     name: String,
     weather: StageWeather,
     dir: PathBuf,
     car: u8,
+    setup: PlayerCarSetupOptions,
 }
 
 /// A file in `dir` named `name` in any ASCII case, as the Windows lookup is.
@@ -9331,10 +9586,11 @@ fn windowed_drive_session<'a>(
     params: SimParams,
     mut start: CarState,
     event: EventState,
+    setup: PlayerCarSetupOptions,
 ) -> GameplaySession<'a> {
     let four_wheel = match (wheel_inputs, tyre_tables, aux) {
         (Ok(inputs), Ok(tables), Ok(aux)) => compiled_pose
-            .compiled_four_wheel_params(inputs, trig, tables.tables(), aux)
+            .compiled_four_wheel_params(inputs, trig, tables.tables(), aux, setup)
             .map_err(|error| error.to_string()),
         (Err(error), _, _) => Err(error.to_string()),
         (_, Err(error), _) => Err(error.to_string()),
@@ -9442,6 +9698,7 @@ pub fn run_windowed_game_session(
         params,
         start,
         front_end_event(),
+        PlayerCarSetupOptions::default(),
     )
     .with_start_sequence(true)
     .with_stage_triggers(&statics.trigger_volumes, &statics.cell_centers)
@@ -9520,6 +9777,7 @@ pub fn run_windowed_game_session(
         weather,
         dir: media_root.to_path_buf(),
         car: compiled_pose.selector as u8,
+        setup: PlayerCarSetupOptions::default(),
     };
     let car_codes = open_car_codes(runtime_data);
     let mut results = RaceResults::open(runtime_data, language);
@@ -11378,6 +11636,7 @@ mod tests {
             params,
             start,
             front_end_event(),
+            PlayerCarSetupOptions::default(),
         )
         .with_start_sequence(true)
         .with_stage_triggers(&trigger_volumes, &trigger_cell_centers)
@@ -11696,6 +11955,7 @@ mod tests {
             params,
             start,
             front_end_event(),
+            PlayerCarSetupOptions::default(),
         )
         .with_stage_triggers(&statics.trigger_volumes, &statics.cell_centers)
         .unwrap();
@@ -11710,6 +11970,7 @@ mod tests {
             weather: CLEAR_WEATHER,
             dir: media.clone(),
             car: pose.selector as u8,
+            setup: PlayerCarSetupOptions::default(),
         };
         let car_codes = open_car_codes(&root);
         let reload = StageReloadContext {
@@ -12209,7 +12470,13 @@ mod tests {
         let trig = cmr_core::fixed_point::build_sine_table();
         let aux = SessionAuxControl::open(&root).unwrap();
         let wheel = pose
-            .compiled_four_wheel_params(&inputs, &trig, tyre_tables.tables(), &aux)
+            .compiled_four_wheel_params(
+                &inputs,
+                &trig,
+                tyre_tables.tables(),
+                &aux,
+                PlayerCarSetupOptions::default(),
+            )
             .unwrap();
         start.four_wheel.gearbox = GearboxState::at_setup(true);
         if let Some(gearbox) = &wheel.gearbox {

@@ -2923,7 +2923,7 @@ impl RaceState {
             driven_smoothing.scalars.longitudinal = self
                 .car
                 .velocity
-                .dot(self.car.motion.basis[2])
+                .dot(self.car.motion.basis[0])
                 .raw()
                 .wrapping_abs();
             driven_smoothing.scalars.gear_ratio_190 = gearbox.tables.upper_190[gear_idx];

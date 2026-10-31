@@ -93,6 +93,7 @@ pub enum RaceHudBitmap {
     BottomLeftCurve,
     VerticalBar,
     ProgressBarTop,
+    WhitePixel,
     CountdownDigits,
     CountdownGo,
 }
@@ -110,6 +111,7 @@ impl RaceHudBitmap {
             Self::BottomLeftCurve => "images/osdnew/High/common/curve.bmp",
             Self::VerticalBar => "images/osdnew/High/common/vbar.bmp",
             Self::ProgressBarTop => "images/osdnew/High/common/pbartop.bmp",
+            Self::WhitePixel => "images/osdnew/High/common/white.bmp",
             Self::CountdownDigits => "images/cntdown2.bmp",
             Self::CountdownGo => "images/go!.bmp",
         }
@@ -127,10 +129,53 @@ pub enum RaceHudCountdown {
     Go { ticks_left: u8 },
 }
 
+/// One row of the top-left 4-row in-race classification table (`FUN_00464930`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RaceHudClassificationRow {
+    /// 1-based rank (`1..=16`).
+    pub rank: u8,
+    /// 3-letter uppercase driver abbreviation (`"MCR"`, `" V"`, etc.).
+    pub code: String,
+    /// Whether this row belongs to the active player (`0x57afd4`).
+    pub is_player: bool,
+}
+
+/// Inputs for the in-race checkpoint HUD layers (`FUN_00464130`, `FUN_00464930`,
+/// `FUN_00463080`, `FUN_0047fe50`).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RaceHudCheckpointInputs {
+    /// Current car progress along the stage (`0..=0x1_0000`).
+    pub progress_q16: i32,
+    /// Cumulative 3D distance fractions (`0..=0x1_0000`) for the intermediate
+    /// split gates (`FUN_00462230` / `FUN_00463080`).
+    pub split_progress_q16: Vec<i32>,
+    /// Per-sector green (`true`: gained/equal time vs reference) or red
+    /// (`false`: lost time vs reference) indicator for completed sectors
+    /// (`0x5ffba0` in `FUN_00463080`).
+    pub sector_gained: Vec<bool>,
+    /// Visible 4-row classification table (`FUN_00464710` / `FUN_00464930`),
+    /// populated once at least one split has been crossed (`splits_passed >= 1`).
+    pub classification_rows: Vec<RaceHudClassificationRow>,
+    /// Whether the player gained or held rank at the latest split (`0x464b89`:
+    /// `curr_rank <= prev_rank` -> green bar `[0x00, 0xff, 0x00, 0xc8]`, else
+    /// red bar `[0xff, 0x00, 0x00, 0xc8]`).
+    pub player_rank_gained_or_held: bool,
+    /// Remaining display ticks (`120..=0`, `0x5ffc2c`) for the split readout
+    /// (`FUN_0047fe50`).
+    pub split_display_ticks: u8,
+    /// Most recently latched player split time in centiseconds (`0x5ffb30`).
+    pub last_split_centiseconds: Option<u32>,
+    /// Reference (fastest rival) cumulative split time in centiseconds at the
+    /// most recently crossed split (`0x5ffa1c[split_idx]`).
+    pub reference_split_centiseconds: Option<u32>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum RaceHudFont {
     Numbers640,
     TimeNumbers640,
+    PlaceNumbers640,
+    Result640,
 }
 
 impl RaceHudFont {
@@ -139,6 +184,8 @@ impl RaceHudFont {
         match self {
             Self::Numbers640 => "fonts/640x480/numbers.fon",
             Self::TimeNumbers640 => "fonts/640x480/timenum.fon",
+            Self::PlaceNumbers640 => "fonts/640x480/placenum.fon",
+            Self::Result640 => "fonts/640x480/result.fon",
         }
     }
 }
@@ -594,6 +641,159 @@ pub fn plan_race_countdown_overlay(
     }
 }
 
+/// Plans the in-race checkpoint HUD elements (`FUN_00464930`, `FUN_00463080`,
+/// `FUN_0047fe50`):
+/// 1. Top-left 4-row classification table background bars (`0x465446..0x465b23`)
+///    and, once Split 1+ has been crossed, the 4 rank numbers (`placenum.fon`)
+///    and 3-letter driver codes (`result.fon`).
+/// 2. Right-side progress-rail completed sector color bars (`white.bmp`) and
+///    white split tick marks (`hbar.bmp`, `FUN_00463080`).
+/// 3. Bottom-left latched split time (`timenum.fon` at `(28, 404)` in cyan) and
+///    top-center split delta (`timenum.fon` centered at `Q16(0x8000, 0x10a3)`
+///    in green/red/white, `FUN_0047fe50`).
+#[must_use]
+pub fn plan_race_checkpoint_hud(
+    viewport: DisplayExtent,
+    checkpoint: &RaceHudCheckpointInputs,
+) -> Vec<RaceHudCommand> {
+    if viewport.width == 0 || viewport.height == 0 {
+        return Vec::new();
+    }
+    let mut commands = Vec::with_capacity(28);
+
+    // 1. Top-left 4-row classification bars and rank/driver labels (`FUN_00464930`).
+    const ROW_Y_Q16: [i32; 4] = [0x08f5, 0x1333, 0x1d70, 0x27ae];
+    for row_idx in 0..4 {
+        let row_entry = checkpoint.classification_rows.get(row_idx);
+        let bar_color = if row_entry.is_some_and(|row| row.is_player) {
+            if checkpoint.player_rank_gained_or_held {
+                HudColor::new(0x00, 0xff, 0x00, 0xc8)
+            } else {
+                HudColor::new(0xff, 0x00, 0x00, 0xc8)
+            }
+        } else if row_idx % 2 == 0 {
+            HudColor::new(0xa0, 0xa0, 0xa0, 0xc8)
+        } else {
+            HudColor::new(0x80, 0x80, 0x80, 0xc8)
+        };
+        commands.push(RaceHudCommand::TintedBitmap {
+            bitmap: RaceHudBitmap::WhitePixel,
+            source: HudRect::new(0, 0, 1, 1),
+            destination: scale_destination(
+                HudRect::new(16, 15 + 19 * (row_idx as i32), 125, 19),
+                viewport,
+            ),
+            color: bar_color,
+            legacy: LegacyBitmapArguments::TINTED_CALL,
+        });
+        if let Some(row) = row_entry {
+            let y_q16 = ROW_Y_Q16[row_idx];
+            commands.push(RaceHudCommand::Text {
+                font: RaceHudFont::PlaceNumbers640,
+                text: row.rank.to_string(),
+                position: HudTextPosition::Q16(HudPoint::new(0x072b, y_q16)),
+                color: TIMER_COLOR,
+                flags: 0x11,
+            });
+            commands.push(RaceHudCommand::Text {
+                font: RaceHudFont::Result640,
+                text: row.code.clone(),
+                position: HudTextPosition::Q16(HudPoint::new(0x3851, y_q16 + 0x028f)),
+                color: TIMER_COLOR,
+                flags: 0x13,
+            });
+        }
+    }
+
+    // 2. Right-side progress-rail sector bars and split tick marks (`FUN_00463080`).
+    let mut prev_split_q16 = 0_i32;
+    for (idx, &split_q16) in checkpoint.split_progress_q16.iter().enumerate() {
+        let clamped_q16 = split_q16.clamp(0, 0x1_0000);
+        if clamped_q16 < checkpoint.progress_q16 && clamped_q16 > prev_split_q16 {
+            let prev_y = 315 - q16_mul_floor(300, prev_split_q16);
+            let cur_y = 315 - q16_mul_floor(300, clamped_q16);
+            let height = (prev_y - cur_y).max(1);
+            let gained = checkpoint.sector_gained.get(idx).copied().unwrap_or(true);
+            let sector_color = if gained {
+                HudColor::new(0x00, 0xff, 0x00, 0x80)
+            } else {
+                HudColor::new(0xff, 0x00, 0x00, 0x80)
+            };
+            commands.push(RaceHudCommand::TintedBitmap {
+                bitmap: RaceHudBitmap::WhitePixel,
+                source: HudRect::new(0, 0, 1, 1),
+                destination: scale_destination(HudRect::new(621, cur_y, 10, height), viewport),
+                color: sector_color,
+                legacy: LegacyBitmapArguments::TINTED_CALL,
+            });
+        }
+        prev_split_q16 = clamped_q16;
+    }
+    for &split_q16 in &checkpoint.split_progress_q16 {
+        if (0x028f..0xfd71).contains(&split_q16) {
+            let tick_y = 315 - q16_mul_floor(300, split_q16) - 2;
+            push_bitmap(
+                &mut commands,
+                viewport,
+                RaceHudBitmap::HorizontalBar,
+                HudRect::new(0, 0, 4, 4),
+                HudRect::new(618, tick_y, 16, 4),
+            );
+        }
+    }
+
+    // 3. Active split time & top-center split delta (`FUN_0047fe50`).
+    if checkpoint.split_display_ticks > 0
+        && let Some(split_cs) = checkpoint.last_split_centiseconds
+    {
+        let alpha = if checkpoint.split_display_ticks >= 25 {
+            0xff
+        } else {
+            (u16::from(checkpoint.split_display_ticks) * 10).min(255) as u8
+        };
+        // Latched split clock at pixel `(28, 404)` (`0x480272..0x48029a`) in
+        // cyan `[0x20, 0xff, 0xff, alpha]` (`0x4f659c`).
+        commands.push(RaceHudCommand::Text {
+            font: RaceHudFont::TimeNumbers640,
+            text: timer_text(split_cs),
+            position: HudTextPosition::Pixels(HudPoint::new(
+                scale_horizontal(28, viewport),
+                scale_vertical(404, viewport),
+            )),
+            color: HudColor::new(0x20, 0xff, 0xff, alpha),
+            flags: LEGACY_TEXT_FLAGS,
+        });
+        // Top-center split delta vs fastest rival (`0x4802a9..0x4803f9`).
+        if let Some(ref_cs) = checkpoint.reference_split_centiseconds {
+            let (delta_str, delta_color) = if split_cs < ref_cs {
+                (
+                    format!("-{}", timer_text(ref_cs - split_cs)),
+                    HudColor::new(0x40, 0xff, 0x20, alpha),
+                )
+            } else if split_cs > ref_cs {
+                (
+                    format!("+{}", timer_text(split_cs - ref_cs)),
+                    HudColor::new(0xff, 0x40, 0x20, alpha),
+                )
+            } else {
+                (
+                    "00:00.00".to_owned(),
+                    HudColor::new(0xff, 0xff, 0xff, alpha),
+                )
+            };
+            commands.push(RaceHudCommand::Text {
+                font: RaceHudFont::TimeNumbers640,
+                text: delta_str,
+                position: HudTextPosition::Q16(HudPoint::new(0x8000, 0x10a3)),
+                color: delta_color,
+                flags: 0x12,
+            });
+        }
+    }
+
+    commands
+}
+
 fn push_bitmap(
     commands: &mut Vec<RaceHudCommand>,
     viewport: DisplayExtent,
@@ -975,5 +1175,48 @@ mod tests {
         assert_eq!(go_src.height, 64);
         assert!(go_dst.width > 128 && go_dst.height > 64);
         assert!(go_color.alpha > 0);
+    }
+
+    #[test]
+    fn checkpoint_hud_plans_classification_rows_sector_bars_and_split_delta() {
+        let viewport = DisplayExtent {
+            width: 640,
+            height: 480,
+        };
+        let cmds = plan_race_checkpoint_hud(
+            viewport,
+            &RaceHudCheckpointInputs {
+                progress_q16: 0x4000,
+                split_progress_q16: vec![0x2000, 0x6000],
+                sector_gained: vec![true, false],
+                classification_rows: vec![
+                    RaceHudClassificationRow {
+                        rank: 1,
+                        code: "MCR".to_owned(),
+                        is_player: false,
+                    },
+                    RaceHudClassificationRow {
+                        rank: 2,
+                        code: "PLR".to_owned(),
+                        is_player: true,
+                    },
+                ],
+                player_rank_gained_or_held: true,
+                split_display_ticks: 100,
+                last_split_centiseconds: Some(2450),
+                reference_split_centiseconds: Some(2500),
+            },
+        );
+        // 4 top-left bars + 2*2 text labels + 1 completed sector bar + 2 split ticks + 2 split texts = 13
+        assert_eq!(cmds.len(), 13);
+        assert!(cmds.iter().any(|cmd| matches!(
+            cmd,
+            RaceHudCommand::Text {
+                font: RaceHudFont::TimeNumbers640,
+                text,
+                flags: 0x12,
+                ..
+            } if text == "-00:00.50"
+        )));
     }
 }
