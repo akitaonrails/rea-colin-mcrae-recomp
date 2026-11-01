@@ -160,7 +160,10 @@ mod tests {
         let root = std::env::temp_dir().join(format!(
             "cmr-hd-pack-test-{}-{}",
             std::process::id(),
-            std::thread::current().name().unwrap_or("unnamed")
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("x2")).unwrap();
