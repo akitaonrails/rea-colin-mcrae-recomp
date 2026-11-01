@@ -246,11 +246,7 @@ const ORBIT_PRESET0_CUTOFF_Q16: i32 = 0x0000_b333;
 /// `0..=0x10000` against `cutoff_q16` using the double cosine S-curve over
 /// `DAT_0082d380`.
 #[must_use]
-pub fn ease_orbit_param_467c20(
-    t_q16: i32,
-    cutoff_q16: i32,
-    trig: &[i32; TRIG_TABLE_LEN],
-) -> i32 {
+pub fn ease_orbit_param_467c20(t_q16: i32, cutoff_q16: i32, trig: &[i32; TRIG_TABLE_LEN]) -> i32 {
     if t_q16 <= 0 {
         return 0;
     }
@@ -300,8 +296,8 @@ pub fn start_orbit_camera(
     let z_local = -0x000a_0000
         + (((i64::from(ORBIT_PRESET0_DIST_START_Q16 + 0x000a_0000)) * i64::from(eased)) >> 16)
             as i32;
-    let yaw_bam = (((i64::from(ORBIT_PRESET0_YAW_START_Q16) * i64::from(eased) * 4096) >> 16)
-        >> 16) as u16
+    let yaw_bam = (((i64::from(ORBIT_PRESET0_YAW_START_Q16) * i64::from(eased) * 4096) >> 16) >> 16)
+        as u16
         & 0xfff;
 
     let sin_y = sin_bam(trig, yaw_bam).raw();
@@ -505,10 +501,8 @@ mod tests {
                 );
             }
             let view = invert_affine_q16(&world);
-            let car_in_view = apply_affine_q16(
-                &view,
-                [car_pos.x.raw(), car_pos.y.raw(), car_pos.z.raw()],
-            );
+            let car_in_view =
+                apply_affine_q16(&view, [car_pos.x.raw(), car_pos.y.raw(), car_pos.z.raw()]);
             assert!(
                 (car_in_view[0] - expected_view_car[0]).abs() <= 16,
                 "step {step} lateral view swing: got {}, expected {}",

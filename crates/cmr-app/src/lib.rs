@@ -3873,9 +3873,7 @@ impl WheelRig {
             let prev_body = self.body_local(prev_car);
             let curr_body = self.body_local(curr_car);
             let body_local = cmr_core::wheel_animation::interpolate_matrix_435400(
-                &prev_body,
-                &curr_body,
-                alpha_q16,
+                &prev_body, &curr_body, alpha_q16,
             );
             out.push((body_index, body_local));
         }
@@ -6031,8 +6029,10 @@ fn advance_game_frame<C: HostClock>(
         if advanced.stepped && session.state().id() == 5 {
             camera.prev_tick_pose = Some((curr_camera_world, curr_car_world, car));
         }
-        let use_subtick =
-            camera.subtick_enabled && advanced.stepped && session.state().id() == 5 && session.results().is_none();
+        let use_subtick = camera.subtick_enabled
+            && advanced.stepped
+            && session.state().id() == 5
+            && session.results().is_none();
         if use_subtick {
             camera.subtick_snapshot = Some(Box::new(SubtickRenderSnapshot {
                 prev_camera_world,
@@ -6080,9 +6080,12 @@ fn advance_game_frame<C: HostClock>(
             ),
             _ => Vec::new(),
         };
-        let body_local_override = rig
-            .and_then(|r| r.body_record)
-            .and_then(|body_idx| wheels.iter().find(|(idx, _)| *idx == body_idx).map(|(_, m)| *m));
+        let body_local_override = rig.and_then(|r| r.body_record).and_then(|body_idx| {
+            wheels
+                .iter()
+                .find(|(idx, _)| *idx == body_idx)
+                .map(|(_, m)| *m)
+        });
         let car_world_offset = [
             car_world[12].wrapping_sub(curr_car_world[12]),
             car_world[13].wrapping_sub(curr_car_world[13]),
@@ -6104,7 +6107,7 @@ fn advance_game_frame<C: HostClock>(
             camera.interior(),
             true,
         );
-        resources.set_object_locals(session.moving_object_node_locals());
+        resources.set_object_locals(session.moving_object_node_locals_interpolated(alpha_q16));
         let world = resources
             .compose_with_posed_car(&camera_world, Some(&car_world), &wheels)
             .map(|rendered| rendered.frame)?;
@@ -6238,46 +6241,46 @@ fn advance_game_frame<C: HostClock>(
             audio.mute(mixer);
         }
     }
-        let loading_route = if session.state().id() == 4 {
-            Some(RenderRoute::LoadInterstitial)
+    let loading_route = if session.state().id() == 4 {
+        Some(RenderRoute::LoadInterstitial)
+    } else {
+        advanced.route
+    };
+    let loading_interstitial = loading_interstitial_for_route(
+        loading_route,
+        resources.loading_background(),
+        resources.loading_overlay.as_ref(),
+        STAGE_LOADING_PROGRESS_CAP,
+    )?;
+    let state_id = session.state().id();
+    Ok(GameFrameOutcome {
+        screen,
+        world,
+        loading_interstitial,
+        exit_requested: root_tick.as_ref().is_some_and(|tick| tick.exit_requested),
+        root_render_input: root_tick.and_then(|tick| tick.render_input),
+        // The recovered front-end music plays while the front end runs and on
+        // the State-8 stage results screen (`FUN_00443b20` at `0x437cde`).
+        music_active: advanced.band == SessionBand::FrontEnd || state_id == 8,
+        speech_active: advanced.stepped && state_id == 5,
+        speech_reset: !matches!(state_id, 5 | 0xa),
+        speech_master: pause.options.speech_master_4f6538,
+        codriver_calls: if advanced.stepped {
+            session
+                .last_trigger_events()
+                .iter()
+                .filter_map(|event| match *event {
+                    cmr_core::trigger_walk::TriggerEvent::CodriverCall { payload, .. } => {
+                        Some(payload as u32)
+                    }
+                    _ => None,
+                })
+                .collect()
         } else {
-            advanced.route
-        };
-        let loading_interstitial = loading_interstitial_for_route(
-            loading_route,
-            resources.loading_background(),
-            resources.loading_overlay.as_ref(),
-            STAGE_LOADING_PROGRESS_CAP,
-        )?;
-        let state_id = session.state().id();
-        Ok(GameFrameOutcome {
-            screen,
-            world,
-            loading_interstitial,
-            exit_requested: root_tick.as_ref().is_some_and(|tick| tick.exit_requested),
-            root_render_input: root_tick.and_then(|tick| tick.render_input),
-            // The recovered front-end music plays while the front end runs and on
-            // the State-8 stage results screen (`FUN_00443b20` at `0x437cde`).
-            music_active: advanced.band == SessionBand::FrontEnd || state_id == 8,
-            speech_active: advanced.stepped && state_id == 5,
-            speech_reset: !matches!(state_id, 5 | 0xa),
-            speech_master: pause.options.speech_master_4f6538,
-            codriver_calls: if advanced.stepped {
-                session
-                    .last_trigger_events()
-                    .iter()
-                    .filter_map(|event| match *event {
-                        cmr_core::trigger_walk::TriggerEvent::CodriverCall { payload, .. } => {
-                            Some(payload as u32)
-                        }
-                        _ => None,
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            },
-        })
-    }
+            Vec::new()
+        },
+    })
+}
 
 /// Compose an in-race sub-tick interpolated frame (`FUN_004a7c90` ->
 /// `FUN_00439ee0` -> `FUN_00435400`) at `alpha_q16` (`0..=0x1_0000`) between
@@ -6313,9 +6316,12 @@ fn compose_subtick_frame(
         ),
         _ => Vec::new(),
     };
-    let body_local_override = rig
-        .and_then(|r| r.body_record)
-        .and_then(|body_idx| wheels.iter().find(|(idx, _)| *idx == body_idx).map(|(_, m)| *m));
+    let body_local_override = rig.and_then(|r| r.body_record).and_then(|body_idx| {
+        wheels
+            .iter()
+            .find(|(idx, _)| *idx == body_idx)
+            .map(|(_, m)| *m)
+    });
     let car_world_offset = [
         car_world[12].wrapping_sub(snap.curr_car_world[12]),
         car_world[13].wrapping_sub(snap.curr_car_world[13]),
@@ -6337,6 +6343,7 @@ fn compose_subtick_frame(
         camera.interior(),
         false,
     );
+    resources.set_object_locals(session.moving_object_node_locals_interpolated(alpha_q16));
     let mut world = resources
         .compose_with_posed_car(&camera_world, Some(&car_world), &wheels)
         .ok()?
@@ -6372,20 +6379,20 @@ fn compose_subtick_frame(
 
 /// What one [`advance_game_frame`] produced for the windowed loop.
 struct GameFrameOutcome {
-        /// The country welcome (state 2) or service (state 3) screen's frame.
-        screen: Option<SoftwarePresentedFrame>,
-        world: Option<SoftwarePresentedFrame>,
-        loading_interstitial: Option<SoftwarePresentedFrame>,
-        root_render_input: Option<RootRenderInput>,
-        /// The front end's exit screen ended the process (`DAT_0096efe8 = 1`).
-        exit_requested: bool,
-        music_active: bool,
-        speech_active: bool,
-        speech_reset: bool,
-        speech_master: i32,
-        /// Co-driver note words the trigger walk submitted this frame.
-        codriver_calls: Vec<u32>,
-    }
+    /// The country welcome (state 2) or service (state 3) screen's frame.
+    screen: Option<SoftwarePresentedFrame>,
+    world: Option<SoftwarePresentedFrame>,
+    loading_interstitial: Option<SoftwarePresentedFrame>,
+    root_render_input: Option<RootRenderInput>,
+    /// The front end's exit screen ended the process (`DAT_0096efe8 = 1`).
+    exit_requested: bool,
+    music_active: bool,
+    speech_active: bool,
+    speech_reset: bool,
+    speech_master: i32,
+    /// Co-driver note words the trigger walk submitted this frame.
+    codriver_calls: Vec<u32>,
+}
 
 /// Reviewed surface inputs owned by a game session.
 #[derive(Debug)]
@@ -10366,89 +10373,93 @@ pub fn run_windowed_game_session(
         // through to the world-only loop below rather than failing the session.
     }
 
-    run_windowed_game_session_loop(&initial, Some(audio_root), |request: WindowedStepRequest| {
-        let input = match request {
-            WindowedStepRequest::Tick(input) => input,
-            WindowedStepRequest::Subtick(alpha_q16) => {
-                return WindowedGameFrame {
-                    present: compose_subtick_frame(
-                        &mut resources,
-                        &session,
-                        &camera,
-                        &mut pause,
-                        alpha_q16,
-                    ),
-                    stopped: false,
-                    music_active: false,
-                    speech_active: false,
-                    speech_reset: false,
-                    speech_master: pause.options.speech_master_4f6538,
-                    codriver_calls: Vec::new(),
-                    music_config: None,
-                };
-            }
-        };
-        session.set_results_input(results.poll_keys(input.keys));
-        let frame = reload_stage_for_event(
-            &mut session,
-            &mut resources,
-            &mut progress,
-            &mut audio,
-            &mut camera,
-            &mut loaded_stage,
-            &reload,
-            &mut results,
-            &mut config,
-        )
-        .and_then(|()| {
-            advance_game_frame(
+    run_windowed_game_session_loop(
+        &initial,
+        Some(audio_root),
+        |request: WindowedStepRequest| {
+            let input = match request {
+                WindowedStepRequest::Tick(input) => input,
+                WindowedStepRequest::Subtick(alpha_q16) => {
+                    return WindowedGameFrame {
+                        present: compose_subtick_frame(
+                            &mut resources,
+                            &session,
+                            &camera,
+                            &mut pause,
+                            alpha_q16,
+                        ),
+                        stopped: false,
+                        music_active: false,
+                        speech_active: false,
+                        speech_reset: false,
+                        speech_master: pause.options.speech_master_4f6538,
+                        codriver_calls: Vec::new(),
+                        music_config: None,
+                    };
+                }
+            };
+            session.set_results_input(results.poll_keys(input.keys));
+            let frame = reload_stage_for_event(
                 &mut session,
-                &mut keyboard,
-                &mut analog,
-                &response,
-                &mut root_interaction,
-                &mut progress,
-                &clock,
                 &mut resources,
-                &mut camera,
-                &mut damage_owner,
+                &mut progress,
                 &mut audio,
-                &mut pause,
-                &mut config,
+                &mut camera,
+                &mut loaded_stage,
+                &reload,
                 &mut results,
-                input,
+                &mut config,
             )
-        });
-        results.frame(&mut session, &progress, &mut config, &mut camera.rng);
-        match frame {
-            Ok(outcome) => WindowedGameFrame {
-                present: outcome
-                    .screen
-                    .or(outcome.world)
-                    .or(outcome.loading_interstitial),
-                stopped: outcome.exit_requested,
-                music_active: outcome.music_active,
-                speech_active: outcome.speech_active,
-                speech_reset: outcome.speech_reset,
-                speech_master: outcome.speech_master,
-                codriver_calls: outcome.codriver_calls,
-                music_config: Some(config.music_bytes()),
-            },
-            Err(error) => {
-                runtime_error = Some(error);
-                WindowedGameFrame {
-                    present: None,
-                    stopped: true,
-                    music_active: false,
-                    speech_active: false,
-                    speech_reset: true,
-                    speech_master: 100,
-                    codriver_calls: Vec::new(),
+            .and_then(|()| {
+                advance_game_frame(
+                    &mut session,
+                    &mut keyboard,
+                    &mut analog,
+                    &response,
+                    &mut root_interaction,
+                    &mut progress,
+                    &clock,
+                    &mut resources,
+                    &mut camera,
+                    &mut damage_owner,
+                    &mut audio,
+                    &mut pause,
+                    &mut config,
+                    &mut results,
+                    input,
+                )
+            });
+            results.frame(&mut session, &progress, &mut config, &mut camera.rng);
+            match frame {
+                Ok(outcome) => WindowedGameFrame {
+                    present: outcome
+                        .screen
+                        .or(outcome.world)
+                        .or(outcome.loading_interstitial),
+                    stopped: outcome.exit_requested,
+                    music_active: outcome.music_active,
+                    speech_active: outcome.speech_active,
+                    speech_reset: outcome.speech_reset,
+                    speech_master: outcome.speech_master,
+                    codriver_calls: outcome.codriver_calls,
                     music_config: Some(config.music_bytes()),
+                },
+                Err(error) => {
+                    runtime_error = Some(error);
+                    WindowedGameFrame {
+                        present: None,
+                        stopped: true,
+                        music_active: false,
+                        speech_active: false,
+                        speech_reset: true,
+                        speech_master: 100,
+                        codriver_calls: Vec::new(),
+                        music_config: Some(config.music_bytes()),
+                    }
                 }
             }
-        }
-    })
+        },
+    )
     .map_err(WindowedStageFrameError::Present)?;
     if let Some(error) = runtime_error {
         return Err(error);

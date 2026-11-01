@@ -455,11 +455,7 @@ impl PreparedRawStage {
         dynamic_worlds: &[&[[i32; 16]]],
     ) -> Result<C3dPreparedFrame<'_>, PreparedRawStageError> {
         let proj = gameplay_projection_default(self.extent.width, self.extent.height);
-        self.prepared_frame_for_worlds_with_projection(
-            camera_world_q16,
-            dynamic_worlds,
-            proj,
-        )
+        self.prepared_frame_for_worlds_with_projection(camera_world_q16, dynamic_worlds, proj)
     }
 
     /// Dynamic-world variant with an explicit recovered projection profile.

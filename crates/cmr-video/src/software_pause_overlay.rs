@@ -157,7 +157,8 @@ pub fn compose_text_overlay<'a>(
         }
     }
 
-    let mut frame = SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)?;
+    let mut frame =
+        SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)?;
     if let Some(rgba8) = rgba8 {
         frame = frame.with_rgba8(rgba8.into_boxed_slice())?;
     }
@@ -231,7 +232,8 @@ pub fn compose_icon_overlay<'a>(
             }
         }
     }
-    let mut frame = SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)?;
+    let mut frame =
+        SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)?;
     if let Some(rgba8) = rgba8 {
         frame = frame.with_rgba8(rgba8.into_boxed_slice())?;
     }

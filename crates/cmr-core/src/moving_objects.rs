@@ -269,6 +269,9 @@ pub struct MovingObjects {
     /// `0x55d7d8`: the update's scratch rows. A sliding object that does
     /// not rotate reuses the rows of the last object loaded into it.
     scratch_rows: [[i32; 3]; 3],
+    /// `FUN_00436b90` / `FUN_00438ad0` / `FUN_00430480`: pre-step node local
+    /// matrices for objects simulated in the most recent tick (`(index, matrix)`).
+    prev_locals: Vec<(usize, [i32; 16])>,
 }
 
 impl MovingObjects {
@@ -373,6 +376,7 @@ impl MovingObjects {
             cells: Vec::new(),
             active: Vec::new(),
             scratch_rows: [[0; 3]; 3],
+            prev_locals: Vec::new(),
         };
         objects.build_cells(grid);
         objects
@@ -385,6 +389,7 @@ impl MovingObjects {
             cells: Vec::new(),
             active: Vec::new(),
             scratch_rows: [[0; 3]; 3],
+            prev_locals: Vec::new(),
         };
         set.build_cells(grid);
         set
@@ -469,6 +474,7 @@ impl MovingObjects {
     /// solver step `DAT_004eac6c`.
     pub fn update(&mut self, ground: &mut impl ObjectGround, dt: i32, trig: &[i32]) {
         self.active.clear();
+        self.prev_locals.clear();
         for i in 0..self.objects.len() {
             let st = self.objects[i].state();
             if st == state::REST || st == state::INERT {
@@ -478,6 +484,7 @@ impl MovingObjects {
             if !matches!(st, 1 | 2 | 4 | 5) {
                 continue;
             }
+            let prev_local = self.objects[i].node_local();
             let st = self.step(i, st, ground, dt, trig);
             if st == 5 {
                 // `0x452640`: no writer of states 4/5 exists.
@@ -485,6 +492,7 @@ impl MovingObjects {
             }
             if self.active.len() < MAX_ACTIVE {
                 self.active.push(i);
+                self.prev_locals.push((i, prev_local));
             }
         }
     }
@@ -600,6 +608,31 @@ impl MovingObjects {
     /// `(group-0 record, matrix)`.
     pub fn node_locals(&self) -> impl Iterator<Item = (usize, [i32; 16])> + '_ {
         self.objects.iter().map(|o| (o.node, o.node_local()))
+    }
+
+    /// `FUN_00430480` (`0x43ae21` in `FUN_00439ee0`): the node locals
+    /// interpolated at `alpha_q16` (`0..=0x1_0000`) between the pre-tick
+    /// snapshot (`FUN_00436b90`) and post-tick transform (`FUN_00438ad0`)
+    /// via `FUN_00435400`.
+    pub fn node_locals_interpolated(
+        &self,
+        alpha_q16: i32,
+    ) -> impl Iterator<Item = (usize, [i32; 16])> + '_ {
+        self.objects.iter().enumerate().map(move |(idx, o)| {
+            let curr = o.node_local();
+            let tf = if alpha_q16 >= 0x1_0000 {
+                curr
+            } else if let Some((_, prev)) = self
+                .prev_locals
+                .iter()
+                .find(|&&(active_idx, _)| active_idx == idx)
+            {
+                crate::wheel_animation::interpolate_matrix_435400(prev, &curr, alpha_q16)
+            } else {
+                curr
+            };
+            (o.node, tf)
+        })
     }
 }
 
@@ -819,6 +852,7 @@ mod tests {
             cells: Vec::new(),
             active: Vec::new(),
             scratch_rows: [[0; 3]; 3],
+            prev_locals: Vec::new(),
         }
     }
 
@@ -932,5 +966,30 @@ mod tests {
         assert_eq!(&m[0..3], &[2 * ONE, 0, 0]);
         assert_eq!(&m[4..7], &[0, ONE, 0]);
         assert_eq!(&m[12..16], &[7, 8, 9, ONE]);
+    }
+
+    #[test]
+    fn node_locals_interpolated_lerps_active_objects_across_subticks() {
+        let mut cone = object(u16::from(CONE_MATERIAL), 0b010, 0);
+        cone.impulse = [4 * ONE, 0, 0];
+        cone.mark_hit();
+        let mut objects = set(vec![cone]);
+        let before = objects.objects[0].node_local();
+        objects.update(&mut FlatGround(0), ONE, &trig());
+        let after = objects.objects[0].node_local();
+        assert!(after[12] > before[12]);
+
+        let mid = objects
+            .node_locals_interpolated(0x8000)
+            .next()
+            .expect("one object")
+            .1;
+        let full = objects
+            .node_locals_interpolated(ONE)
+            .next()
+            .expect("one object")
+            .1;
+        assert!(mid[12] > before[12] && mid[12] < after[12]);
+        assert_eq!(full, after);
     }
 }

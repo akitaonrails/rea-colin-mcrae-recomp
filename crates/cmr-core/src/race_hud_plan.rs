@@ -605,9 +605,8 @@ pub fn plan_race_countdown_overlay(
             }
             let scale_q16 = (ticks << 16) / 20;
             let dst_h = ((i64::from(scale_q16) * i64::from(vh)) >> 16) as i32;
-            let dst_w =
-                ((((i64::from(scale_q16) * i64::from(source.width)) / 64) * i64::from(vh)) >> 16)
-                    as i32;
+            let dst_w = ((((i64::from(scale_q16) * i64::from(source.width)) / 64) * i64::from(vh))
+                >> 16) as i32;
             if dst_w <= 0 || dst_h <= 0 {
                 return None;
             }

@@ -218,8 +218,11 @@ impl RootInteraction {
     pub fn resume_to_root(&mut self, now: u32) {
         self.state.resume_to_root(now);
         self.camera = CameraTransition::start(ROOT_SCREEN_ID);
-        self.position
-            .aim(self.targets.as_ref().and_then(|block| block.target(ROOT_SCREEN_ID)));
+        self.position.aim(
+            self.targets
+                .as_ref()
+                .and_then(|block| block.target(ROOT_SCREEN_ID)),
+        );
         self.repeat = KeyRepeat::default();
     }
 

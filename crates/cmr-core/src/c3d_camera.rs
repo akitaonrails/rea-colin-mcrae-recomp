@@ -254,9 +254,8 @@ pub fn y_billboard_world_q16(
     camera_world_q16: &[i32; 16],
 ) -> [i32; 16] {
     let row_len_q16 = |x: i32, y: i32, z: i32| -> i32 {
-        let len_sq = i64::from(fmul_q16(x, x))
-            + i64::from(fmul_q16(y, y))
-            + i64::from(fmul_q16(z, z));
+        let len_sq =
+            i64::from(fmul_q16(x, x)) + i64::from(fmul_q16(y, y)) + i64::from(fmul_q16(z, z));
         if len_sq <= 0 {
             0
         } else {

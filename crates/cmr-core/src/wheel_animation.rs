@@ -312,11 +312,7 @@ pub fn step_body_roll_416760(state: &mut WheelAnimationState, input: &BodyRollIn
     // and `[ctl +0x00]` (`[car +0x04]`, Node 5) local rotation/heave.
     let local_delta_130 = if input.count_674 != 0 {
         if input.upright_404 {
-            let scaled = [
-                local_delta[0],
-                local_delta[1],
-                q(local_delta[2], 0x2_0000),
-            ];
+            let scaled = [local_delta[0], local_delta[1], q(local_delta[2], 0x2_0000)];
             if length(vec(scaled)) == 0 || input.resting_700 {
                 [0, 0, 0]
             } else {
@@ -436,9 +432,7 @@ pub fn step_visual_chassis_415df0(
         let (new_up, up_exact) = if ecx_up <= 0x41 {
             (car_up, true)
         } else {
-            let blended_up = std::array::from_fn(|k| {
-                old_up[k].wrapping_add(q(diff_up[k], t_up))
-            });
+            let blended_up = std::array::from_fn(|k| old_up[k].wrapping_add(q(diff_up[k], t_up)));
             (raw(normalize(vec(blended_up))), false)
         };
 
@@ -483,12 +477,7 @@ pub fn step_visual_chassis_415df0(
     let car_up = car_rows[1];
     let hx = half_words[0];
     let hz = half_words[2];
-    let fallback_corners = [
-        [hx, 0, hz],
-        [hx, 0, -hz],
-        [-hx, 0, hz],
-        [-hx, 0, -hz],
-    ];
+    let fallback_corners = [[hx, 0, hz], [hx, 0, -hz], [-hx, 0, hz], [-hx, 0, -hz]];
     let corners_94 = if state.roll_corners_94 == [[0; 3]; 4] {
         fallback_corners
     } else {
@@ -963,7 +952,8 @@ pub fn interpolate_wheel_animation_state(
     }
     let mut out = *next;
     for w in 0..4 {
-        out.compression_55c[w] = lerp_q16(prev.compression_55c[w], next.compression_55c[w], alpha_q16);
+        out.compression_55c[w] =
+            lerp_q16(prev.compression_55c[w], next.compression_55c[w], alpha_q16);
         out.eased_56c[w] = lerp_q16(prev.eased_56c[w], next.eased_56c[w], alpha_q16);
         out.bounce_584[w] = lerp_q16(prev.bounce_584[w], next.bounce_584[w], alpha_q16);
         out.wobble_5e4[w] = [
@@ -982,11 +972,7 @@ pub fn interpolate_wheel_animation_state(
 /// `[8..11]`) and orthonormalizing via `r0 = normalize(r1 x r2)` and
 /// `r2 = normalize(r0 x r1)`.
 #[must_use]
-pub fn interpolate_matrix_435400(
-    prev: &[i32; 16],
-    next: &[i32; 16],
-    alpha_q16: i32,
-) -> [i32; 16] {
+pub fn interpolate_matrix_435400(prev: &[i32; 16], next: &[i32; 16], alpha_q16: i32) -> [i32; 16] {
     if alpha_q16 <= 0 {
         return *prev;
     }

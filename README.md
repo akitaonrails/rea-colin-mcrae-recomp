@@ -17,6 +17,20 @@ bit-exact software C3D reference rasterizer).
 
 ---
 
+## Two-Branch Architecture (`main` vs. `modern`)
+
+This repository pursues two complementary goals across two official branches
+(see [`CONTRIBUTING.md`](CONTRIBUTING.md) for contributor guidelines and
+[`.github/workflows/release.yml`](.github/workflows/release.yml) for automated
+dual-binary builds):
+
+| Branch | Binary | Purpose & Scope |
+| --- | --- | --- |
+| **`main` (Preservation)** | `cmr-app-preservation` | **1:1 Historical Preservation**: Strict, instruction-verified replication of the 1998 EU `Rally.exe` behavior, Q16.16 fixed-point physics, 8-bit paletted lighting, and `cmRally.cfg` data formats. Audited in [`docs/PRESERVATION_AUDIT.md`](docs/PRESERVATION_AUDIT.md). |
+| **`modern` (Enhanced)** | `cmr-app-modern` | **Modern Enhancements (always ahead of `main`)**: Adds native 1080p / 1440p / 4K & widescreen (`16:9` / `16:10` / `21:9`) rendering, 60 / 120 / 144+ FPS continuous sub-tick interpolation, extended draw distance (`1.0x`–`3.0x`), anisotropic filtering (`4x`–`16x`), MSAA (`2x`–`8x`), FSR/CAS upscaling, in-game Modern Settings menus (`save/modern.cfg`), and modern Gamepad mappings + rumble by default. |
+
+---
+
 ## Highlights & Current Status
 
 - **Complete 119 / 119 Reconstruction Map (`docs/DECOMP_MAP.md`)**:
@@ -190,9 +204,11 @@ The workspace is organized into focused crates:
 Unsupported boundaries are explicit: native driver-owned padding and exact
 font/filter/alpha output, alternate type-1 lighting, a concrete FFB hardware
 device, other regional editions/locales, and native Windows or GitHub Actions
-execution not run locally. See [DECOMP_MAP.md](docs/DECOMP_MAP.md),
-[COMPARISON.md](docs/COMPARISON.md), and [DEVIATIONS.md](docs/DEVIATIONS.md)
-for the evidence ledger and documented boundaries.
+execution not run locally. See [PRESERVATION_AUDIT.md](docs/PRESERVATION_AUDIT.md),
+[DECOMP_MAP.md](docs/DECOMP_MAP.md), [COMPARISON.md](docs/COMPARISON.md),
+[DEVIATIONS.md](docs/DEVIATIONS.md), and [CONTRIBUTING.md](CONTRIBUTING.md)
+for the 1:1 surface-area audit, evidence ledger, documented boundaries, and
+branch contribution rules.
 
 The [public reconstruction survey](docs/UPSTREAM_SURVEY.md) records related
 projects and the searches used to avoid duplicating existing work. The optional

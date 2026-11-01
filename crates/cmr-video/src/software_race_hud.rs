@@ -200,8 +200,9 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
         }
     }
 
-    let mut frame = SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)
-        .map_err(RaceHudComposeError::Frame)?;
+    let mut frame =
+        SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)
+            .map_err(RaceHudComposeError::Frame)?;
     if let Some(rgba8) = rgba8 {
         frame = frame
             .with_rgba8(rgba8.into_boxed_slice())
@@ -642,8 +643,7 @@ fn blit_glyph(
                             blue: px[2],
                             flags: 0,
                         };
-                        let [r, g, b] =
-                            bitmap_rgb(source_color, dst, BitmapDiffuse::Tinted(color));
+                        let [r, g, b] = bitmap_rgb(source_color, dst, BitmapDiffuse::Tinted(color));
                         px[0] = r;
                         px[1] = g;
                         px[2] = b;

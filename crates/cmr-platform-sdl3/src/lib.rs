@@ -1081,10 +1081,7 @@ where
             [None, None]
         } else {
             [
-                Some((
-                    now.saturating_add(Duration::from_nanos(13_333_333)),
-                    0xaaaa,
-                )),
+                Some((now.saturating_add(Duration::from_nanos(13_333_333)), 0xaaaa)),
                 Some((
                     now.saturating_add(Duration::from_nanos(26_666_667)),
                     0x1_0000,

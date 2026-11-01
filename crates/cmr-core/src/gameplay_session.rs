@@ -1037,11 +1037,24 @@ impl<'a> GameplaySession<'a> {
     /// scene objects (`FUN_0045c9c0`).
     #[must_use]
     pub fn moving_object_node_locals(&self) -> Vec<(usize, [i32; 16])> {
-        let mut locals = self
-            .moving_objects
-            .as_ref()
-            .map_or_else(Vec::new, |o| o.node_locals().collect());
+        self.moving_object_node_locals_interpolated(crate::stage_moj_motion::ONE_Q16)
+    }
+
+    /// The `.obj` scene-graph `(node_index, local_matrix_q16)` overrides from
+    /// any dynamic trackside objects (`FUN_00430480` at `0x43ae21`) and bound
+    /// `.moj` kinematic scene objects (`FUN_0045c9c0` at `0x43ae01`),
+    /// interpolated at `alpha_q16` (`0..=0x1_0000`) inside `FUN_00439ee0`.
+    #[must_use]
+    pub fn moving_object_node_locals_interpolated(
+        &self,
+        alpha_q16: i32,
+    ) -> Vec<(usize, [i32; 16])> {
+        let mut locals = self.moving_objects.as_ref().map_or_else(Vec::new, |o| {
+            o.node_locals_interpolated(alpha_q16).collect()
+        });
         for slot in &self.moj_slots {
+            let interpolated_unclamped =
+                crate::stage_moj_motion::interpolate_moj_slot_45c9c0(slot, alpha_q16, None);
             let ground_y = if slot.record.terrain_snap_flag != 0
                 && let Some(geometry) = self.ground_geometry
             {
@@ -1050,22 +1063,19 @@ impl<'a> GameplaySession<'a> {
                 let mut handle = -1;
                 let (y, _) = ground.query(
                     [
-                        slot.curr_tf_48[12],
-                        slot.curr_tf_48[13],
-                        slot.curr_tf_48[14],
+                        interpolated_unclamped[12],
+                        interpolated_unclamped[13],
+                        interpolated_unclamped[14],
                     ],
                     &mut handle,
-                    slot.curr_tf_48[13],
+                    interpolated_unclamped[13],
                 );
                 Some(y)
             } else {
                 None
             };
-            let tf = crate::stage_moj_motion::interpolate_moj_slot_45c9c0(
-                slot,
-                crate::stage_moj_motion::ONE_Q16,
-                ground_y,
-            );
+            let tf =
+                crate::stage_moj_motion::interpolate_moj_slot_45c9c0(slot, alpha_q16, ground_y);
             locals.push((slot.scene_node_index, tf));
         }
         locals

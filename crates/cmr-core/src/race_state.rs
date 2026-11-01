@@ -1468,9 +1468,7 @@ impl RaceState {
         self.car.four_wheel.gearbox.target_43f = 1;
         self.car.four_wheel.gearbox.shift_40c = false;
         self.car.four_wheel.gearbox.reverse_mode_408 = false;
-        let response_1f0 = wheel
-            .gearbox
-            .map_or(0x4000, |gb| gb.tables.inverse_1f0[1]);
+        let response_1f0 = wheel.gearbox.map_or(0x4000, |gb| gb.tables.inverse_1f0[1]);
         let launched = Fixed16::from_raw(self.car.four_wheel.engine_2e0)
             .mul(Fixed16::from_raw(response_1f0))
             .raw();
@@ -2730,9 +2728,7 @@ impl RaceState {
             self.car.four_wheel.first[axle + 1].wheel_speed = right.raw();
         }
         let mut lanes = wheel.postprocess.lanes;
-        if compiled_live_path
-            && let Some(ground) = &self.car.ground
-        {
+        if compiled_live_path && let Some(ground) = &self.car.ground {
             for (lane, output) in lanes.iter_mut().enumerate() {
                 output.active = self.car.motion.contact_distance_flags[lane];
                 let n_cur = ground.lanes.output_vectors[lane];
@@ -3275,17 +3271,23 @@ impl RaceState {
         {
             ground.lanes.latch_67c = 1;
         }
-        self.car.ground = Some(ground);
         self.car.position = vec(car.bounds.current_position);
         self.car.velocity = vec(car.velocity);
         self.car.motion.moment = car.moment_3d8;
         self.car.collision.response_state_680 = car.out_of_control_680;
         self.car.collision.recovery_latch_688 = car.recovery_688;
+        let rebuilt_probes = crate::ground_pass::rebuild_ground_probes(
+            &undeformed,
+            self.car.motion.basis,
+            self.car.position,
+        );
+        ground.probes = rebuilt_probes;
+        self.car.ground = Some(ground);
         let wheel = &mut self.car.four_wheel;
         wheel.barrier_impact_3f0 = car.impact_3f0;
         wheel.barrier_contact_6dc = car.contact_6dc;
         wheel.trigger_walk = walk_state;
-        wheel.trigger_prior_15c = car.bounds.current_points;
+        wheel.trigger_prior_15c = rebuilt_probes;
         Ok(events)
     }
 
@@ -3374,8 +3376,7 @@ impl RaceState {
         wheel.prior_velocity_e0 = Vec3::ZERO;
         wheel.start_basis_27c = placement.basis;
         wheel.previous_normal_330 = placement.normal;
-        wheel.previous_wheel_normals_39c =
-            std::array::from_fn(|w| ground.lanes.output_vectors[w]);
+        wheel.previous_wheel_normals_39c = std::array::from_fn(|w| ground.lanes.output_vectors[w]);
         wheel.wheels.roll_state_88 = [0; 3];
         wheel.wheels.corner_roll_c8 = [0; 4];
         wheel.wheels.visual_roll_state_130 = [0; 3];

@@ -1,0 +1,114 @@
+name: Build Preservation & Modern Binaries
+
+on:
+  push:
+    branches: [main, modern]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-binaries:
+    name: Build ${{ matrix.edition }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        edition:
+          - name: preservation
+            branch: main
+            binary_suffix: preservation
+          - name: modern
+            branch: modern
+            binary_suffix: modern
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            ext: ""
+          - os: windows-latest
+            platform: windows-x86_64
+            ext: ".exe"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout target branch (${{ matrix.edition.branch }})
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.edition.branch }}
+        continue-on-error: true
+
+      - name: Fallback to current ref if branch not yet pushed
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.edition.name }}-${{ matrix.platform }}
+
+      - name: Build release binaries (cmr-app & cmr-assets, bundled SDL3)
+        run: |
+          cargo build --release -p cmr-app -p cmr-assets --features cmr-platform-sdl3/bundled-sdl3
+
+      - name: Package ${{ matrix.edition.name }} archive (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          STAGE_DIR="cmr-${{ matrix.edition.binary_suffix }}-${{ matrix.platform }}"
+          mkdir -p "$STAGE_DIR/profiles"
+          cp target/release/cmr-app "$STAGE_DIR/cmr-app-${{ matrix.edition.binary_suffix }}"
+          cp target/release/cmr-assets "$STAGE_DIR/cmr-assets"
+          cp profiles/*.json "$STAGE_DIR/profiles/"
+          cp README.md CONTRIBUTING.md "$STAGE_DIR/" || true
+          tar -czf "${STAGE_DIR}.tar.gz" "$STAGE_DIR"
+          sha256sum "${STAGE_DIR}.tar.gz" > "${STAGE_DIR}.tar.gz.sha256"
+
+      - name: Package ${{ matrix.edition.name }} archive (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          STAGE_DIR="cmr-${{ matrix.edition.binary_suffix }}-${{ matrix.platform }}"
+          mkdir -p "$STAGE_DIR/profiles"
+          cp target/release/cmr-app.exe "$STAGE_DIR/cmr-app-${{ matrix.edition.binary_suffix }}.exe"
+          cp target/release/cmr-assets.exe "$STAGE_DIR/cmr-assets.exe"
+          cp profiles/*.json "$STAGE_DIR/profiles/"
+          cp README.md CONTRIBUTING.md "$STAGE_DIR/" || true
+          7z a -tzip "${STAGE_DIR}.zip" "$STAGE_DIR"
+          sha256sum "${STAGE_DIR}.zip" > "${STAGE_DIR}.zip.sha256"
+
+      - name: Upload ${{ matrix.edition.name }} (${{ matrix.platform }}) artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmr-${{ matrix.edition.binary_suffix }}-${{ matrix.platform }}
+          path: |
+            cmr-${{ matrix.edition.binary_suffix }}-${{ matrix.platform }}.tar.gz*
+            cmr-${{ matrix.edition.binary_suffix }}-${{ matrix.platform }}.zip*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-binaries
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Create Checksums
+        working-directory: release-artifacts
+        run: sha256sum *.tar.gz *.zip > SHA256SUMS.txt
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release-artifacts/*.tar.gz
+            release-artifacts/*.zip
+            release-artifacts/SHA256SUMS.txt
