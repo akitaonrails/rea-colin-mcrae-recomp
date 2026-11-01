@@ -63,6 +63,7 @@ pub struct StageSceneFrame {
     palette: Box<[PaletteEntry; 256]>,
     depth: SoftwareC3dDepthBuffer,
     stats: StageSceneFrameStats,
+    rgba8: Option<Vec<u8>>,
 }
 
 impl StageSceneFrame {
@@ -89,7 +90,17 @@ impl StageSceneFrame {
             palette: Box::new(palette),
             depth,
             stats: StageSceneFrameStats::default(),
+            rgba8: None,
         }
+    }
+
+    /// Attaches a true-color RGBA8 plane (`width * height * 4` bytes) from the
+    /// hardware GPU stage renderer so post-blend passes (shadows, skid marks,
+    /// particles, lamp flares, night pool) also blend in true 24-bit color.
+    #[must_use]
+    pub fn with_rgba8(mut self, rgba8: Vec<u8>) -> Self {
+        self.rgba8 = Some(rgba8);
+        self
     }
 
     /// The frame extent `[width, height]`.
@@ -122,11 +133,16 @@ impl StageSceneFrame {
     /// reusing the same presentation type the root-menu backend emits.
     pub fn to_presented_frame(&self) -> Result<SoftwarePresentedFrame, SoftwareRgba8Error> {
         let [width, height] = self.extent;
-        SoftwarePresentedFrame::from_indexed(
+        let frame = SoftwarePresentedFrame::from_indexed(
             DisplayExtent { width, height },
             self.pixels.clone().into_boxed_slice(),
             self.palette.clone(),
-        )
+        )?;
+        if let Some(rgba8) = &self.rgba8 {
+            frame.with_rgba8(rgba8.clone().into_boxed_slice())
+        } else {
+            Ok(frame)
+        }
     }
 
     /// Places this world/foreground pass over an independently rendered
@@ -188,12 +204,16 @@ impl StageSceneFrame {
         )?;
         let palette = *self.palette;
         let mut cache = std::collections::HashMap::<(u8, u8), u8>::new();
+        let mut per_shadow_levels = std::collections::HashMap::<usize, u8>::new();
         for (vertices, indices) in shadows {
+            // `FUN_004a51f0` at `0x4a5915` sets `D3DCULL_NONE` (`push 0; call 0x4a24e0`)
+            // because the sun-projected outer fan points can wind either CW or CCW.
+            let two_sided = cmr_core::c3d_mesh::two_sided_indices(indices);
             let batch = crate::c3d_software_raster::preflight_lit_triangle_list(
-                vertices, indices, transforms,
+                vertices, &two_sided, transforms,
             )?;
             let depth = &self.depth;
-            let pixels = &mut self.pixels;
+            per_shadow_levels.clear();
             crate::c3d_software_raster::rasterize_c3d_fragments_untextured_no_zwrite(
                 &batch,
                 depth,
@@ -205,18 +225,34 @@ impl StageSceneFrame {
                     let vertex_alpha = fragment.diffuse_argb()[0];
                     let a = (f32::from(texel) / 15.0) * vertex_alpha;
                     let level = (a * 255.0).round().clamp(0.0, 255.0) as u8;
+                    if level == 0 {
+                        return;
+                    }
                     let [x, y] = fragment.position();
                     let at = usize::from(y) * usize::from(width) + usize::from(x);
-                    let under = pixels[at];
-                    pixels[at] = *cache.entry((under, level)).or_insert_with(|| {
-                        let entry = palette[usize::from(under)];
-                        let keep = 1.0 - f32::from(level) / 255.0;
-                        let rgb = [entry.red, entry.green, entry.blue]
-                            .map(|c| (f32::from(c) * keep).round() as u8);
-                        nearest_index(rgb, &palette)
-                    });
+                    let entry = per_shadow_levels.entry(at).or_insert(0);
+                    *entry = (*entry).max(level);
                 },
             )?;
+            let pixels = &mut self.pixels;
+            let mut rgba8 = self.rgba8.as_deref_mut();
+            for (&at, &level) in &per_shadow_levels {
+                let under = pixels[at];
+                let keep = 1.0 - f32::from(level) / 255.0;
+                pixels[at] = *cache.entry((under, level)).or_insert_with(|| {
+                    let entry = palette[usize::from(under)];
+                    let rgb = [entry.red, entry.green, entry.blue]
+                        .map(|c| (f32::from(c) * keep).round() as u8);
+                    nearest_index(rgb, &palette)
+                });
+                if let Some(rgba) = rgba8.as_deref_mut()
+                    && let Some(px) = rgba.get_mut(at * 4..at * 4 + 4)
+                {
+                    px[0] = (f32::from(px[0]) * keep).round() as u8;
+                    px[1] = (f32::from(px[1]) * keep).round() as u8;
+                    px[2] = (f32::from(px[2]) * keep).round() as u8;
+                }
+            }
         }
         Ok(())
     }
@@ -267,6 +303,7 @@ impl StageSceneFrame {
             let texture = sprite.texture;
             let (tw, th) = (texture.width as usize, texture.height as usize);
             let pixels = &mut self.pixels;
+            let mut rgba8 = self.rgba8.as_deref_mut();
             let grey = u32::from(sprite.grey);
             let alpha = sprite.alpha;
             crate::c3d_software_raster::rasterize_c3d_fragments_untextured(
@@ -295,6 +332,15 @@ impl StageSceneFrame {
                     // quantizing back to the colour under it.
                     let bayer = BAYER_4X4[usize::from(y & 3)][usize::from(x & 3)];
                     pixels[at] = dithered_blend(&mut cache, &palette, under, rgb, alpha, bayer);
+                    if let Some(rgba) = rgba8.as_deref_mut()
+                        && let Some(px) = rgba.get_mut(at * 4..at * 4 + 4)
+                    {
+                        let a = u16::from(alpha);
+                        let inv = 255 - a;
+                        px[0] = ((u16::from(rgb[0]) * a + u16::from(px[0]) * inv) / 255) as u8;
+                        px[1] = ((u16::from(rgb[1]) * a + u16::from(px[1]) * inv) / 255) as u8;
+                        px[2] = ((u16::from(rgb[2]) * a + u16::from(px[2]) * inv) / 255) as u8;
+                    }
                 },
             )?;
         }
@@ -349,6 +395,7 @@ impl StageSceneFrame {
             let (tw, th) = (texture.width as usize, texture.height as usize);
             let depth = &self.depth;
             let pixels = &mut self.pixels;
+            let mut rgba8 = self.rgba8.as_deref_mut();
             let scale = u32::from(sprite.alpha);
             crate::c3d_software_raster::rasterize_c3d_fragments_untextured_no_zwrite(
                 &batch,
@@ -392,6 +439,13 @@ impl StageSceneFrame {
                             &palette,
                         )
                     });
+                    if let Some(rgba) = rgba8.as_deref_mut()
+                        && let Some(px) = rgba.get_mut(at * 4..at * 4 + 4)
+                    {
+                        px[0] = px[0].saturating_add(add_rgb[0]);
+                        px[1] = px[1].saturating_add(add_rgb[1]);
+                        px[2] = px[2].saturating_add(add_rgb[2]);
+                    }
                 },
             )?;
         }
@@ -508,6 +562,14 @@ impl StageSceneFrame {
                 }
                 let under = self.pixels[at];
                 self.pixels[at] = lut[gi][usize::from(under)];
+                if let Some(rgba) = self.rgba8.as_deref_mut()
+                    && let Some(px) = rgba.get_mut(at * 4..at * 4 + 4)
+                {
+                    let g32 = u32::from(g);
+                    px[0] = ((u32::from(px[0]) * g32) / 255) as u8;
+                    px[1] = ((u32::from(px[1]) * g32) / 255) as u8;
+                    px[2] = ((u32::from(px[2]) * g32) / 255) as u8;
+                }
             }
         }
     }
@@ -552,11 +614,13 @@ impl StageSceneFrame {
         for (vchunk, ichunk) in vertices.chunks(21_000).zip(indices.chunks(21_000)) {
             let base = ichunk.first().copied().unwrap_or(0);
             let local: Vec<u16> = ichunk.iter().map(|i| i - base).collect();
+            let two_sided = cmr_core::c3d_mesh::two_sided_indices(&local);
             let batch = crate::c3d_software_raster::preflight_lit_triangle_list(
-                vchunk, &local, transforms,
+                vchunk, &two_sided, transforms,
             )?;
             let depth = &self.depth;
             let pixels = &mut self.pixels;
+            let mut rgba8 = self.rgba8.as_deref_mut();
             crate::c3d_software_raster::rasterize_c3d_fragments_untextured_no_zwrite(
                 &batch,
                 depth,
@@ -575,6 +639,15 @@ impl StageSceneFrame {
                         alpha,
                         BAYER_4X4[usize::from(y & 3)][usize::from(x & 3)],
                     );
+                    if let Some(rgba) = rgba8.as_deref_mut()
+                        && let Some(px) = rgba.get_mut(at * 4..at * 4 + 4)
+                    {
+                        let a16 = u16::from(alpha);
+                        let inv = 255 - a16;
+                        px[0] = ((u16::from(rgb[0]) * a16 + u16::from(px[0]) * inv) / 255) as u8;
+                        px[1] = ((u16::from(rgb[1]) * a16 + u16::from(px[1]) * inv) / 255) as u8;
+                        px[2] = ((u16::from(rgb[2]) * a16 + u16::from(px[2]) * inv) / 255) as u8;
+                    }
                 },
             )?;
         }
@@ -849,6 +922,7 @@ where
         palette: Box::new(*active_palette),
         depth,
         stats,
+        rgba8: None,
     })
 }
 
@@ -935,6 +1009,7 @@ mod tests {
                 prims_composed: prims,
                 ..StageSceneFrameStats::default()
             },
+            rgba8: None,
         }
     }
 

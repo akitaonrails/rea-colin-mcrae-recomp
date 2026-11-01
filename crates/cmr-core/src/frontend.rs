@@ -331,6 +331,17 @@ impl FrontendState {
         }
     }
 
+    /// Re-enter the front end at the root menu after a race or rally-school
+    /// session finishes or is abandoned (`FUN_004c1e00` -> `ROOT_SCREEN_ID`).
+    pub fn resume_to_root(&mut self, now: u32) {
+        self.continuation = FrontendContinuation::Running;
+        self.phase = FrontendPhase::AdvanceToPending;
+        self.active = ROOT_SCREEN_ID;
+        self.pending = Some(ROOT_SCREEN_ID);
+        self.idle_since = now;
+        self.exit_requested = false;
+    }
+
     fn step_interactive(&mut self, input: FrontendInput, now: u32) -> Vec<FrontendEffect> {
         if self.active != ROOT_SCREEN_ID {
             if input.any() {
@@ -801,5 +812,46 @@ mod tests {
             );
             assert!(state.exit_requested);
         }
+    }
+
+    #[test]
+    fn resume_to_root_restores_running_frontend_after_race_handoff() {
+        let mut state = FrontendState::after_startup_art(2, 100).unwrap();
+        state.pending = Some(RACE_SENTINEL_SCREEN_ID);
+        assert_eq!(
+            state.step(
+                FrontendInput::default(),
+                200,
+                TransitionResult::StartRace,
+                true,
+            ),
+            vec![FrontendEffect::StartRace]
+        );
+        assert!(!state.frontend_active());
+
+        state.resume_to_root(5_000);
+        assert!(state.frontend_active());
+        assert_eq!(state.active_screen(), ROOT_SCREEN_ID);
+        assert_eq!(state.pending_screen(), Some(ROOT_SCREEN_ID));
+        assert_eq!(state.phase(), FrontendPhase::AdvanceToPending);
+        assert_eq!(
+            state.step(
+                FrontendInput::default(),
+                5_040,
+                TransitionResult::Complete,
+                true,
+            ),
+            vec![FrontendEffect::Activate(ROOT_SCREEN_ID)]
+        );
+        assert_eq!(
+            state.step(
+                FrontendInput::default(),
+                5_080,
+                TransitionResult::Complete,
+                true,
+            ),
+            Vec::<FrontendEffect>::new()
+        );
+        assert_eq!(state.phase(), FrontendPhase::Interactive);
     }
 }

@@ -105,6 +105,7 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
     let frame_width = usize::from(extent.width);
     let frame_height = usize::from(extent.height);
     let mut pixels = frame.pixels().to_vec();
+    let mut rgba8 = frame.rgba8().map(<[u8]>::to_vec);
     let palette = Box::new(*frame.palette());
     let mut outcome = RaceHudComposeOutcome::default();
 
@@ -124,6 +125,7 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
                     *destination,
                     BitmapDiffuse::Ordinary,
                     &mut pixels,
+                    rgba8.as_deref_mut(),
                     frame_width,
                     frame_height,
                     palette.as_ref(),
@@ -145,6 +147,7 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
                     *destination,
                     BitmapDiffuse::Tinted(*color),
                     &mut pixels,
+                    rgba8.as_deref_mut(),
                     frame_width,
                     frame_height,
                     palette.as_ref(),
@@ -180,12 +183,14 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
                     validate_source(command_index, *font, blit.code, blit.source, font_data)?;
                     blit_glyph(
                         &mut pixels,
+                        rgba8.as_deref_mut(),
                         frame_width,
                         frame_height,
                         font_data,
                         blit.source,
                         blit.destination.x,
                         blit.destination.y,
+                        *color,
                         palette.as_ref(),
                         &mut quantization,
                     )?;
@@ -195,8 +200,13 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
         }
     }
 
-    let frame = SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)
+    let mut frame = SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)
         .map_err(RaceHudComposeError::Frame)?;
+    if let Some(rgba8) = rgba8 {
+        frame = frame
+            .with_rgba8(rgba8.into_boxed_slice())
+            .map_err(RaceHudComposeError::Frame)?;
+    }
     Ok((frame, outcome))
 }
 
@@ -227,6 +237,7 @@ fn compose_bitmap(
     destination: HudRect,
     diffuse: BitmapDiffuse,
     target: &mut [u8],
+    mut target_rgba8: Option<&mut [u8]>,
     target_width: usize,
     target_height: usize,
     active_palette: &[PaletteEntry; 256],
@@ -310,6 +321,20 @@ fn compose_bitmap(
                 destination_color,
                 active_palette,
             );
+            if let Some(rgba) = target_rgba8.as_deref_mut()
+                && let Some(px) = rgba.get_mut(target_offset * 4..target_offset * 4 + 4)
+            {
+                let dst = PaletteEntry {
+                    red: px[0],
+                    green: px[1],
+                    blue: px[2],
+                    flags: 0,
+                };
+                let [r, g, b] = bitmap_rgb(source_color, dst, diffuse);
+                px[0] = r;
+                px[1] = g;
+                px[2] = b;
+            }
         }
     }
     Ok(())
@@ -545,12 +570,14 @@ fn validate_source(
 #[allow(clippy::too_many_arguments)]
 fn blit_glyph(
     destination: &mut [u8],
+    mut destination_rgba8: Option<&mut [u8]>,
     destination_width: usize,
     destination_height: usize,
     font: &BitmapFont,
     source: RectI16,
     destination_x: i32,
     destination_y: i32,
+    color: HudColor,
     active_palette: &[PaletteEntry; 256],
     quantization: &mut BitmapQuantizationCache,
 ) -> Result<(), RaceHudComposeError> {
@@ -605,6 +632,22 @@ fn blit_glyph(
                 Some(source_color)
                     if [source_color.red, source_color.green, source_color.blue] != [0, 0, 0] =>
                 {
+                    if let Some(rgba) = destination_rgba8.as_deref_mut()
+                        && let Some(px) =
+                            rgba.get_mut(destination_index * 4..destination_index * 4 + 4)
+                    {
+                        let dst = PaletteEntry {
+                            red: px[0],
+                            green: px[1],
+                            blue: px[2],
+                            flags: 0,
+                        };
+                        let [r, g, b] =
+                            bitmap_rgb(source_color, dst, BitmapDiffuse::Tinted(color));
+                        px[0] = r;
+                        px[1] = g;
+                        px[2] = b;
+                    }
                     let dst_idx = *destination
                         .get(destination_index)
                         .ok_or(RaceHudComposeError::ArithmeticOverflow)?;
@@ -617,7 +660,18 @@ fn blit_glyph(
                         active_palette,
                     )
                 }
-                _ => atlas_index,
+                _ => {
+                    if let Some(rgba) = destination_rgba8.as_deref_mut()
+                        && let Some(px) =
+                            rgba.get_mut(destination_index * 4..destination_index * 4 + 4)
+                    {
+                        let entry = active_palette[usize::from(atlas_index)];
+                        px[0] = entry.red;
+                        px[1] = entry.green;
+                        px[2] = entry.blue;
+                    }
+                    atlas_index
+                }
             };
             *destination
                 .get_mut(destination_index)

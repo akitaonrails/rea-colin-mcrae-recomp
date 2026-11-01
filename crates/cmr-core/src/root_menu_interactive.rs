@@ -213,6 +213,16 @@ impl RootInteraction {
         &self.screens
     }
 
+    /// Re-enter the front end at the root menu after a race or rally-school
+    /// session finishes or is abandoned (`FUN_004c1e00`).
+    pub fn resume_to_root(&mut self, now: u32) {
+        self.state.resume_to_root(now);
+        self.camera = CameraTransition::start(ROOT_SCREEN_ID);
+        self.position
+            .aim(self.targets.as_ref().and_then(|block| block.target(ROOT_SCREEN_ID)));
+        self.repeat = KeyRepeat::default();
+    }
+
     /// Advances the root alone by one tick (no record: the sub-screens are
     /// not entered).
     #[must_use]
@@ -814,5 +824,46 @@ mod tests {
             .menu(ControlScreen::Control.screen())
             .unwrap();
         assert!(menu.nav.confirms && !menu.nav.backs);
+    }
+
+    #[test]
+    fn resume_to_root_recovers_root_menu_after_race_handoff() {
+        let mut driver = RootInteraction::from_saved_selection(
+            0,
+            Language::English,
+            DisplayExtent {
+                width: 640,
+                height: 480,
+            },
+            0,
+        )
+        .unwrap();
+        let mut record = [0u8; crate::config::LEGACY_CONFIG_SIZE];
+        while driver.state().phase() != FrontendPhase::Interactive {
+            let _ = driver.tick_for_game_session(
+                FrontendInput::default(),
+                FrontendKeys::default(),
+                0,
+                true,
+                &mut record,
+            );
+        }
+        driver.resume_to_root(1_000);
+        for step in 0..20 {
+            let _ = driver.tick_for_game_session(
+                FrontendInput::default(),
+                FrontendKeys::default(),
+                1_000 + step * 40,
+                true,
+                &mut record,
+            );
+            if driver.state().phase() == FrontendPhase::Interactive {
+                break;
+            }
+        }
+        assert!(driver.state().frontend_active());
+        assert_eq!(driver.state().active_screen(), ROOT_SCREEN_ID);
+        assert_eq!(driver.state().phase(), FrontendPhase::Interactive);
+        assert!(driver.current_render_input().is_some());
     }
 }

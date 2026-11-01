@@ -262,14 +262,29 @@ impl PreparedRawStage {
                     } else {
                         prim.indices().to_vec()
                     };
-                    meshes.push(C3dMeshResource::new(
-                        prim.unique_entries_32()
-                            .iter()
-                            .copied()
-                            .map(C3dStageVertex::from)
-                            .collect::<Vec<_>>(),
-                        indices,
-                    )?);
+                    let mut vertices = prim
+                        .unique_entries_32()
+                        .iter()
+                        .copied()
+                        .map(C3dStageVertex::from)
+                        .collect::<Vec<_>>();
+                    if draw_group.has_per_vertex_diffuse()
+                        && layer.color_key_index.is_none()
+                        && layer.dynamic_world_set.is_none()
+                    {
+                        for (face_index, entry) in prim.entries_24().iter().enumerate() {
+                            let tuples = entry.corner_tuples();
+                            for corner in 0..3 {
+                                let compact = usize::from(prim.indices()[face_index * 3 + corner]);
+                                let [r, g, b, a] = tuples[corner];
+                                if a != 0 {
+                                    vertices[compact] =
+                                        vertices[compact].with_diffuse_rgba([r, g, b, a]);
+                                }
+                            }
+                        }
+                    }
+                    meshes.push(C3dMeshResource::new(vertices, indices)?);
                     let local_world = *layer.scene.world(op.node);
                     let draw_index = draws.len();
                     draws.push(C3dDraw::new(

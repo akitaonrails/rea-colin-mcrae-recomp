@@ -56,6 +56,7 @@ pub fn compose_text_overlay<'a>(
     let height = usize::from(extent.height);
     let palette = Box::new(*frame.palette());
     let mut pixels = frame.pixels().to_vec();
+    let mut rgba8 = frame.rgba8().map(<[u8]>::to_vec);
     let mut outcome = PauseOverlayOutcome::default();
 
     for &(quad, [red, green, blue, alpha]) in quads {
@@ -65,7 +66,9 @@ pub fn compose_text_overlay<'a>(
         let bottom = (usize::from(quad.y) + usize::from(quad.h)).min(height);
         let mut panel_cache = [None::<u8>; 256];
         for y in top..bottom {
-            for pixel in &mut pixels[y * width + left..y * width + right] {
+            for x in left..right {
+                let at = y * width + x;
+                let pixel = &mut pixels[at];
                 let destination = usize::from(*pixel);
                 *pixel = *panel_cache[destination].get_or_insert_with(|| {
                     let under = palette[destination];
@@ -76,6 +79,13 @@ pub fn compose_text_overlay<'a>(
                     ];
                     nearest_palette_index(rgb, &palette)
                 });
+                if let Some(rgba) = rgba8.as_deref_mut()
+                    && let Some(px) = rgba.get_mut(at * 4..at * 4 + 4)
+                {
+                    px[0] = source_over_channel(red, px[0], alpha);
+                    px[1] = source_over_channel(green, px[1], alpha);
+                    px[2] = source_over_channel(blue, px[2], alpha);
+                }
                 outcome.panel_pixels += 1;
             }
         }
@@ -98,7 +108,7 @@ pub fn compose_text_overlay<'a>(
         let (clip_x, clip_y) = (clip_x.max(0), clip_y.max(0));
         let (clip_right, clip_bottom) =
             (clip_right.min(width as i32), clip_bottom.min(height as i32));
-        let mut glyph_cache = [None::<Option<u8>>; 256];
+        let mut glyph_cache = [None::<Option<(u8, [u8; 3])>>; 256];
         for blit in &run.plan.blits {
             outcome.glyphs_drawn += 1;
             for row in 0..i32::from(blit.source.height) {
@@ -129,17 +139,28 @@ pub fn compose_text_overlay<'a>(
                             modulate_channel(texel[1], run.color[1]),
                             modulate_channel(texel[2], run.color[2]),
                         ];
-                        Some(nearest_palette_index(rgb, &palette))
+                        Some((nearest_palette_index(rgb, &palette), rgb))
                     });
-                    if let Some(color) = resolved {
-                        pixels[target_y as usize * width + target_x as usize] = color;
+                    if let Some((color, rgb)) = resolved {
+                        let at = target_y as usize * width + target_x as usize;
+                        pixels[at] = color;
+                        if let Some(rgba) = rgba8.as_deref_mut()
+                            && let Some(px) = rgba.get_mut(at * 4..at * 4 + 4)
+                        {
+                            px[0] = rgb[0];
+                            px[1] = rgb[1];
+                            px[2] = rgb[2];
+                        }
                     }
                 }
             }
         }
     }
 
-    let frame = SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)?;
+    let mut frame = SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)?;
+    if let Some(rgba8) = rgba8 {
+        frame = frame.with_rgba8(rgba8.into_boxed_slice())?;
+    }
     Ok((frame, outcome))
 }
 
@@ -159,6 +180,7 @@ pub fn compose_icon_overlay<'a>(
     let (width, height) = (i32::from(extent.width), i32::from(extent.height));
     let palette = Box::new(*frame.palette());
     let mut pixels = frame.pixels().to_vec();
+    let mut rgba8 = frame.rgba8().map(<[u8]>::to_vec);
     for icon in icons {
         let Some(sheet) = sheets(icon.sheet) else {
             continue;
@@ -175,7 +197,7 @@ pub fn compose_icon_overlay<'a>(
             right = right.min(i32::from(clip.x) + i32::from(clip.w));
             bottom = bottom.min(i32::from(clip.y) + i32::from(clip.h));
         }
-        let mut cache = [None::<Option<u8>>; 256];
+        let mut cache = [None::<Option<(u8, [u8; 3])>>; 256];
         for row in 0..dh {
             let y = dy + row;
             let texel_y = sy + row * sh / dh;
@@ -193,15 +215,27 @@ pub fn compose_icon_overlay<'a>(
                 let colour = *cache[usize::from(index)].get_or_insert_with(|| {
                     let entry = sheet.palette.get(usize::from(index))?;
                     texel([entry.red, entry.green, entry.blue])
-                        .map(|rgb| nearest_palette_index(rgb, &palette))
+                        .map(|rgb| (nearest_palette_index(rgb, &palette), rgb))
                 });
-                if let Some(colour) = colour {
-                    pixels[y as usize * width as usize + x as usize] = colour;
+                if let Some((colour, rgb)) = colour {
+                    let at = y as usize * width as usize + x as usize;
+                    pixels[at] = colour;
+                    if let Some(rgba) = rgba8.as_deref_mut()
+                        && let Some(px) = rgba.get_mut(at * 4..at * 4 + 4)
+                    {
+                        px[0] = rgb[0];
+                        px[1] = rgb[1];
+                        px[2] = rgb[2];
+                    }
                 }
             }
         }
     }
-    SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)
+    let mut frame = SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)?;
+    if let Some(rgba8) = rgba8 {
+        frame = frame.with_rgba8(rgba8.into_boxed_slice())?;
+    }
+    Ok(frame)
 }
 
 #[cfg(test)]

@@ -332,6 +332,7 @@ pub struct C3dStageVertex {
     position_q16: [i32; 3],
     texture_uv_bits: [u32; 2],
     normal_q16: [i32; 3],
+    diffuse_rgba: [u8; 4],
 }
 
 impl C3dStageVertex {
@@ -344,7 +345,20 @@ impl C3dStageVertex {
             position_q16: [components[0], components[1], components[2]],
             texture_uv_bits: uv.map(f32::to_bits),
             normal_q16: [components[5], components[6], components[7]],
+            diffuse_rgba: [0xff, 0xff, 0xff, 0xff],
         }
+    }
+
+    /// Attaches the per-vertex diffuse RGBA color (`FUN_004b1e10`, `D3DTBLEND_MODULATE`).
+    #[must_use]
+    pub const fn with_diffuse_rgba(mut self, diffuse_rgba: [u8; 4]) -> Self {
+        self.diffuse_rgba = diffuse_rgba;
+        self
+    }
+
+    #[must_use]
+    pub const fn diffuse_rgba(self) -> [u8; 4] {
+        self.diffuse_rgba
     }
 
     #[must_use]

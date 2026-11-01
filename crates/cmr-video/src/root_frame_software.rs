@@ -128,6 +128,7 @@ pub struct SoftwarePresentedFrame {
     extent: DisplayExtent,
     pixels: Box<[u8]>,
     palette: Box<[PaletteEntry; 256]>,
+    rgba8: Option<Box<[u8]>>,
 }
 
 impl SoftwarePresentedFrame {
@@ -157,7 +158,32 @@ impl SoftwarePresentedFrame {
             extent,
             pixels,
             palette,
+            rgba8: None,
         })
+    }
+
+    /// Attaches an optional true-color RGBA8 presentation plane (`width * height * 4`
+    /// bytes) produced by the hardware GPU stage renderer so the native window host
+    /// presents per-texture palettes, bilinear filtering, and Gouraud lighting
+    /// without 256-color quantization while keeping the indexed plane intact.
+    pub fn with_rgba8(mut self, rgba8: Box<[u8]>) -> Result<Self, SoftwareRgba8Error> {
+        let expected = usize::from(self.extent.width)
+            .checked_mul(usize::from(self.extent.height))
+            .and_then(|px| px.checked_mul(SOFTWARE_RGBA8_BYTES_PER_PIXEL))
+            .ok_or(SoftwareRgba8Error::SizeOverflow(self.extent))?;
+        if rgba8.len() != expected {
+            return Err(SoftwareRgba8Error::InvalidIndexedPixelLength {
+                expected,
+                actual: rgba8.len(),
+            });
+        }
+        self.rgba8 = Some(rgba8);
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn rgba8(&self) -> Option<&[u8]> {
+        self.rgba8.as_deref()
     }
 
     #[must_use]
@@ -179,6 +205,12 @@ impl SoftwarePresentedFrame {
     ///
     /// Alpha is always opaque; palette flags are not an alpha channel.
     pub fn expand_rgba8(&self) -> Result<SoftwareRgba8Frame, SoftwareRgba8Error> {
+        if let Some(rgba8) = &self.rgba8 {
+            return Ok(SoftwareRgba8Frame {
+                extent: self.extent,
+                pixels: rgba8.clone(),
+            });
+        }
         expand_indexed_frame_rgba8(self.extent, &self.pixels, &self.palette)
     }
 
@@ -208,10 +240,20 @@ impl SoftwarePresentedFrame {
             }
             best.1
         });
+        let rgba8 = self.rgba8.as_ref().map(|rgba| {
+            let mut out = rgba.clone();
+            for px in out.as_chunks_mut::<4>().0 {
+                px[0] = scale(px[0]);
+                px[1] = scale(px[1]);
+                px[2] = scale(px[2]);
+            }
+            out
+        });
         Self {
             extent: self.extent,
             pixels: self.pixels.iter().map(|&p| map[usize::from(p)]).collect(),
             palette: self.palette.clone(),
+            rgba8,
         }
     }
 
@@ -232,10 +274,20 @@ impl SoftwarePresentedFrame {
             entry.green = ((u32::from(entry.green) * scale) / 255) as u8;
             entry.blue = ((u32::from(entry.blue) * scale) / 255) as u8;
         }
+        let rgba8 = self.rgba8.as_ref().map(|rgba| {
+            let mut out = rgba.clone();
+            for px in out.as_chunks_mut::<4>().0 {
+                px[0] = ((u32::from(px[0]) * scale) / 255) as u8;
+                px[1] = ((u32::from(px[1]) * scale) / 255) as u8;
+                px[2] = ((u32::from(px[2]) * scale) / 255) as u8;
+            }
+            out
+        });
         Self {
             extent: self.extent,
             pixels: self.pixels.clone(),
             palette,
+            rgba8,
         }
     }
 
@@ -367,6 +419,7 @@ impl RootFrameHooks for SoftwareIndexedBackend {
                 extent: destination_extent,
                 pixels: surface.pixels.clone().into_boxed_slice(),
                 palette: Box::new(palette),
+                rgba8: None,
             }
         };
         self.presented_frame = Some(frame);
@@ -663,6 +716,7 @@ mod tests {
             },
             pixels: Box::from([0, 1, 2, 255]),
             palette: Box::new(palette),
+            rgba8: None,
         };
 
         assert_eq!(SOFTWARE_PRESENTED_FRAME_DIGEST_FORMAT, b"CMRFRM01");
@@ -697,6 +751,7 @@ mod tests {
                     flags: 0,
                 }; 256],
             ),
+            rgba8: None,
         };
 
         assert_eq!(
@@ -720,6 +775,7 @@ mod tests {
             },
             pixels: Box::from([0, 1, 2, 3]),
             palette: Box::new(palette),
+            rgba8: None,
         };
         let mut changed_extent = baseline.clone();
         changed_extent.extent = DisplayExtent {
@@ -908,6 +964,7 @@ mod tests {
             },
             pixels: Box::from([42]),
             palette: Box::new(palette),
+            rgba8: None,
         };
 
         assert_eq!(frame.expand_rgba8().unwrap().pixels(), &[1, 2, 3, 255]);

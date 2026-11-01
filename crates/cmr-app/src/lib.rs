@@ -138,7 +138,7 @@ use cmr_formats::stage::{
     load_stage,
 };
 use cmr_formats::stored_asset::{DecodeError, DecodeLimits, decode_stored_asset};
-use cmr_gpu_contract::{PersistentRawC3dGpuBackend, PersistentRawC3dIndexedBackend};
+use cmr_gpu_contract::PersistentRawC3dGpuBackend;
 use cmr_gpu_stage::{
     PreparedRawStage, PreparedRawStageError, PreparedRawStageLayer, PreparedRawStageStats,
 };
@@ -2040,7 +2040,7 @@ impl WgpuStageRenderer {
                 .prepared_frame_for_worlds(camera, dynamic_world_sets)
                 .map_err(StageFrameError::GpuPrepare)?
         };
-        let indexed = if let (Some(horizon_prepared), Some(horizon_scene)) =
+        let (indexed, rgba, depth) = if let (Some(horizon_prepared), Some(horizon_scene)) =
             (self.horizon_prepared.as_mut(), self.horizon_scene.as_mut())
         {
             let horizon_worlds = horizon_worlds.ok_or(StageFrameError::GpuPrepare(
@@ -2060,42 +2060,39 @@ impl WgpuStageRenderer {
                     (w, h, z_near, cmr_core::c3d_camera::HORIZON_Z_FAR),
                 )
                 .map_err(StageFrameError::GpuPrepare)?;
-            if let Some(post) = post {
-                let (indexed, depth) = self
-                    .backend
-                    .render_prepared_layered_indexed_readback_with_depth(
-                        horizon_scene,
-                        horizon_frame,
-                        &mut self.scene,
-                        frame,
-                    )
-                    .map_err(|error| StageFrameError::GpuCompose(error.to_string()))?;
-                return post_blend_gpu_frame(&indexed, depth, self.palette, post);
-            }
             self.backend
-                .render_prepared_layered_indexed_readback(
+                .render_prepared_layered_true_color_and_indexed_readback(
                     horizon_scene,
                     horizon_frame,
                     &mut self.scene,
                     frame,
+                    post.is_some(),
                 )
                 .map_err(|error| StageFrameError::GpuCompose(error.to_string()))?
-        } else if let Some(post) = post {
-            let (indexed, depth) = self
-                .backend
-                .render_prepared_indexed_readback_with_depth(&mut self.scene, frame)
-                .map_err(|error| StageFrameError::GpuCompose(error.to_string()))?;
-            return post_blend_gpu_frame(&indexed, depth, self.palette, post);
         } else {
             self.backend
-                .render_prepared_indexed_readback(&mut self.scene, frame)
+                .render_prepared_true_color_and_indexed_readback(
+                    &mut self.scene,
+                    frame,
+                    post.is_some(),
+                )
                 .map_err(|error| StageFrameError::GpuCompose(error.to_string()))?
         };
+        if let Some(post) = post {
+            return post_blend_gpu_frame(
+                &indexed,
+                rgba.pixels().to_vec(),
+                depth.unwrap_or_default(),
+                self.palette,
+                post,
+            );
+        }
         SoftwarePresentedFrame::from_indexed(
             indexed.extent(),
             indexed.indices().to_vec().into_boxed_slice(),
             Box::new(self.palette),
         )
+        .and_then(|presented| presented.with_rgba8(rgba.pixels().to_vec().into_boxed_slice()))
         .map_err(StageFrameError::Present)
     }
 }
@@ -2105,6 +2102,7 @@ impl WgpuStageRenderer {
 /// after the shadow covers it.
 fn post_blend_gpu_frame(
     indexed: &cmr_gpu_contract::CanonicalIndexedFrame,
+    rgba8: Vec<u8>,
     depth: Vec<f32>,
     palette: [PaletteEntry; 256],
     post: &PostBlend<'_>,
@@ -2117,7 +2115,8 @@ fn post_blend_gpu_frame(
         indexed.indices().to_vec(),
         palette,
         depth,
-    );
+    )
+    .with_rgba8(rgba8);
     post(&mut scene)?;
     scene.to_presented_frame().map_err(StageFrameError::Present)
 }
@@ -3340,12 +3339,18 @@ impl StageRenderResources {
                 if let Some((light_world, radius_q16)) = lamps.4 {
                     scene.apply_night_pool(camera, light_world, radius_q16, None);
                 }
+                // Tyre skid marks (`FUN_004a9cd0`) lie on the ground beneath the
+                // car shadow (`FUN_004a51f0`), while airborne dust/smoke sprites
+                // (`FUN_004a4460`) blend above the shadow.
+                scene
+                    .blend_coloured_triangles(camera, sprites.2)
+                    .map_err(StageFrameError::Compose)?;
                 if let Some(shadow) = shadow {
                     scene
                         .blend_shadows(camera, shadow_draws, &shadow.alpha)
                         .map_err(StageFrameError::Compose)?;
                 }
-                blend_sprite_draws(scene, camera, sprites.0, sprites.1, sprites.2)?;
+                blend_sprite_draws(scene, camera, sprites.0, sprites.1)?;
                 blend_lamp_draws(scene, camera, lamps.0, lamps.1, lamps.2, lamps.3)
             };
             let post: Option<&PostBlend<'_>> = (shadow.is_some()
@@ -3425,7 +3430,13 @@ impl StageRenderResources {
             |ordinal| self.textures.texture_for_ordinal(ordinal),
         )
         .map_err(StageFrameError::Compose)?;
-        // `FUN_004a51f0`: the shadows after the track cells, before the objects.
+        // Tyre marks on the road surface before the car shadow (`FUN_004a51f0`),
+        // both before the objects and car meshes.
+        if !self.mark_draws.is_empty() {
+            frame
+                .blend_coloured_triangles(camera, &self.mark_draws)
+                .map_err(StageFrameError::Compose)?;
+        }
         if let Some(shadow) = self.shadow.as_ref()
             && !self.shadow_draws.is_empty()
         {
@@ -3547,7 +3558,6 @@ impl StageRenderResources {
             camera,
             self.particles.as_ref(),
             &self.sprite_draws,
-            &self.mark_draws,
         )?;
         blend_lamp_draws(
             &mut frame,
@@ -5212,7 +5222,6 @@ fn blend_sprite_draws(
     camera: &[i32; 16],
     particles: Option<&StageParticles>,
     draws: &[SpriteDraw],
-    marks: &[([[f32; 3]; 3], [u32; 3])],
 ) -> Result<(), StageFrameError> {
     let Some(particles) = particles else {
         return Ok(());
@@ -5231,10 +5240,6 @@ fn blend_sprite_draws(
         .collect();
     frame
         .blend_sprites(camera, &quads)
-        .map_err(StageFrameError::Compose)?;
-    // The tyre marks after the sprites (`FUN_004a9cd0`).
-    frame
-        .blend_coloured_triangles(camera, marks)
         .map_err(StageFrameError::Compose)
 }
 
@@ -5527,9 +5532,9 @@ impl FrontEndConfig {
 
     /// The front end's return after a session (`FUN_004c1e00`): the race's
     /// event and options go back into the record.
-    fn resume(&mut self, event: &EventState, pause: &PauseHarness) {
+    fn resume(&mut self, event: &EventState, pause: &PauseHarness) -> bool {
         if !std::mem::take(&mut self.returning) {
-            return;
+            return false;
         }
         let live = cmr_core::config_commit::live_mut(&mut self.image);
         event.cfg.store_live(live);
@@ -5537,6 +5542,7 @@ impl FrontEndConfig {
         live[6] = pause.options.cfg_6;
         live[8] = pause.options.cfg_8;
         cmr_core::config_commit::return_live_to_record(&mut self.image);
+        true
     }
 }
 
@@ -5554,7 +5560,9 @@ fn front_end_frame(
     input: &WindowedInput,
     now: u32,
 ) -> cmr_core::root_menu_interactive::RootTick {
-    config.resume(session.event(), pause);
+    if config.resume(session.event(), pause) || !root_interaction.state().frontend_active() {
+        root_interaction.resume_to_root(now);
+    }
     let held = cmr_core::frontend_keys::held_key(|vk| input.keys.is_down(vk));
     let audio = input.audio;
     let tick = root_interaction.tick_for_game_session(
@@ -5978,48 +5986,54 @@ fn advance_game_frame<C: HostClock>(
         world
     };
     // The listener `FUN_0047ec20` and the engine sound `FUN_00488d60` run
-    // after this tick's Mechanics (which includes the camera driver) in every
-    // in-race handler 5..=9 (the pause state 0xa skips them); on the single
-    // view the surface, landing, wet and crowd routines follow.
+    // after this tick's Mechanics (which includes the camera driver) while the
+    // race simulation steps; when transitioning out of State 5 into State 8
+    // (`0x437cc5..0x437cd4`, `FUN_00487170(0, 0)`, `FUN_0048b650`, `FUN_0048d8c0`),
+    // engine, surface, and wet channels are muted and `FUN_00443b20` starts the
+    // stage-results music.
     if let (Some(mixer), Some(camera_world)) = (input.audio, tick_camera.as_ref())
         && (5..=9).contains(&session.state().id())
     {
-        let car = session.car();
-        let camera_mode = camera.record_mode();
-        match update_listener(&ListenerInput {
-            camera: *camera_world,
-            camera_mode,
-            forward_258: vec3_raw(car.motion.basis[0]),
-            centre_c8: vec3_raw(car.position),
-            half_length_2c: car.motion.compiled_half_words.x.raw(),
-        }) {
-            Ok(listener) => {
-                let master = pause.options.effects_master_4f653c;
-                if let Some(engine) = audio.engine.as_mut() {
-                    engine.tick(
-                        mixer,
-                        session,
-                        &mut camera.rng,
-                        camera_mode,
-                        &listener.listener,
-                        master,
-                    );
+        if advanced.stepped {
+            let car = session.car();
+            let camera_mode = camera.record_mode();
+            match update_listener(&ListenerInput {
+                camera: *camera_world,
+                camera_mode,
+                forward_258: vec3_raw(car.motion.basis[0]),
+                centre_c8: vec3_raw(car.position),
+                half_length_2c: car.motion.compiled_half_words.x.raw(),
+            }) {
+                Ok(listener) => {
+                    let master = pause.options.effects_master_4f653c;
+                    if let Some(engine) = audio.engine.as_mut() {
+                        engine.tick(
+                            mixer,
+                            session,
+                            &mut camera.rng,
+                            camera_mode,
+                            &listener.listener,
+                            master,
+                        );
+                    }
+                    if let Some(effects) = audio.effects.as_mut() {
+                        effects.tick(
+                            mixer,
+                            session,
+                            &mut camera.rng,
+                            camera_world,
+                            camera_mode,
+                            listener.centre_proximity_9e4,
+                            master,
+                            advanced.stepped,
+                            session.state().id(),
+                        );
+                    }
                 }
-                if let Some(effects) = audio.effects.as_mut() {
-                    effects.tick(
-                        mixer,
-                        session,
-                        &mut camera.rng,
-                        camera_world,
-                        camera_mode,
-                        listener.centre_proximity_9e4,
-                        master,
-                        advanced.stepped,
-                        session.state().id(),
-                    );
-                }
+                Err(error) => eprintln!("cmr-app: listener skipped: {error}"),
             }
-            Err(error) => eprintln!("cmr-app: listener skipped: {error}"),
+        } else {
+            audio.mute(mixer);
         }
     }
     let loading_route = if session.state().id() == 4 {
@@ -6039,8 +6053,9 @@ fn advance_game_frame<C: HostClock>(
         loading_interstitial,
         exit_requested: root_tick.as_ref().is_some_and(|tick| tick.exit_requested),
         root_render_input: root_tick.and_then(|tick| tick.render_input),
-        // The recovered front-end music plays while the front end runs.
-        music_active: advanced.band == SessionBand::FrontEnd,
+        // The recovered front-end music plays while the front end runs and on
+        // the State-8 stage results screen (`FUN_00443b20` at `0x437cde`).
+        music_active: advanced.band == SessionBand::FrontEnd || session.state().id() == 8,
         codriver_calls: if advanced.stepped {
             session
                 .last_trigger_events()
@@ -6963,6 +6978,26 @@ impl EngineAudio {
 struct RaceAudio {
     engine: Option<EngineAudio>,
     effects: Option<EffectsAudio>,
+}
+
+impl RaceAudio {
+    /// Mute the player car's engine (`FUN_00487170(0, 0)`), surface/skid
+    /// (`FUN_0048b650`), and wet (`FUN_0048d8c0`) channels when the race
+    /// simulation stops stepping (e.g. entering State 8 stage results at
+    /// `0x437cc5..0x437cd4`).
+    fn mute(&self, mixer: &SharedSoftwareMixer) {
+        if let Some(engine) = self.engine.as_ref() {
+            engine.mute(mixer, 0);
+        }
+        if let Some(effects) = self.effects.as_ref() {
+            effects.stop_surface(mixer);
+            if effects.banks.is_some()
+                && let Ok(mut mixer) = mixer.lock()
+            {
+                EngineVoices::set_volume(&mut *mixer, WET_CHANNEL, 0);
+            }
+        }
+    }
 }
 
 /// The surface roll/skid (`FUN_00489890`), landing thump (`FUN_0046a030`)

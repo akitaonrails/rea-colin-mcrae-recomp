@@ -61,10 +61,12 @@ struct Transform {
 @group(0) @binding(0) var<uniform> transform: Transform;
 @group(1) @binding(0) var material_indices: texture_2d<u32>;
 @group(1) @binding(1) var active_palette: texture_2d<u32>;
+@group(1) @binding(2) var material_rgba: texture_2d<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
     @location(0) uv: vec2f,
+    @location(1) diffuse: vec4f,
 };
 
 @vertex
@@ -72,6 +74,7 @@ fn vertex_main(
     @location(0) position_q16: vec3i,
     @location(1) texture_uv: vec2f,
     @location(2) normal_q16: vec3i,
+    @location(3) diffuse: vec4f,
 ) -> VertexOutput {
     let scale = 1.0 / 65536.0;
     let model = vec4f(vec3f(position_q16) * scale, 1.0);
@@ -83,6 +86,7 @@ fn vertex_main(
     var result: VertexOutput;
     result.position = clip;
     result.uv = texture_uv;
+    result.diffuse = diffuse;
     return result;
 }
 
@@ -91,6 +95,43 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
     let palette_index = resolve_palette_index(input);
     let color = textureLoad(active_palette, vec2i(i32(palette_index), 0), 0);
     return vec4f(vec3f(color.rgb) / 255.0, 1.0);
+}
+
+// True-color stage presentation (`FUN_004a2540` `D3DTBLEND_MODULATE` +
+// `FUN_004b1e10` per-vertex diffuse + per-texture 256-entry RGB palettes):
+// key-tests against the center texel and bilinearly filters non-keyed
+// neighbors before multiplying by the interpolated vertex diffuse color.
+@fragment
+fn fragment_true_color(input: VertexOutput) -> @location(0) vec4f {
+    let dimensions = vec2f(textureDimensions(material_rgba));
+    let max_coord = vec2i(dimensions) - vec2i(1);
+    let bounded = clamp(input.uv, vec2f(0.0), vec2f(1.0));
+    let nearest_coord = min(vec2i(floor(bounded * dimensions)), max_coord);
+    let center = textureLoad(material_rgba, nearest_coord, 0);
+    if center.a < 0.5 {
+        discard;
+    }
+    let texel_pos = bounded * dimensions - vec2f(0.5);
+    let base = floor(texel_pos);
+    let frac = texel_pos - base;
+    let c00 = clamp(vec2i(base), vec2i(0), max_coord);
+    let c10 = clamp(vec2i(base) + vec2i(1, 0), vec2i(0), max_coord);
+    let c01 = clamp(vec2i(base) + vec2i(0, 1), vec2i(0), max_coord);
+    let c11 = clamp(vec2i(base) + vec2i(1, 1), vec2i(0), max_coord);
+    let t00 = textureLoad(material_rgba, c00, 0);
+    let t10 = textureLoad(material_rgba, c10, 0);
+    let t01 = textureLoad(material_rgba, c01, 0);
+    let t11 = textureLoad(material_rgba, c11, 0);
+    let w00 = (1.0 - frac.x) * (1.0 - frac.y) * t00.a;
+    let w10 = frac.x * (1.0 - frac.y) * t10.a;
+    let w01 = (1.0 - frac.x) * frac.y * t01.a;
+    let w11 = frac.x * frac.y * t11.a;
+    let w_sum = w00 + w10 + w01 + w11;
+    var sampled_rgb = center.rgb;
+    if w_sum > 0.001 {
+        sampled_rgb = (t00.rgb * w00 + t10.rgb * w10 + t01.rgb * w01 + t11.rgb * w11) / w_sum;
+    }
+    return vec4f(sampled_rgb * input.diffuse.rgb, 1.0);
 }
 
 // Presentation readback: emit the resolved active-palette slot instead of the
@@ -169,6 +210,8 @@ pub struct WgpuIndexedPaletteBackend {
     c3d_texture_layout: wgpu::BindGroupLayout,
     c3d_culled_pipeline: wgpu::RenderPipeline,
     c3d_two_sided_pipeline: wgpu::RenderPipeline,
+    c3d_true_color_culled_pipeline: wgpu::RenderPipeline,
+    c3d_true_color_two_sided_pipeline: wgpu::RenderPipeline,
     c3d_index_culled_pipeline: wgpu::RenderPipeline,
     c3d_index_two_sided_pipeline: wgpu::RenderPipeline,
     info: BackendInfo,
@@ -184,6 +227,7 @@ struct WgpuPreparedMesh {
 
 struct WgpuPreparedTexture {
     _texture: wgpu::Texture,
+    _rgba_texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
 }
 
@@ -246,6 +290,8 @@ struct WgpuFrameDraw {
 enum C3dEncodeTarget {
     /// Expanded RGBA8: the correctness/benchmark readback.
     Rgba,
+    /// True-color RGBA8 with per-texture palettes, bilinear filtering, and Gouraud lighting.
+    TrueColor,
     /// One active-palette index per pixel: the presentation readback.
     PaletteIndex,
 }
@@ -381,7 +427,11 @@ impl WgpuIndexedPaletteBackend {
         let c3d_texture_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("cmr raw C3D texture layout"),
-                entries: &[texture_layout_entry(0), texture_layout_entry(1)],
+                entries: &[
+                    texture_layout_entry(0),
+                    texture_layout_entry(1),
+                    float_texture_layout_entry(2),
+                ],
             });
         let c3d_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("cmr raw C3D pipeline layout"),
@@ -400,6 +450,14 @@ impl WgpuIndexedPaletteBackend {
         );
         let c3d_two_sided_pipeline =
             create_c3d_pipeline(&device, &c3d_pipeline_layout, &c3d_shader, None);
+        let c3d_true_color_culled_pipeline = create_c3d_true_color_pipeline(
+            &device,
+            &c3d_pipeline_layout,
+            &c3d_shader,
+            Some(wgpu::Face::Back),
+        );
+        let c3d_true_color_two_sided_pipeline =
+            create_c3d_true_color_pipeline(&device, &c3d_pipeline_layout, &c3d_shader, None);
         let c3d_index_culled_pipeline = create_c3d_index_pipeline(
             &device,
             &c3d_pipeline_layout,
@@ -433,6 +491,8 @@ impl WgpuIndexedPaletteBackend {
             c3d_texture_layout,
             c3d_culled_pipeline,
             c3d_two_sided_pipeline,
+            c3d_true_color_culled_pipeline,
+            c3d_true_color_two_sided_pipeline,
             c3d_index_culled_pipeline,
             c3d_index_two_sided_pipeline,
             info,
@@ -773,6 +833,26 @@ impl RawC3dGpuBackend for WgpuIndexedPaletteBackend {
             );
             let material_view =
                 material_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let material_rgba_texture = create_texture(
+                &self.device,
+                "cmr raw C3D true-color material",
+                material_size,
+                OUTPUT_FORMAT,
+                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            );
+            let true_color_texels = c3d_true_color_material_texels(texture);
+            self.queue.write_texture(
+                texture_copy(&material_rgba_texture),
+                &true_color_texels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(u32::from(material_extent.width) * 4),
+                    rows_per_image: Some(u32::from(material_extent.height)),
+                },
+                material_size,
+            );
+            let material_rgba_view =
+                material_rgba_texture.create_view(&wgpu::TextureViewDescriptor::default());
             let texture_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("cmr raw C3D texture bind group"),
                 layout: &self.c3d_texture_layout,
@@ -784,6 +864,10 @@ impl RawC3dGpuBackend for WgpuIndexedPaletteBackend {
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureView(&active_palette_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&material_rgba_view),
                     },
                 ],
             });
@@ -1102,6 +1186,25 @@ impl PersistentRawC3dGpuBackend for WgpuIndexedPaletteBackend {
                     size,
                 );
                 let view = native.create_view(&wgpu::TextureViewDescriptor::default());
+                let rgba_native = create_texture(
+                    &self.device,
+                    "cmr prepared C3D true-color material",
+                    size,
+                    OUTPUT_FORMAT,
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                );
+                let rgba_texels = c3d_true_color_material_texels(texture);
+                self.queue.write_texture(
+                    texture_copy(&rgba_native),
+                    &rgba_texels,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(u32::from(extent.width) * 4),
+                        rows_per_image: Some(u32::from(extent.height)),
+                    },
+                    size,
+                );
+                let rgba_view = rgba_native.create_view(&wgpu::TextureViewDescriptor::default());
                 let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("cmr prepared C3D texture bind group"),
                     layout: &self.c3d_texture_layout,
@@ -1114,10 +1217,15 @@ impl PersistentRawC3dGpuBackend for WgpuIndexedPaletteBackend {
                             binding: 1,
                             resource: wgpu::BindingResource::TextureView(&active_palette_view),
                         },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(&rgba_view),
+                        },
                     ],
                 });
                 WgpuPreparedTexture {
                     _texture: native,
+                    _rgba_texture: rgba_native,
                     bind_group,
                 }
             })
@@ -1370,6 +1478,196 @@ impl WgpuIndexedPaletteBackend {
         .map(|(frame, depth)| (frame, depth.unwrap_or_default()))
     }
 
+    /// Renders a single prepared scene into both the 8-bit palette-index target
+    /// and the true-color RGBA8 target (per-texture palettes, bilinear filtering,
+    /// and per-vertex Gouraud `D3DTBLEND_MODULATE`), optionally reading back depth.
+    pub fn render_prepared_true_color_and_indexed_readback(
+        &mut self,
+        scene: &mut WgpuPreparedC3dScene,
+        frame: C3dPreparedFrame<'_>,
+        with_depth: bool,
+    ) -> Result<
+        (
+            CanonicalIndexedFrame,
+            cmr_gpu_contract::CanonicalRgba8Frame,
+            Option<Vec<f32>>,
+        ),
+        WgpuBackendError,
+    > {
+        frame
+            .ensure_layout(scene.layout)
+            .map_err(WgpuBackendError::RawContract)?;
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("cmr prepared C3D true-color + indexed presentation commands"),
+            });
+        let index_draws = self.encode_prepared_c3d_target(
+            scene,
+            frame,
+            &mut encoder,
+            C3dEncodeTarget::PaletteIndex,
+        )?;
+        let rgba_draws = self.encode_prepared_c3d_target(
+            scene,
+            frame,
+            &mut encoder,
+            C3dEncodeTarget::TrueColor,
+        )?;
+        let extent = scene.layout.extent();
+        encoder.copy_texture_to_buffer(
+            texture_copy(&scene._output_texture),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &scene.readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(scene.readback_pitch),
+                    rows_per_image: Some(u32::from(extent.height)),
+                },
+            },
+            wgpu::Extent3d {
+                width: u32::from(extent.width),
+                height: u32::from(extent.height),
+                depth_or_array_layers: 1,
+            },
+        );
+        let (indexed, depth) = self.submit_indexed_readback(scene, encoder, with_depth)?;
+        let rgba = self.map_rgba_readback(scene)?;
+        drop((index_draws, rgba_draws));
+        Ok((indexed, rgba, depth))
+    }
+
+    /// Renders a layered background + foreground into both the 8-bit palette-index
+    /// target and the true-color RGBA8 target, optionally reading back depth.
+    pub fn render_prepared_layered_true_color_and_indexed_readback(
+        &mut self,
+        background: &mut WgpuPreparedC3dScene,
+        background_frame: C3dPreparedFrame<'_>,
+        foreground: &mut WgpuPreparedC3dScene,
+        foreground_frame: C3dPreparedFrame<'_>,
+        with_depth: bool,
+    ) -> Result<
+        (
+            CanonicalIndexedFrame,
+            cmr_gpu_contract::CanonicalRgba8Frame,
+            Option<Vec<f32>>,
+        ),
+        WgpuBackendError,
+    > {
+        background_frame
+            .ensure_layout(background.layout)
+            .map_err(WgpuBackendError::RawContract)?;
+        foreground_frame
+            .ensure_layout(foreground.layout)
+            .map_err(WgpuBackendError::RawContract)?;
+        let extent = background.layout.extent();
+        if foreground.layout.extent() != extent {
+            return Err(WgpuBackendError::LayeredExtentMismatch {
+                background: [extent.width, extent.height],
+                foreground: [
+                    foreground.layout.extent().width,
+                    foreground.layout.extent().height,
+                ],
+            });
+        }
+        if foreground.active_palette != background.active_palette {
+            return Err(WgpuBackendError::LayeredPaletteMismatch);
+        }
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("cmr layered C3D true-color + indexed presentation commands"),
+            });
+        let bg_idx = self.encode_prepared_c3d_target_into(
+            background,
+            background,
+            background_frame,
+            &mut encoder,
+            C3dEncodeTarget::PaletteIndex,
+            false,
+        )?;
+        let fg_idx = self.encode_prepared_c3d_target_into(
+            foreground,
+            background,
+            foreground_frame,
+            &mut encoder,
+            C3dEncodeTarget::PaletteIndex,
+            true,
+        )?;
+        let bg_rgba = self.encode_prepared_c3d_target_into(
+            background,
+            background,
+            background_frame,
+            &mut encoder,
+            C3dEncodeTarget::TrueColor,
+            false,
+        )?;
+        let fg_rgba = self.encode_prepared_c3d_target_into(
+            foreground,
+            background,
+            foreground_frame,
+            &mut encoder,
+            C3dEncodeTarget::TrueColor,
+            true,
+        )?;
+        encoder.copy_texture_to_buffer(
+            texture_copy(&background._output_texture),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &background.readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(background.readback_pitch),
+                    rows_per_image: Some(u32::from(extent.height)),
+                },
+            },
+            wgpu::Extent3d {
+                width: u32::from(extent.width),
+                height: u32::from(extent.height),
+                depth_or_array_layers: 1,
+            },
+        );
+        let (indexed, depth) = self.submit_indexed_readback(background, encoder, with_depth)?;
+        let rgba = self.map_rgba_readback(background)?;
+        drop((bg_idx, fg_idx, bg_rgba, fg_rgba));
+        Ok((indexed, rgba, depth))
+    }
+
+    fn map_rgba_readback(
+        &self,
+        scene: &WgpuPreparedC3dScene,
+    ) -> Result<cmr_gpu_contract::CanonicalRgba8Frame, WgpuBackendError> {
+        let extent = scene.layout.extent();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        scene
+            .readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = sender.send(result);
+            });
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|error| WgpuBackendError::Map(error.to_string()))?;
+        receiver
+            .recv()
+            .map_err(|error| WgpuBackendError::MapChannel(error.to_string()))?
+            .map_err(|error| WgpuBackendError::Map(error.to_string()))?;
+        let mapped = scene
+            .readback
+            .slice(..)
+            .get_mapped_range()
+            .map_err(|error| WgpuBackendError::Map(error.to_string()))?;
+        let rgba8 = normalize_readback(
+            extent,
+            &mapped,
+            scene.readback_pitch as usize,
+            ReadbackFormat::Rgba8,
+        )
+        .map_err(WgpuBackendError::Contract)?;
+        drop(mapped);
+        scene.readback.unmap();
+        Ok(rgba8)
+    }
+
     fn render_layered(
         &mut self,
         background: &mut WgpuPreparedC3dScene,
@@ -1615,7 +1913,7 @@ impl WgpuIndexedPaletteBackend {
         }
         let clear = target_scene.active_palette[0];
         let (target_view, clear_color) = match target {
-            C3dEncodeTarget::Rgba => (
+            C3dEncodeTarget::Rgba | C3dEncodeTarget::TrueColor => (
                 &target_scene.output_view,
                 wgpu::Color {
                     r: f64::from(clear.red) / 255.0,
@@ -1672,6 +1970,12 @@ impl WgpuIndexedPaletteBackend {
                         &self.c3d_culled_pipeline
                     }
                     (C3dEncodeTarget::Rgba, C3dCullMode::None) => &self.c3d_two_sided_pipeline,
+                    (C3dEncodeTarget::TrueColor, C3dCullMode::CullCounterClockwise) => {
+                        &self.c3d_true_color_culled_pipeline
+                    }
+                    (C3dEncodeTarget::TrueColor, C3dCullMode::None) => {
+                        &self.c3d_true_color_two_sided_pipeline
+                    }
                     (C3dEncodeTarget::PaletteIndex, C3dCullMode::CullCounterClockwise) => {
                         &self.c3d_index_culled_pipeline
                     }
@@ -1720,6 +2024,23 @@ fn create_c3d_pipeline(
     )
 }
 
+fn create_c3d_true_color_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    cull_mode: Option<wgpu::Face>,
+) -> wgpu::RenderPipeline {
+    create_c3d_pipeline_variant(
+        device,
+        layout,
+        shader,
+        cull_mode,
+        "cmr raw C3D true-color pipeline",
+        "fragment_true_color",
+        OUTPUT_FORMAT,
+    )
+}
+
 fn create_c3d_index_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
@@ -1746,7 +2067,7 @@ fn create_c3d_pipeline_variant(
     fragment_entry: &str,
     color_format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 3] = [
+    const ATTRIBUTES: [wgpu::VertexAttribute; 4] = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Sint32x3,
             offset: 0,
@@ -1762,6 +2083,11 @@ fn create_c3d_pipeline_variant(
             offset: 20,
             shader_location: 2,
         },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Unorm8x4,
+            offset: 32,
+            shader_location: 3,
+        },
     ];
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -1771,7 +2097,7 @@ fn create_c3d_pipeline_variant(
             entry_point: Some("vertex_main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             buffers: &[Some(wgpu::VertexBufferLayout {
-                array_stride: 32,
+                array_stride: 36,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: &ATTRIBUTES,
             })],
@@ -1836,11 +2162,42 @@ fn active_palette_rgba8(palette: &[cmr_formats::riff_palette::PaletteEntry; 256]
     bytes
 }
 
+/// Expands one material's indexed texels through its own 256-entry RGB palette
+/// into RGBA8 (`alpha = 0` for `color_key_index`, `255` otherwise).
+fn c3d_true_color_material_texels(texture: &cmr_gpu_contract::C3dIndexedTexture) -> Vec<u8> {
+    let palette = texture.palette();
+    let key = texture.color_key_index();
+    texture
+        .indices()
+        .iter()
+        .flat_map(|&source_index| {
+            let rgb = palette.get(usize::from(source_index)).copied().unwrap_or(
+                cmr_gpu_contract::C3dRgb8 {
+                    red: 0,
+                    green: 0,
+                    blue: 0,
+                },
+            );
+            let alpha = if key == Some(source_index) {
+                0
+            } else {
+                u8::MAX
+            };
+            [rgb.red, rgb.green, rgb.blue, alpha]
+        })
+        .collect()
+}
+
 fn c3d_vertex_bytes(vertices: &[cmr_gpu_contract::C3dStageVertex]) -> Vec<u8> {
     vertices
         .iter()
-        .flat_map(|vertex| vertex.upload_words())
-        .flat_map(u32::to_le_bytes)
+        .flat_map(|vertex| {
+            vertex
+                .upload_words()
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .chain(vertex.diffuse_rgba())
+        })
         .collect()
 }
 
@@ -1891,6 +2248,19 @@ fn texture_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
             sample_type: wgpu::TextureSampleType::Uint,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn float_texture_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
             view_dimension: wgpu::TextureViewDimension::D2,
             multisampled: false,
         },
@@ -2064,9 +2434,10 @@ mod tests {
             1, -2, 3, -4, 5, -6, 7, -8,
         ])];
         let bytes = c3d_vertex_bytes(&vertices);
-        assert_eq!(bytes.len(), 32);
+        assert_eq!(bytes.len(), 36);
         assert_eq!(&bytes[0..4], &1i32.to_le_bytes());
         assert_eq!(&bytes[28..32], &(-8i32).to_le_bytes());
+        assert_eq!(&bytes[32..36], &[0xff, 0xff, 0xff, 0xff]);
         assert_eq!(&bytes[12..16], &vertices[0].texture_uv()[0].to_le_bytes());
         assert_eq!(&bytes[16..20], &vertices[0].texture_uv()[1].to_le_bytes());
         assert_eq!(c3d_index_bytes(&[0x1234, 0xabcd]), [0x34, 0x12, 0xcd, 0xab]);
