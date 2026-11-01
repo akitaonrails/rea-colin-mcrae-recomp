@@ -62,6 +62,10 @@ pub struct SdlGpuIndexedBackend {
 }
 
 impl SdlGpuIndexedBackend {
+    // The build script deliberately emits empty marker files when the optional
+    // external shader compiler is unavailable; these lengths are not constant
+    // across build environments.
+    #[allow(clippy::const_is_empty)]
     pub fn new(config: SdlGpuConfig) -> Result<Self, SdlGpuError> {
         if env!("CMR_SDL_GPU_SPIRV_AVAILABLE") != "1"
             || VERTEX_SPIRV.is_empty()

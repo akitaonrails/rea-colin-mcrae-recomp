@@ -208,7 +208,7 @@ impl SchoolRace {
         scoring: SchoolScoring,
     ) -> Self {
         let loop_task = if level == 0 { task == 1 } else { task <= 1 };
-        let hud = !loop_task && !(level == 0 && task == 0);
+        let hud = !(loop_task || level == 0 && task == 0);
         Self {
             level,
             task,
@@ -236,7 +236,7 @@ impl SchoolRace {
             clock_running: false,
             clock_start: 0,
             now: 0,
-            fsm: u8::from(!loop_task && !(level == 0 && task == 0)),
+            fsm: u8::from(hud),
             wait: 0,
             wait_nag_armed: false,
             cones: 0,

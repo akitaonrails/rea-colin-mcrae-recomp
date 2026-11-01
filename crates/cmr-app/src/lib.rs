@@ -6302,7 +6302,7 @@ fn advance_game_frame<C: HostClock>(
             session.event(),
             config,
         );
-        let show_hud = !session.school_task().is_some_and(|task| !task.race.hud);
+        let show_hud = session.school_task().is_none_or(|task| task.race.hud);
         let setup_800 = session.wheel_setup_800();
 
         let (prev_camera_world, prev_car_world, prev_car) = match camera.prev_tick_pose {
@@ -12770,6 +12770,10 @@ mod tests {
                 }
             }
         }
+        // End the closure's mutable borrows before inspecting/writing its PCM
+        // capture. The closure has no destructor; this is a lexical borrow
+        // boundary for this diagnostic harness.
+        #[allow(clippy::drop_non_drop)]
         drop(advance);
         if audio_mixer.is_some() {
             let peak = pcm.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);

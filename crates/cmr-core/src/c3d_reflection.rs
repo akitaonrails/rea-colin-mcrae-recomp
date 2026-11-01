@@ -26,7 +26,7 @@ use crate::c3d_camera::{invert_affine_q16, matmul_q16, transform_direction_q16};
 /// The Q16.16-to-`f32` scale `FUN_0049f6b0` applies to a view-space normal
 /// component: the literal `1.5258789e-05` (`2^-16`) immediate in the shipped
 /// routine, kept verbatim so the UV math matches bit for bit.
-const Q16_TO_F32: f32 = 1.5258789e-05;
+const Q16_TO_F32: f32 = 1.525_878_9e-5;
 
 /// Builds the node-local-to-view-space reflection matrix: the node's world
 /// matrix concatenated with the inverse of the camera-world matrix

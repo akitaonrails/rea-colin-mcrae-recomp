@@ -602,7 +602,7 @@ impl SurfaceSoundState {
             if n2 == 0 && n1 == 0 && !low {
                 break 'stops false;
             }
-            if !(n2 == 0 && n1 == 0) && !low && self.low_active {
+            if (n2 != 0 || n1 != 0) && !low && self.low_active {
                 for n in 0..4 {
                     t.stop_if_playing(n);
                 }
