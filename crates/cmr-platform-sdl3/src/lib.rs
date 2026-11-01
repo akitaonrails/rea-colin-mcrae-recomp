@@ -435,6 +435,81 @@ fn redraw_present(
     Ok(())
 }
 
+/// Compute the logical SDL window dimensions `(width, height)` for a target
+/// physical resolution `(desired_phys_w, desired_phys_h)`, dividing by the
+/// window/display `pixel_density` (e.g. `1.5` on HiDPI Wayland/macOS with
+/// `high_pixel_density`) and clamping proportionally to fit within the
+/// platform-reported `usable_bounds`. This keeps a windowed 4K session inside
+/// desktop reservations when the video backend exposes them.
+#[must_use]
+pub fn compute_fitted_window_size(
+    desired_phys_w: u32,
+    desired_phys_h: u32,
+    pixel_density: f32,
+    usable_bounds: Option<(u32, u32)>,
+) -> (u32, u32) {
+    let density = if pixel_density.is_finite() && pixel_density > 0.1 {
+        pixel_density
+    } else {
+        1.0
+    };
+    let mut w = ((desired_phys_w as f32) / density).round().max(320.0) as u32;
+    let mut h = ((desired_phys_h as f32) / density).round().max(240.0) as u32;
+    if let Some((usable_w, usable_h)) = usable_bounds
+        && usable_w > 0
+        && usable_h > 0
+        && (w > usable_w || h > usable_h)
+    {
+        let fit_scale = (usable_w as f32 / w as f32).min(usable_h as f32 / h as f32);
+        w = ((w as f32) * fit_scale)
+            .floor()
+            .max(320.0)
+            .min(usable_w as f32) as u32;
+        h = ((h as f32) * fit_scale)
+            .floor()
+            .max(240.0)
+            .min(usable_h as f32) as u32;
+    }
+    (w, h)
+}
+
+fn query_display_usable_and_density(
+    video: &sdl3::VideoSubsystem,
+    window: Option<&Window>,
+) -> (f32, Option<(u32, u32)>) {
+    let display = window
+        .and_then(|win| win.get_display().ok())
+        .or_else(|| video.get_primary_display().ok());
+    let usable_bounds = display
+        .and_then(|d| d.get_usable_bounds().ok())
+        .filter(|r| r.width() > 0 && r.height() > 0)
+        .map(|r| (r.width(), r.height()));
+    let pixel_density = if let Some(window) = window {
+        window.pixel_density()
+    } else {
+        display
+            .and_then(|display| display.get_mode().ok())
+            .map_or(1.0, |mode| mode.pixel_density)
+    };
+    (pixel_density, usable_bounds)
+}
+
+fn apply_modern_window_size(
+    video: &sdl3::VideoSubsystem,
+    window: &mut Window,
+    resolution: cmr_core::modern_settings::ModernResolution,
+) {
+    let (desired_w, desired_h) = resolution.dimensions();
+    let (density, usable_bounds) = query_display_usable_and_density(video, Some(window));
+    let (logical_w, logical_h) =
+        compute_fitted_window_size(desired_w, desired_h, density, usable_bounds);
+    let _ = window.set_size(logical_w, logical_h);
+    let _ = window.set_position(
+        sdl3::video::WindowPos::Centered,
+        sdl3::video::WindowPos::Centered,
+    );
+}
+
 fn redraw_present_modern(
     canvas: &mut Canvas<Window>,
     texture: &Texture<'_>,
@@ -958,7 +1033,14 @@ where
         .map_err(SdlHostError::FrameConversion)?;
     let mut texture_extent = rgba.extent();
     let mut active_modern = initial_modern;
-    let (win_w, win_h) = active_modern.resolution.dimensions();
+    let (desired_w, desired_h) = active_modern.resolution.dimensions();
+
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("SDL_VIDEODRIVER").is_none()
+        && std::env::var_os("SDL_VIDEO_DRIVER").is_none()
+    {
+        let _ = sdl3::hint::set("SDL_VIDEO_DRIVER", "wayland,x11");
+    }
 
     let sdl = sdl3::init().map_err(|error| SdlHostError::sdl("initialization", error))?;
     let video = sdl
@@ -967,13 +1049,18 @@ where
     let gamepad = sdl
         .gamepad()
         .map_err(|error| SdlHostError::sdl("gamepad initialization", error))?;
+    let (init_density, init_usable) = query_display_usable_and_density(&video, None);
+    let (win_w, win_h) =
+        compute_fitted_window_size(desired_w, desired_h, init_density, init_usable);
     let window = video
         .window("Colin McRae Rally — Modern Edition", win_w, win_h)
         .position_centered()
         .resizable()
+        .high_pixel_density()
         .build()
         .map_err(|error| SdlHostError::sdl("window creation", error))?;
     let mut canvas = window.into_canvas();
+    apply_modern_window_size(&video, canvas.window_mut(), active_modern.resolution);
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator
         .create_texture_streaming(
@@ -1216,12 +1303,7 @@ where
             if new_modern.resolution != active_modern.resolution
                 && canvas.window().fullscreen_state() == sdl3::video::FullscreenType::Off
             {
-                let (w, h) = new_modern.resolution.dimensions();
-                let _ = canvas.window_mut().set_size(w, h);
-                canvas.window_mut().set_position(
-                    sdl3::video::WindowPos::Centered,
-                    sdl3::video::WindowPos::Centered,
-                );
+                apply_modern_window_size(&video, canvas.window_mut(), new_modern.resolution);
             }
             let mode = if new_modern.texture_filter.uses_linear_filtering() {
                 ScaleMode::Linear
@@ -1817,5 +1899,46 @@ mod tests {
             copy_packed_rows(&[1; 8], 4, &mut destination, 3, 2),
             Err(SdlHostError::InvalidUploadLayout { .. })
         ));
+    }
+
+    #[test]
+    fn compute_fitted_window_size_scales_for_hidpi_and_clamps_to_usable_bounds() {
+        // On a 3840x2160 monitor at 1.5x scale (2560x1414 usable logical bounds):
+        // - 1080p (1920x1080) maps to 1280x720 logical units (1920x1080 physical).
+        assert_eq!(
+            compute_fitted_window_size(1920, 1080, 1.5, Some((2560, 1414))),
+            (1280, 720)
+        );
+        // - 1440p (2560x1440) maps to 1707x960 logical units (2560x1440 physical).
+        assert_eq!(
+            compute_fitted_window_size(2560, 1440, 1.5, Some((2560, 1414))),
+            (1707, 960)
+        );
+        // - 4K (3840x2160) maps to 2560x1440 logical units and clamps proportionally
+        //   to 2513x1414 so the window never overflows the 2560x1414 usable desktop.
+        let (w_4k, h_4k) = compute_fitted_window_size(3840, 2160, 1.5, Some((2560, 1414)));
+        assert!(w_4k <= 2560 && h_4k <= 1414);
+        assert_eq!(h_4k, 1414);
+        assert!((w_4k as i32 - 2514).abs() <= 1);
+    }
+
+    #[test]
+    fn compute_fitted_window_size_preserves_unscaled_and_invalid_density_behavior() {
+        assert_eq!(
+            compute_fitted_window_size(1920, 1080, 1.0, None),
+            (1920, 1080)
+        );
+        assert_eq!(
+            compute_fitted_window_size(2560, 1440, f32::NAN, Some((3840, 2160))),
+            (2560, 1440)
+        );
+        assert_eq!(
+            compute_fitted_window_size(3840, 2160, 0.0, Some((2560, 1440))),
+            (2560, 1440)
+        );
+        assert_eq!(
+            compute_fitted_window_size(1920, 1080, 1.5, Some((0, 0))),
+            (1280, 720)
+        );
     }
 }
