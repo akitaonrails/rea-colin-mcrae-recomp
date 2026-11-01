@@ -91,7 +91,7 @@ jobs:
           "$ARTIFACT" --appimage-extract >/dev/null
           ! find squashfs-root -type f | grep -E '/(Rally|Game)\.exe$|/qmixer\.dll$|\.(c3d|wav|bmp|pal|fon)$'
           rm -rf squashfs-root
-          sha256sum "$ARTIFACT" > "$ARTIFACT.sha256"
+          (cd dist && sha256sum "$(basename "$ARTIFACT")" > "$(basename "$ARTIFACT").sha256")
 
       - name: Package and inspect Windows ZIP
         if: runner.os == 'Windows'
