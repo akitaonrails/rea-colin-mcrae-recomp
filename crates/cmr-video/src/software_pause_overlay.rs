@@ -150,6 +150,7 @@ pub fn compose_text_overlay<'a>(
                             px[0] = rgb[0];
                             px[1] = rgb[1];
                             px[2] = rgb[2];
+                            px[3] = 0xfe;
                         }
                     }
                 }
@@ -227,6 +228,7 @@ pub fn compose_icon_overlay<'a>(
                         px[0] = rgb[0];
                         px[1] = rgb[1];
                         px[2] = rgb[2];
+                        px[3] = 0xfe;
                     }
                 }
             }

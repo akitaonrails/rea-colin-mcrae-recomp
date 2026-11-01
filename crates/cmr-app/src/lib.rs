@@ -2088,13 +2088,44 @@ impl WgpuStageRenderer {
                 post,
             );
         }
+        let mut rgba_bytes = rgba.pixels().to_vec();
+        for px in rgba_bytes.as_chunks_mut::<4>().0 {
+            px[3] = u8::MAX;
+        }
         SoftwarePresentedFrame::from_indexed(
             indexed.extent(),
             indexed.indices().to_vec().into_boxed_slice(),
             Box::new(self.palette),
         )
-        .and_then(|presented| presented.with_rgba8(rgba.pixels().to_vec().into_boxed_slice()))
+        .and_then(|presented| presented.with_rgba8(rgba_bytes.into_boxed_slice()))
         .map_err(StageFrameError::Present)
+    }
+
+    fn configure_modern(&mut self, modern: cmr_core::modern_settings::ModernSettings) {
+        let internal = modern.internal_render_extent();
+        let config = cmr_video_wgpu::WgpuModernRenderConfig {
+            output_extent: [internal.width, internal.height],
+            sample_count: modern.msaa.sample_count(),
+            filter_level: modern.texture_filter.shader_filter_level(),
+        };
+        self.backend
+            .configure_modern_scene(&mut self.scene, self.horizon_scene.as_mut(), config);
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn resolve_hi_res_composite(
+        &self,
+        final_640_rgba: &[u8],
+        cas_sharpness: f32,
+    ) -> Result<Option<(DisplayExtent, Box<[u8]>, bool)>, StageFrameError> {
+        self.backend
+            .resolve_hi_res_composite(&self.scene, final_640_rgba, cas_sharpness)
+            .map(|opt| {
+                opt.map(|([width, height], pixels, cas_applied)| {
+                    (DisplayExtent { width, height }, pixels, cas_applied)
+                })
+            })
+            .map_err(|error| StageFrameError::GpuCompose(error.to_string()))
     }
 }
 
@@ -2351,6 +2382,7 @@ pub struct StageRenderResources {
     object_locals: Vec<(usize, [i32; 16])>,
     palette: [PaletteEntry; 256],
     projection: (f32, f32, f32, f32),
+    modern_settings: Option<cmr_core::modern_settings::ModernSettings>,
     node_count: usize,
     draw_ops: usize,
     choice: StageRendererChoice,
@@ -2463,6 +2495,7 @@ impl StageRenderResources {
                 ROOT_EXTENT.width,
                 ROOT_EXTENT.height,
             ),
+            modern_settings: None,
             node_count,
             draw_ops,
             choice,
@@ -2537,6 +2570,49 @@ impl StageRenderResources {
     /// used for widescreen Hor+ FOV and extended draw distance.
     pub fn set_projection(&mut self, projection: (f32, f32, f32, f32)) {
         self.projection = projection;
+    }
+
+    /// Synchronize modern graphics pipeline settings (internal render resolution,
+    /// MSAA sample count, texture filtering level, widescreen Hor+ FOV, and draw
+    /// distance) with the active stage renderer.
+    pub fn sync_modern_settings(&mut self, modern: cmr_core::modern_settings::ModernSettings) {
+        self.modern_settings = Some(modern);
+        let (res_w, res_h) = modern.resolution.dimensions();
+        let target_aspect = modern.aspect_ratio.effective_aspect(res_w, res_h);
+        self.set_projection(cmr_core::c3d_camera::gameplay_projection_modern(
+            ROOT_EXTENT.width,
+            ROOT_EXTENT.height,
+            target_aspect,
+            modern.draw_distance.multiplier_f32(),
+        ));
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.configure_modern(modern);
+        }
+    }
+
+    /// Resolves high-resolution 3D + 2D HUD/overlay composition and GPU CAS
+    /// sharpening when a modern high-resolution target is active. Any error
+    /// falls back gracefully to the 640x480 frame so rendering never halts.
+    pub fn finalize_modern_world_frame(
+        &self,
+        frame: SoftwarePresentedFrame,
+    ) -> SoftwarePresentedFrame {
+        let (Some(gpu), Some(modern), Some(rgba8)) =
+            (self.gpu.as_ref(), self.modern_settings, frame.rgba8())
+        else {
+            return frame;
+        };
+        match gpu.resolve_hi_res_composite(rgba8, modern.upscaling.sharpness_f32()) {
+            Ok(Some((extent, pixels, cas_applied))) => frame
+                .clone()
+                .with_hi_res_rgba8(extent, pixels, cas_applied)
+                .unwrap_or(frame),
+            Ok(None) => frame,
+            Err(error) => {
+                eprintln!("cmr-app: high-res composite fallback ({error})");
+                frame
+            }
+        }
     }
 
     fn prepare_gpu_foreground(&self) -> Result<PreparedRawStage, StageFrameError> {
@@ -2628,7 +2704,10 @@ impl StageRenderResources {
             WgpuStageRenderer::from_prepared(foreground, horizon)
         });
         match renderer {
-            Ok(renderer) => {
+            Ok(mut renderer) => {
+                if let Some(modern) = self.modern_settings {
+                    renderer.configure_modern(modern);
+                }
                 self.gpu = Some(renderer);
                 Ok(())
             }
@@ -6165,16 +6244,14 @@ fn advance_game_frame<C: HostClock>(
             true,
         );
         resources.set_object_locals(session.moving_object_node_locals_interpolated(alpha_q16));
-        let (res_w, res_h) = config.modern.resolution.dimensions();
-        let target_aspect = config.modern.aspect_ratio.effective_aspect(res_w, res_h);
-        resources.set_projection(cmr_core::c3d_camera::gameplay_projection_modern(
-            ROOT_EXTENT.width,
-            ROOT_EXTENT.height,
-            target_aspect,
-            config.modern.draw_distance.multiplier_f32(),
-        ));
+        resources.sync_modern_settings(config.modern);
         let world = resources
             .compose_with_posed_car(&camera_world, Some(&car_world), &wheels)
+            .or_else(|error| {
+                eprintln!("cmr-app: GPU stage compose failed ({error}); falling back to software");
+                resources.gpu = None;
+                resources.compose_software(&camera_world, Some(&car_world), &wheels)
+            })
             .map(|rendered| rendered.frame)?;
         // The HUD bar is queued after the quad and drawn over it unfaded.
         let world = match fade_step {
@@ -6255,6 +6332,7 @@ fn advance_game_frame<C: HostClock>(
     } else {
         world
     };
+    let world = world.map(|frame| resources.finalize_modern_world_frame(frame));
     // The listener `FUN_0047ec20` and the engine sound `FUN_00488d60` run
     // after this tick's Mechanics (which includes the camera driver) while the
     // race simulation steps; when transitioning out of State 5 into State 8
@@ -6476,7 +6554,7 @@ fn compose_subtick_frame(
     if snap.reset_fade > 0 {
         world = world.modulated(0xff - snap.reset_fade);
     }
-    Some(world)
+    Some(resources.finalize_modern_world_frame(world))
 }
 
 /// What one [`advance_game_frame`] produced for the windowed loop.
@@ -9394,6 +9472,7 @@ fn reload_stage_for_event<'a>(
     reload_changed_stage(
         session, resources, progress, audio, camera, loaded, context, setup,
     )?;
+    resources.sync_modern_settings(config.modern);
     // The car load reloads the model and sets its parts up afresh
     // (`FUN_00480e60`, `FUN_0041efe0`); the model index is `cfg[0xb6]`'s.
     let model = session.event().cfg.car_0b6 & 0xf;
@@ -10281,11 +10360,11 @@ pub fn run_windowed_game_session(
     // keyboard device records (`FUN_0049d6e0`); player 1 drives from record 0.
     root_interaction.install_keyboard_record(&config.image);
     root_interaction.enable_modern_mode(config.modern);
+    resources.sync_modern_settings(config.modern);
     let mut keyboard = KeyboardDriver::new(
         root_interaction.screens().controls().keyboards[0],
         cmr_core::input_map::ControlConfig::default(),
     );
-    let mut runtime_error = None;
     let mut loaded_stage = LoadedStageKey {
         name: stage.to_ascii_uppercase(),
         weather,
@@ -10455,10 +10534,17 @@ pub fn run_windowed_game_session(
                                 }
                             }
                             Err(error) => {
-                                runtime_error = Some(error);
+                                eprintln!(
+                                    "cmr-app: recoverable session error ({error}); returning to safe state"
+                                );
+                                resources.gpu = None;
+                                if session.state().id() == 4 {
+                                    *session.event_mut() = EventState::default();
+                                    config.returning = true;
+                                }
                                 WindowedGameFrame {
-                                    present: None,
-                                    stopped: true,
+                                    present: Some(initial.clone()),
+                                    stopped: false,
                                     music_active: false,
                                     speech_active: false,
                                     speech_reset: true,
@@ -10476,9 +10562,6 @@ pub fn run_windowed_game_session(
         );
         if let Ok(run) = built {
             run.output.map_err(WindowedStageFrameError::Present)?;
-            if let Some(error) = runtime_error {
-                return Err(error);
-            }
             return Ok(());
         }
         // The front-end session could not be built after its inputs opened; fall
@@ -10562,10 +10645,17 @@ pub fn run_windowed_game_session(
                     rumble_low_high_q16: outcome.rumble_low_high_q16,
                 },
                 Err(error) => {
-                    runtime_error = Some(error);
+                    eprintln!(
+                        "cmr-app: recoverable session error ({error}); falling back to software"
+                    );
+                    resources.gpu = None;
+                    if session.state().id() == 4 {
+                        *session.event_mut() = EventState::default();
+                        config.returning = true;
+                    }
                     WindowedGameFrame {
-                        present: None,
-                        stopped: true,
+                        present: Some(initial.clone()),
+                        stopped: false,
                         music_active: false,
                         speech_active: false,
                         speech_reset: true,
@@ -10580,9 +10670,6 @@ pub fn run_windowed_game_session(
         },
     )
     .map_err(WindowedStageFrameError::Present)?;
-    if let Some(error) = runtime_error {
-        return Err(error);
-    }
     Ok(())
 }
 
@@ -11848,6 +11935,87 @@ mod tests {
             mismatches <= 307,
             "imported AU1 exceeds the established 0.1% GPU/software raster boundary: {mismatches} pixels"
         );
+    }
+
+    #[test]
+    #[ignore = "requires the reviewed installed-EU runtime data and a Vulkan adapter"]
+    fn imported_au1_ultra_4k_preset_renders_native_3840x2160_and_switches_live() {
+        let root = std::env::var_os("CMR_RUNTIME_DATA")
+            .map(PathBuf::from)
+            .expect("set CMR_RUNTIME_DATA to the reviewed installed-EU root");
+        let (mut gpu, _, start, camera, _) = native_stage_setup(
+            &root.join("Game/Au/1"),
+            &root,
+            "AU1",
+            Some("Sub"),
+            StageRendererChoice::Gpu,
+        )
+        .unwrap();
+        let harness_car_world = cmr_core::gameplay_camera::car_world_q16(
+            &cmr_core::fixed_point::build_sine_table(),
+            start.position,
+            start.heading,
+        );
+        let car_world = car_model_world_q16(&harness_car_world);
+
+        // 1. Switch live to Ultra 4K preset (3840x2160, 4x MSAA, 16x Anisotropic, CAS).
+        let ultra = cmr_core::modern_settings::ModernSettings::from_preset(
+            cmr_core::modern_settings::ModernPreset::Ultra4K,
+        );
+        gpu.sync_modern_settings(ultra);
+        let base_4k = gpu.compose_with_car(&camera, Some(&car_world)).unwrap();
+        let final_4k = gpu
+            .finalize_modern_world_frame(base_4k.frame)
+            .into_rgba8()
+            .unwrap();
+        assert_eq!(
+            final_4k.extent(),
+            DisplayExtent {
+                width: 3840,
+                height: 2160
+            }
+        );
+        assert_eq!(final_4k.pixels().len(), 3840 * 2160 * 4);
+        assert!(final_4k.cas_applied());
+
+        // 2. Switch live to Enhanced 1080p preset (1920x1080).
+        let enhanced = cmr_core::modern_settings::ModernSettings::from_preset(
+            cmr_core::modern_settings::ModernPreset::Enhanced1080p,
+        );
+        gpu.sync_modern_settings(enhanced);
+        let base_1080p = gpu.compose_with_car(&camera, Some(&car_world)).unwrap();
+        let final_1080p = gpu
+            .finalize_modern_world_frame(base_1080p.frame)
+            .into_rgba8()
+            .unwrap();
+        assert_eq!(
+            final_1080p.extent(),
+            DisplayExtent {
+                width: 1920,
+                height: 1080
+            }
+        );
+        assert_eq!(final_1080p.pixels().len(), 1920 * 1080 * 4);
+        assert!(final_1080p.cas_applied());
+
+        // 3. Switch live to Original 1998 preset (640x480, Nearest, 1x).
+        let retro = cmr_core::modern_settings::ModernSettings::from_preset(
+            cmr_core::modern_settings::ModernPreset::Original1998,
+        );
+        gpu.sync_modern_settings(retro);
+        let base_retro = gpu.compose_with_car(&camera, Some(&car_world)).unwrap();
+        let final_retro = gpu
+            .finalize_modern_world_frame(base_retro.frame)
+            .into_rgba8()
+            .unwrap();
+        assert_eq!(
+            final_retro.extent(),
+            DisplayExtent {
+                width: 640,
+                height: 480
+            }
+        );
+        assert!(!final_retro.cas_applied());
     }
 
     /// A hard rear hit dents the car visibly, and the GPU's in-place car

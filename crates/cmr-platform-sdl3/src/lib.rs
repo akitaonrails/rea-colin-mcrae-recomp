@@ -487,7 +487,12 @@ fn upload_rgba_frame_with_cas(
         .with_lock(None, |destination, destination_pitch| {
             upload_result =
                 copy_packed_rows(src, src_pitch, destination, destination_pitch, height);
-            if upload_result.is_ok() && sharpness > 0.01 && width >= 3 && height >= 3 {
+            if upload_result.is_ok()
+                && !frame.cas_applied()
+                && sharpness > 0.01
+                && width >= 3
+                && height >= 3
+            {
                 // 5-tap Contrast-Adaptive Sharpening (CAS) kernel on interior pixels.
                 let weight = (sharpness * 0.22).clamp(0.0, 0.25);
                 for y in 1..(height - 1) {
@@ -951,7 +956,7 @@ where
     let rgba = initial
         .expand_rgba8()
         .map_err(SdlHostError::FrameConversion)?;
-    let extent = rgba.extent();
+    let mut texture_extent = rgba.extent();
     let mut active_modern = initial_modern;
     let (win_w, win_h) = active_modern.resolution.dimensions();
 
@@ -973,8 +978,8 @@ where
     let mut texture = texture_creator
         .create_texture_streaming(
             PixelFormat::RGBA32,
-            u32::from(extent.width),
-            u32::from(extent.height),
+            u32::from(texture_extent.width),
+            u32::from(texture_extent.height),
         )
         .map_err(|error| SdlHostError::sdl("streaming texture creation", error))?;
     let scale_mode = if active_modern.texture_filter.uses_linear_filtering() {
@@ -984,7 +989,12 @@ where
     };
     texture.set_scale_mode(scale_mode);
     upload_rgba_frame_with_cas(&mut texture, &rgba, active_modern.upscaling.sharpness_f32())?;
-    redraw_present_modern(&mut canvas, &texture, extent, active_modern.aspect_ratio)?;
+    redraw_present_modern(
+        &mut canvas,
+        &texture,
+        texture_extent,
+        active_modern.aspect_ratio,
+    )?;
 
     let mut events = sdl
         .event_pump()
@@ -1070,7 +1080,7 @@ where
             for event in std::iter::once(event).chain(events.poll_iter()) {
                 feed_input_event(&event, &mut frontend);
                 if is_fullscreen_toggle(&event) {
-                    toggle_fullscreen(&mut canvas)?;
+                    let _ = toggle_fullscreen(&mut canvas);
                 }
                 match event {
                     Event::KeyDown {
@@ -1111,7 +1121,12 @@ where
             break;
         }
         if decision.restore_surfaces {
-            redraw_present_modern(&mut canvas, &texture, extent, active_modern.aspect_ratio)?;
+            let _ = redraw_present_modern(
+                &mut canvas,
+                &texture,
+                texture_extent,
+                active_modern.aspect_ratio,
+            );
         }
         let now = pacing_clock.elapsed();
         pacing.set_active(decision.active, now);
@@ -1147,21 +1162,40 @@ where
                     let alpha_q16 = (0x5555
                         + ((elapsed_ns * (0x1_0000 - 0x5555)) / 40_000_000) as i32)
                         .clamp(0x5555, 0x1_0000);
-                    if let Some(presented) = step(WindowedStepRequest::Subtick(alpha_q16)).present {
-                        let rgba = presented
-                            .expand_rgba8()
-                            .map_err(SdlHostError::FrameConversion)?;
-                        upload_rgba_frame_with_cas(
-                            &mut texture,
-                            &rgba,
-                            active_modern.upscaling.sharpness_f32(),
-                        )?;
-                        redraw_present_modern(
-                            &mut canvas,
-                            &texture,
-                            extent,
-                            active_modern.aspect_ratio,
-                        )?;
+                    if let Some(presented) = step(WindowedStepRequest::Subtick(alpha_q16)).present
+                        && let Ok(rgba) = presented.into_rgba8()
+                    {
+                        if rgba.extent() != texture_extent
+                            && let Ok(mut new_tex) = texture_creator.create_texture_streaming(
+                                PixelFormat::RGBA32,
+                                u32::from(rgba.extent().width),
+                                u32::from(rgba.extent().height),
+                            )
+                        {
+                            let mode = if active_modern.texture_filter.uses_linear_filtering() {
+                                ScaleMode::Linear
+                            } else {
+                                ScaleMode::Nearest
+                            };
+                            new_tex.set_scale_mode(mode);
+                            texture = new_tex;
+                            texture_extent = rgba.extent();
+                        }
+                        if rgba.extent() == texture_extent
+                            && upload_rgba_frame_with_cas(
+                                &mut texture,
+                                &rgba,
+                                active_modern.upscaling.sharpness_f32(),
+                            )
+                            .is_ok()
+                        {
+                            let _ = redraw_present_modern(
+                                &mut canvas,
+                                &texture,
+                                texture_extent,
+                                active_modern.aspect_ratio,
+                            );
+                        }
                     }
                 }
             }
@@ -1255,21 +1289,43 @@ where
         }
         match frame.present {
             Some(presented) => {
-                let rgba = presented
-                    .expand_rgba8()
-                    .map_err(SdlHostError::FrameConversion)?;
-                upload_rgba_frame_with_cas(
-                    &mut texture,
-                    &rgba,
-                    active_modern.upscaling.sharpness_f32(),
-                )?;
-                redraw_present_modern(&mut canvas, &texture, extent, active_modern.aspect_ratio)?;
+                if let Ok(rgba) = presented.into_rgba8() {
+                    if rgba.extent() != texture_extent
+                        && let Ok(mut new_tex) = texture_creator.create_texture_streaming(
+                            PixelFormat::RGBA32,
+                            u32::from(rgba.extent().width),
+                            u32::from(rgba.extent().height),
+                        )
+                    {
+                        let mode = if active_modern.texture_filter.uses_linear_filtering() {
+                            ScaleMode::Linear
+                        } else {
+                            ScaleMode::Nearest
+                        };
+                        new_tex.set_scale_mode(mode);
+                        texture = new_tex;
+                        texture_extent = rgba.extent();
+                    }
+                    if rgba.extent() == texture_extent
+                        && upload_rgba_frame_with_cas(
+                            &mut texture,
+                            &rgba,
+                            active_modern.upscaling.sharpness_f32(),
+                        )
+                        .is_ok()
+                    {
+                        let _ = redraw_present_modern(
+                            &mut canvas,
+                            &texture,
+                            texture_extent,
+                            active_modern.aspect_ratio,
+                        );
+                    }
+                }
             }
             None => {
                 canvas.clear();
-                if !canvas.present() {
-                    return Err(SdlHostError::sdl("frame presentation", sdl3::get_error()));
-                }
+                let _ = canvas.present();
             }
         }
     }

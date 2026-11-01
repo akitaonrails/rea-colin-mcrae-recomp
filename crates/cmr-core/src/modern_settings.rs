@@ -358,6 +358,18 @@ impl TextureFilterMode {
     pub const fn uses_linear_filtering(self) -> bool {
         !matches!(self, Self::Nearest1998)
     }
+
+    /// Filter level encoded into `clip_parameters.y` for `fragment_true_color`:
+    /// `0.0` = Nearest, `1.0` = Bilinear/Trilinear, `4.0`..=`16.0` = Anisotropic.
+    pub const fn shader_filter_level(self) -> f32 {
+        match self {
+            Self::Nearest1998 => 0.0,
+            Self::Trilinear => 1.0,
+            Self::Anisotropic4x => 4.0,
+            Self::Anisotropic8x => 8.0,
+            Self::Anisotropic16x => 16.0,
+        }
+    }
 }
 
 /// Multi-sample anti-aliasing (MSAA) mode.
@@ -524,7 +536,7 @@ impl ModernSettings {
                 draw_distance: DrawDistanceScale::Ultra3x,
                 texture_filter: TextureFilterMode::Anisotropic16x,
                 msaa: AntiAliasingMode::Msaa4x,
-                upscaling: UpscalingMode::FsrQuality,
+                upscaling: UpscalingMode::CasSharpening,
                 modern_gamepad: true,
                 rumble: true,
             },
@@ -574,6 +586,20 @@ impl ModernSettings {
             }
         }
         self.preset = ModernPreset::Custom;
+    }
+
+    /// Internal 3D rendering extent (`resolution * upscaling.render_scale_f32()`),
+    /// clamped to `640..=3840` x `480..=2160` and aligned to even dimensions.
+    #[must_use]
+    pub fn internal_render_extent(&self) -> DisplayExtent {
+        let (w, h) = self.resolution.dimensions();
+        let scale = self.upscaling.render_scale_f32();
+        let rw = (((w as f32 * scale).round() as u32).clamp(640, 3840) & !1).max(640);
+        let rh = (((h as f32 * scale).round() as u32).clamp(480, 2160) & !1).max(480);
+        DisplayExtent {
+            width: rw as u16,
+            height: rh as u16,
+        }
     }
 
     /// Synchronize the legacy `0x1e20`-byte `cmRally.cfg` record so the
@@ -725,6 +751,19 @@ mod tests {
         assert_eq!(orig.aspect_ratio, AspectRatioMode::Original4x3);
         assert_eq!(orig.fps_limit, FpsLimit::Original25);
         assert!(!orig.texture_filter.uses_linear_filtering());
+        assert_eq!(orig.texture_filter.shader_filter_level(), 0.0);
+
+        let ultra = ModernSettings::from_preset(ModernPreset::Ultra4K);
+        assert_eq!(ultra.resolution.dimensions(), (3840, 2160));
+        assert_eq!(
+            ultra.internal_render_extent(),
+            crate::display::DisplayExtent {
+                width: 3840,
+                height: 2160
+            }
+        );
+        assert_eq!(ultra.texture_filter.shader_filter_level(), 16.0);
+        assert_eq!(ultra.msaa.sample_count(), 4);
     }
 
     #[test]

@@ -335,6 +335,7 @@ fn compose_bitmap(
                 px[0] = r;
                 px[1] = g;
                 px[2] = b;
+                px[3] = 0xfe;
             }
         }
     }
@@ -647,6 +648,7 @@ fn blit_glyph(
                         px[0] = r;
                         px[1] = g;
                         px[2] = b;
+                        px[3] = 0xfe;
                     }
                     let dst_idx = *destination
                         .get(destination_index)
@@ -669,6 +671,7 @@ fn blit_glyph(
                         px[0] = entry.red;
                         px[1] = entry.green;
                         px[2] = entry.blue;
+                        px[3] = 0xfe;
                     }
                     atlas_index
                 }

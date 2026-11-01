@@ -28,6 +28,7 @@ pub const SOFTWARE_RGBA8_BYTES_PER_PIXEL: usize = 4;
 pub struct SoftwareRgba8Frame {
     extent: DisplayExtent,
     pixels: Box<[u8]>,
+    cas_applied: bool,
 }
 
 impl SoftwareRgba8Frame {
@@ -46,6 +47,12 @@ impl SoftwareRgba8Frame {
     #[must_use]
     pub const fn row_pitch(&self) -> usize {
         self.extent.width as usize * SOFTWARE_RGBA8_BYTES_PER_PIXEL
+    }
+
+    /// Returns whether GPU contrast-adaptive sharpening (CAS) was already applied.
+    #[must_use]
+    pub const fn cas_applied(&self) -> bool {
+        self.cas_applied
     }
 }
 
@@ -103,6 +110,7 @@ pub fn expand_indexed_frame_rgba8(
     Ok(SoftwareRgba8Frame {
         extent,
         pixels: rgba.into_boxed_slice(),
+        cas_applied: false,
     })
 }
 
@@ -129,6 +137,7 @@ pub struct SoftwarePresentedFrame {
     pixels: Box<[u8]>,
     palette: Box<[PaletteEntry; 256]>,
     rgba8: Option<Box<[u8]>>,
+    hi_res_rgba8: Option<(DisplayExtent, Box<[u8]>, bool)>,
 }
 
 impl SoftwarePresentedFrame {
@@ -159,6 +168,7 @@ impl SoftwarePresentedFrame {
             pixels,
             palette,
             rgba8: None,
+            hi_res_rgba8: None,
         })
     }
 
@@ -178,6 +188,31 @@ impl SoftwarePresentedFrame {
             });
         }
         self.rgba8 = Some(rgba8);
+        Ok(self)
+    }
+
+    /// Attaches a high-resolution true-color RGBA8 presentation plane (`extent.width * extent.height * 4`
+    /// bytes) produced by the modern hardware GPU compositor.
+    pub fn with_hi_res_rgba8(
+        mut self,
+        extent: DisplayExtent,
+        rgba8: Box<[u8]>,
+        cas_applied: bool,
+    ) -> Result<Self, SoftwareRgba8Error> {
+        if extent.width == 0 || extent.height == 0 {
+            return Err(SoftwareRgba8Error::InvalidExtent(extent));
+        }
+        let expected = usize::from(extent.width)
+            .checked_mul(usize::from(extent.height))
+            .and_then(|px| px.checked_mul(SOFTWARE_RGBA8_BYTES_PER_PIXEL))
+            .ok_or(SoftwareRgba8Error::SizeOverflow(extent))?;
+        if rgba8.len() != expected {
+            return Err(SoftwareRgba8Error::InvalidIndexedPixelLength {
+                expected,
+                actual: rgba8.len(),
+            });
+        }
+        self.hi_res_rgba8 = Some((extent, rgba8, cas_applied));
         Ok(self)
     }
 
@@ -205,10 +240,45 @@ impl SoftwarePresentedFrame {
     ///
     /// Alpha is always opaque; palette flags are not an alpha channel.
     pub fn expand_rgba8(&self) -> Result<SoftwareRgba8Frame, SoftwareRgba8Error> {
+        if let Some((extent, rgba8, cas_applied)) = &self.hi_res_rgba8 {
+            return Ok(SoftwareRgba8Frame {
+                extent: *extent,
+                pixels: rgba8.clone(),
+                cas_applied: *cas_applied,
+            });
+        }
         if let Some(rgba8) = &self.rgba8 {
+            let mut pixels = rgba8.clone();
+            for px in pixels.as_chunks_mut::<4>().0 {
+                px[3] = u8::MAX;
+            }
             return Ok(SoftwareRgba8Frame {
                 extent: self.extent,
-                pixels: rgba8.clone(),
+                pixels,
+                cas_applied: false,
+            });
+        }
+        expand_indexed_frame_rgba8(self.extent, &self.pixels, &self.palette)
+    }
+
+    /// Consumes this frame and produces packed RGBA8 bytes without cloning an
+    /// attached true-color or high-resolution plane.
+    pub fn into_rgba8(self) -> Result<SoftwareRgba8Frame, SoftwareRgba8Error> {
+        if let Some((extent, pixels, cas_applied)) = self.hi_res_rgba8 {
+            return Ok(SoftwareRgba8Frame {
+                extent,
+                pixels,
+                cas_applied,
+            });
+        }
+        if let Some(mut pixels) = self.rgba8 {
+            for px in pixels.as_chunks_mut::<4>().0 {
+                px[3] = u8::MAX;
+            }
+            return Ok(SoftwareRgba8Frame {
+                extent: self.extent,
+                pixels,
+                cas_applied: false,
             });
         }
         expand_indexed_frame_rgba8(self.extent, &self.pixels, &self.palette)
@@ -254,6 +324,7 @@ impl SoftwarePresentedFrame {
             pixels: self.pixels.iter().map(|&p| map[usize::from(p)]).collect(),
             palette: self.palette.clone(),
             rgba8,
+            hi_res_rgba8: None,
         }
     }
 
@@ -288,6 +359,7 @@ impl SoftwarePresentedFrame {
             pixels: self.pixels.clone(),
             palette,
             rgba8,
+            hi_res_rgba8: None,
         }
     }
 
@@ -420,6 +492,7 @@ impl RootFrameHooks for SoftwareIndexedBackend {
                 pixels: surface.pixels.clone().into_boxed_slice(),
                 palette: Box::new(palette),
                 rgba8: None,
+                hi_res_rgba8: None,
             }
         };
         self.presented_frame = Some(frame);
@@ -717,6 +790,7 @@ mod tests {
             pixels: Box::from([0, 1, 2, 255]),
             palette: Box::new(palette),
             rgba8: None,
+            hi_res_rgba8: None,
         };
 
         assert_eq!(SOFTWARE_PRESENTED_FRAME_DIGEST_FORMAT, b"CMRFRM01");
@@ -752,6 +826,7 @@ mod tests {
                 }; 256],
             ),
             rgba8: None,
+            hi_res_rgba8: None,
         };
 
         assert_eq!(
@@ -776,6 +851,7 @@ mod tests {
             pixels: Box::from([0, 1, 2, 3]),
             palette: Box::new(palette),
             rgba8: None,
+            hi_res_rgba8: None,
         };
         let mut changed_extent = baseline.clone();
         changed_extent.extent = DisplayExtent {
@@ -965,6 +1041,7 @@ mod tests {
             pixels: Box::from([42]),
             palette: Box::new(palette),
             rgba8: None,
+            hi_res_rgba8: None,
         };
 
         assert_eq!(frame.expand_rgba8().unwrap().pixels(), &[1, 2, 3, 255]);
