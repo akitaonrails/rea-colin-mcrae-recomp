@@ -1441,7 +1441,10 @@ pub struct SecondWheelCandidateInputs {
 }
 
 /// Derive the transition/alternate pair through the appropriate recovered path,
-/// then select the alternate only when the transition exceeds the lane length.
+/// then keep the requested lane length (`[ebp - 0x98] = normalization.length`)
+/// while it does not exceed the static friction limit `alternate` (`esi`), or
+/// replace it with the sliding friction force `transition` (`ecx`) when it
+/// exceeds `alternate` (`0x40f5e0..0x40f5e8`).
 ///
 /// # Errors
 ///
@@ -1461,9 +1464,9 @@ pub fn select_second_wheel_candidate(
         fixed(input.alternate_base),
     ) {
         return Ok(select_signed_force_candidate(
-            transition,
             transition_length,
             alternate,
+            transition,
         ));
     }
     let (transition, alternate) = derive_lookup_dependent_candidates(
@@ -1475,9 +1478,9 @@ pub fn select_second_wheel_candidate(
         fixed(input.alternate_base),
     )?;
     Ok(select_signed_force_candidate(
-        transition,
         transition_length,
         alternate,
+        transition,
     ))
 }
 
@@ -3030,30 +3033,21 @@ mod tests {
             transition_base: 0x10000,
             alternate_gain: 0x30000,
             alternate_base: 0x10000,
-            normalization_length: 0x20000,
+            normalization_length: 0x30000,
         };
         assert_eq!(
             select_second_wheel_candidate(lookup_free),
-            Ok(Fixed16::from_raw(0x20000))
+            Ok(Fixed16::from_raw(0x30000))
         );
         assert_eq!(
             select_second_wheel_candidate(SecondWheelCandidateInputs {
-                normalization_length: 0x1ffff,
+                normalization_length: 0x30001,
                 ..lookup_free
             }),
-            Ok(Fixed16::from_raw(0x30000))
+            Ok(Fixed16::from_raw(0x20000))
         );
 
-        let lookup_dependent = SecondWheelCandidateInputs {
-            component_a: 0x10000,
-            component_b: 0x10000,
-            transition_gain: 0x20000,
-            transition_base: 0x40000,
-            alternate_gain: 0x30000,
-            alternate_base: 0x50000,
-            normalization_length: 0,
-        };
-        let (_, alternate) = derive_lookup_dependent_candidates(
+        let (transition, alternate) = derive_lookup_dependent_candidates(
             Fixed16::from_raw(0x10000),
             Fixed16::from_raw(0x10000),
             Fixed16::from_raw(0x20000),
@@ -3062,9 +3056,25 @@ mod tests {
             Fixed16::from_raw(0x50000),
         )
         .unwrap();
+        let lookup_dependent = SecondWheelCandidateInputs {
+            component_a: 0x10000,
+            component_b: 0x10000,
+            transition_gain: 0x20000,
+            transition_base: 0x40000,
+            alternate_gain: 0x30000,
+            alternate_base: 0x50000,
+            normalization_length: alternate.raw(),
+        };
         assert_eq!(
             select_second_wheel_candidate(lookup_dependent),
             Ok(alternate)
+        );
+        assert_eq!(
+            select_second_wheel_candidate(SecondWheelCandidateInputs {
+                normalization_length: alternate.raw() + 1,
+                ..lookup_dependent
+            }),
+            Ok(transition)
         );
     }
 

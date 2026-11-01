@@ -99,15 +99,17 @@ impl GearboxState {
         upshift_hint_420: false,
     };
 
-    /// The car initializer's seed (`0x40465f..0x40467c`): first gear when the
-    /// runtime global `DAT_00514478` is nonzero, else neutral, with the shift
-    /// request cleared.
+    /// The car initializer's seed (`0x40465f..0x40467c`, plus `FUN_00407270`
+    /// setting `ctl + 0x420 = 1` at `0x4072b4`): first gear when the runtime
+    /// global `DAT_00514478` is nonzero, else neutral, with the shift request
+    /// cleared and the upshift hint `ctl + 0x420` enabled.
     #[must_use]
     pub const fn at_setup(start_in_gear: bool) -> Self {
         let gear = if start_in_gear { 1 } else { 0 };
         Self {
             gear_43a: gear,
             target_43f: gear,
+            upshift_hint_420: true,
             ..Self::ZERO
         }
     }

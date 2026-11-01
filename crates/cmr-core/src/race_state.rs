@@ -2249,6 +2249,7 @@ impl RaceState {
         for (wheel, (first, second)) in first.iter_mut().zip(second.iter_mut()).enumerate() {
             second.scale_c5c4 = scale_c5c4;
             let flag = wheel_slip_flag(residual, first.config_158, wheel >= 2);
+            second.residual_flag_147a = flag;
             first.shift = wheel_slip_shift(i32::from(flag), pedals.throttle_304, pedals.brake_308);
         }
     }
@@ -2391,15 +2392,17 @@ impl RaceState {
             // `FUN_00407690` (`0x407df0..0x407efd`) clears `car + 0x45c..+0x4b8`
             // (`contact_updates[0..8]`) at the start of every tick.
             self.car.four_wheel.contact_updates = [Vec3::ZERO; 8];
-        } else {
-            self.car.four_wheel.residual_enable = advance_residual_enable(
-                self.car.four_wheel.residual_enable,
-                wheel.first[0].config_158,
-                self.car.four_wheel.first[0].wheel_speed,
-                self.car.four_wheel.first[2].wheel_speed,
-                self.car.four_wheel.speed_ec,
-            );
         }
+        // `FUN_00407690` Loop 1 (`0x407a9c..0x407aee`) decays `ctl + 0x43b` at
+        // the start of the tick from the previous tick's wheel speeds and
+        // `speed_ec`, before `FUN_0041b5b0` and `FUN_0040d810` consume it.
+        self.car.four_wheel.residual_enable = advance_residual_enable(
+            self.car.four_wheel.residual_enable,
+            wheel.first[0].config_158,
+            self.car.four_wheel.first[0].wheel_speed,
+            self.car.four_wheel.first[2].wheel_speed,
+            self.car.four_wheel.speed_ec,
+        );
         self.car.four_wheel.start_basis_27c = self.car.motion.basis;
         let start_normal = self.car.motion.projection_axis;
         // With live ground contact, the threshold scan and the contact-distance
@@ -2574,6 +2577,7 @@ impl RaceState {
             input.config_2ec = self.car.four_wheel.pedals.brake_response_2ec;
             if let Some((_, _, ratio)) = live_gear {
                 input.gear_ratio = ratio;
+                input.correction_gate = i32::from(self.car.four_wheel.gearbox.upshift_hint_420);
             }
         }
         if let (Some(tyre), Some(ground)) = (wheel.tyre, self.car.ground) {
@@ -2813,18 +2817,6 @@ impl RaceState {
             contact_update_inputs,
             self.car.four_wheel.contact_updates,
         );
-        if compiled_live_path {
-            // `FUN_00407690` (`0x407a9c..0x407aee`) decays `ctl + 0x43b` at the
-            // end of the first car loop, after `FUN_0040d810` and `FUN_00415d20`
-            // have consumed it and before `FUN_0040a4a0` updates `speed_ec`.
-            self.car.four_wheel.residual_enable = advance_residual_enable(
-                self.car.four_wheel.residual_enable,
-                wheel.first[0].config_158,
-                self.car.four_wheel.first[0].wheel_speed,
-                self.car.four_wheel.first[2].wheel_speed,
-                self.car.four_wheel.speed_ec,
-            );
-        }
         // `FUN_004095e0` replaces the driver's gravity base force with its
         // ground projection while a probe touches, using the slope grip of
         // the start-of-tick normal (`FUN_00408f50`).
@@ -2941,6 +2933,33 @@ impl RaceState {
         self.car.position = translation.position;
         self.car.velocity = translation.velocity;
         self.car.four_wheel.speed_ec = translation.speed.raw();
+        let mut angular = wheel.angular;
+        angular.basis = self.car.motion.basis;
+        angular.momentum.angular_velocity = self.car.motion.angular_velocity;
+        angular.momentum.prior_moment = self.car.motion.moment;
+        angular.momentum.contact_moment = angular.momentum.contact_moment.add(contact_moment);
+        let orientation = apply_angular_orientation_pipeline(
+            angular,
+            self.car.collision.out_of_control(),
+            self.car.motion.projection_axis,
+            ContactDeadzoneGate {
+                contacts_active_742: thresholds.count_742 > 0,
+                steer,
+                upright_404: self.car.four_wheel.upright_404,
+            },
+            &self.trig,
+        )
+        .expect("the race-state trig table is complete");
+        self.car.four_wheel.resting_700 =
+            resting_flag_700(orientation.angle_increments, translation.speed);
+        self.car.motion.basis = orientation.basis;
+        self.car.motion.angular_velocity = orientation.angular_velocity;
+        // The angular pass consumed the decayed moment
+        // (`orientation.momentum.scaled_prior_moment`); the mechanics driver
+        // then clears it.
+        self.car
+            .collision
+            .set_out_of_control(orientation.out_of_control);
         self.clock = advance_stage_clock(self.clock, stage_clock_step(false));
         let mut sample = TraceSample {
             clock: self.clock,
@@ -3033,33 +3052,6 @@ impl RaceState {
             });
             self.car.four_wheel.engine_speed_2e8 = engine.speed_2e8;
         }
-        let mut angular = wheel.angular;
-        angular.basis = self.car.motion.basis;
-        angular.momentum.angular_velocity = self.car.motion.angular_velocity;
-        angular.momentum.prior_moment = self.car.motion.moment;
-        angular.momentum.contact_moment = angular.momentum.contact_moment.add(contact_moment);
-        let orientation = apply_angular_orientation_pipeline(
-            angular,
-            self.car.collision.out_of_control(),
-            self.car.motion.projection_axis,
-            ContactDeadzoneGate {
-                contacts_active_742: thresholds.count_742 > 0,
-                steer,
-                upright_404: self.car.four_wheel.upright_404,
-            },
-            &self.trig,
-        )
-        .expect("the race-state trig table is complete");
-        self.car.four_wheel.resting_700 =
-            resting_flag_700(orientation.angle_increments, translation.speed);
-        self.car.motion.basis = orientation.basis;
-        self.car.motion.angular_velocity = orientation.angular_velocity;
-        // The angular pass consumed the decayed moment
-        // (`orientation.momentum.scaled_prior_moment`); the mechanics driver
-        // then clears it.
-        self.car
-            .collision
-            .set_out_of_control(orientation.out_of_control);
         self.finish_mechanics_tick();
         sample.car = self.car;
         Ok(sample)

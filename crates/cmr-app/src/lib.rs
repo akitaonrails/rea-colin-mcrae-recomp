@@ -5005,6 +5005,7 @@ fn play_countdown_cue(
     mixer: &SharedSoftwareMixer,
     language: Language,
     cue: cmr_core::audio_music_cues::CountdownCue,
+    speech_master: i32,
 ) {
     use cmr_core::audio_music_cues::{COUNTDOWN_WAVE_BITS, COUNTDOWN_WAVE_RATE_HZ};
     let speech_lang = cmr_core::audio_pacenote::select_speech_language(language as u8, false);
@@ -5014,12 +5015,10 @@ fn play_countdown_cue(
             .ok()
     });
     if let Some(slot) = slot {
-        play_slot_on(
-            mixer,
-            slot,
-            SPEECH_CHANNEL,
-            cmr_core::audio_pacenote::PACENOTE_CHANNEL_VOLUME,
-        );
+        let volume = cmr_core::audio_pacenote::PACENOTE_CHANNEL_VOLUME
+            .wrapping_mul(speech_master.clamp(0, 100))
+            / 100;
+        play_slot_on(mixer, slot, SPEECH_CHANNEL, volume);
     }
 }
 
@@ -5803,7 +5802,12 @@ fn advance_game_frame<C: HostClock>(
     }
     for cue in session.take_countdown_cues() {
         if let Some(mixer) = input.audio {
-            play_countdown_cue(mixer, results.language, cue);
+            play_countdown_cue(
+                mixer,
+                results.language,
+                cue,
+                pause.options.speech_master_4f6538,
+            );
         }
     }
     // The school task's speech and, at its end, its marks.
@@ -6038,56 +6042,63 @@ fn advance_game_frame<C: HostClock>(
             audio.mute(mixer);
         }
     }
-    let loading_route = if session.state().id() == 4 {
-        Some(RenderRoute::LoadInterstitial)
-    } else {
-        advanced.route
-    };
-    let loading_interstitial = loading_interstitial_for_route(
-        loading_route,
-        resources.loading_background(),
-        resources.loading_overlay.as_ref(),
-        STAGE_LOADING_PROGRESS_CAP,
-    )?;
-    Ok(GameFrameOutcome {
-        screen,
-        world,
-        loading_interstitial,
-        exit_requested: root_tick.as_ref().is_some_and(|tick| tick.exit_requested),
-        root_render_input: root_tick.and_then(|tick| tick.render_input),
-        // The recovered front-end music plays while the front end runs and on
-        // the State-8 stage results screen (`FUN_00443b20` at `0x437cde`).
-        music_active: advanced.band == SessionBand::FrontEnd || session.state().id() == 8,
-        codriver_calls: if advanced.stepped {
-            session
-                .last_trigger_events()
-                .iter()
-                .filter_map(|event| match *event {
-                    cmr_core::trigger_walk::TriggerEvent::CodriverCall { payload, .. } => {
-                        Some(payload as u32)
-                    }
-                    _ => None,
-                })
-                .collect()
+        let loading_route = if session.state().id() == 4 {
+            Some(RenderRoute::LoadInterstitial)
         } else {
-            Vec::new()
-        },
-    })
-}
+            advanced.route
+        };
+        let loading_interstitial = loading_interstitial_for_route(
+            loading_route,
+            resources.loading_background(),
+            resources.loading_overlay.as_ref(),
+            STAGE_LOADING_PROGRESS_CAP,
+        )?;
+        let state_id = session.state().id();
+        Ok(GameFrameOutcome {
+            screen,
+            world,
+            loading_interstitial,
+            exit_requested: root_tick.as_ref().is_some_and(|tick| tick.exit_requested),
+            root_render_input: root_tick.and_then(|tick| tick.render_input),
+            // The recovered front-end music plays while the front end runs and on
+            // the State-8 stage results screen (`FUN_00443b20` at `0x437cde`).
+            music_active: advanced.band == SessionBand::FrontEnd || state_id == 8,
+            speech_active: advanced.stepped && state_id == 5,
+            speech_reset: !matches!(state_id, 5 | 0xa),
+            speech_master: pause.options.speech_master_4f6538,
+            codriver_calls: if advanced.stepped {
+                session
+                    .last_trigger_events()
+                    .iter()
+                    .filter_map(|event| match *event {
+                        cmr_core::trigger_walk::TriggerEvent::CodriverCall { payload, .. } => {
+                            Some(payload as u32)
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+        })
+    }
 
-/// What one [`advance_game_frame`] produced for the windowed loop.
-struct GameFrameOutcome {
-    /// The country welcome (state 2) or service (state 3) screen's frame.
-    screen: Option<SoftwarePresentedFrame>,
-    world: Option<SoftwarePresentedFrame>,
-    loading_interstitial: Option<SoftwarePresentedFrame>,
-    root_render_input: Option<RootRenderInput>,
-    /// The front end's exit screen ended the process (`DAT_0096efe8 = 1`).
-    exit_requested: bool,
-    music_active: bool,
-    /// Co-driver note words the trigger walk submitted this frame.
-    codriver_calls: Vec<u32>,
-}
+    /// What one [`advance_game_frame`] produced for the windowed loop.
+    struct GameFrameOutcome {
+        /// The country welcome (state 2) or service (state 3) screen's frame.
+        screen: Option<SoftwarePresentedFrame>,
+        world: Option<SoftwarePresentedFrame>,
+        loading_interstitial: Option<SoftwarePresentedFrame>,
+        root_render_input: Option<RootRenderInput>,
+        /// The front end's exit screen ended the process (`DAT_0096efe8 = 1`).
+        exit_requested: bool,
+        music_active: bool,
+        speech_active: bool,
+        speech_reset: bool,
+        speech_master: i32,
+        /// Co-driver note words the trigger walk submitted this frame.
+        codriver_calls: Vec<u32>,
+    }
 
 /// Reviewed surface inputs owned by a game session.
 #[derive(Debug)]
@@ -6692,7 +6703,10 @@ impl PauseHarness {
                 }
                 PauseEffect::MuteSpeech => set_speech_volume(mixer, 0),
                 PauseEffect::RestoreSpeech => {
-                    set_speech_volume(mixer, cmr_core::audio_pacenote::PACENOTE_CHANNEL_VOLUME)
+                    let volume = cmr_core::audio_pacenote::PACENOTE_CHANNEL_VOLUME
+                        .wrapping_mul(self.options.speech_master_4f6538.clamp(0, 100))
+                        / 100;
+                    set_speech_volume(mixer, volume);
                 }
                 PauseEffect::MenuSound {
                     table, sound, ok, ..
@@ -6984,9 +6998,10 @@ struct RaceAudio {
 
 impl RaceAudio {
     /// Mute the player car's engine (`FUN_00487170(0, 0)`), surface/skid
-    /// (`FUN_0048b650`), and wet (`FUN_0048d8c0`) channels when the race
-    /// simulation stops stepping (e.g. entering State 8 stage results at
-    /// `0x437cc5..0x437cd4`).
+    /// (`FUN_0048b650`), wet (`FUN_0048d8c0`), ambience, and speech
+    /// (`FUN_004446e0`) channels when the race simulation stops stepping
+    /// (e.g. entering State 8 stage results at `0x437cc5..0x437cd4` or
+    /// State 12 stage restart at `0x438d76..0x438d85`).
     fn mute(&self, mixer: &SharedSoftwareMixer) {
         if let Some(engine) = self.engine.as_ref() {
             engine.mute(mixer, 0);
@@ -6997,8 +7012,10 @@ impl RaceAudio {
                 && let Ok(mut mixer) = mixer.lock()
             {
                 EngineVoices::set_volume(&mut *mixer, WET_CHANNEL, 0);
+                EngineVoices::set_volume(&mut *mixer, AMBIENCE_CHANNEL, 0);
             }
         }
+        set_speech_volume(mixer, 0);
     }
 }
 
@@ -9107,6 +9124,7 @@ fn reload_changed_stage<'a>(
             .next()
             .is_some_and(|name| name.eq_ignore_ascii_case(&loaded.name))
     {
+        session.set_gearbox_mode_3f0(cmr_core::gearbox::setup_mode(session.event().cfg.car_0b6));
         progress.restart();
         return Ok(());
     }
@@ -9989,6 +10007,9 @@ pub fn run_windowed_game_session(
                                     present,
                                     stopped: outcome.exit_requested,
                                     music_active: outcome.music_active,
+                                    speech_active: outcome.speech_active,
+                                    speech_reset: outcome.speech_reset,
+                                    speech_master: outcome.speech_master,
                                     codriver_calls: outcome.codriver_calls,
                                     music_config: Some(config.music_bytes()),
                                 }
@@ -9999,6 +10020,9 @@ pub fn run_windowed_game_session(
                                     present: None,
                                     stopped: true,
                                     music_active: false,
+                                    speech_active: false,
+                                    speech_reset: true,
+                                    speech_master: 100,
                                     codriver_calls: Vec::new(),
                                     music_config: Some(config.music_bytes()),
                                 }
@@ -10060,6 +10084,9 @@ pub fn run_windowed_game_session(
                     .or(outcome.loading_interstitial),
                 stopped: outcome.exit_requested,
                 music_active: outcome.music_active,
+                speech_active: outcome.speech_active,
+                speech_reset: outcome.speech_reset,
+                speech_master: outcome.speech_master,
                 codriver_calls: outcome.codriver_calls,
                 music_config: Some(config.music_bytes()),
             },
@@ -10069,6 +10096,9 @@ pub fn run_windowed_game_session(
                     present: None,
                     stopped: true,
                     music_active: false,
+                    speech_active: false,
+                    speech_reset: true,
+                    speech_master: 100,
                     codriver_calls: Vec::new(),
                     music_config: Some(config.music_bytes()),
                 }

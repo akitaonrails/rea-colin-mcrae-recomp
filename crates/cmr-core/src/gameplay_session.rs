@@ -1682,6 +1682,16 @@ impl<'a> GameplaySession<'a> {
         })
     }
 
+    /// Sync the player's gearbox mode (`ctl + 0x3f0`: `1` manual, `2`
+    /// automatic with brake-to-reverse) from `cfg[0xb6]`.
+    pub fn set_gearbox_mode_3f0(&mut self, mode_3f0: i32) {
+        if let Some(wheel) = self.wheel.as_mut()
+            && let Some(gearbox) = wheel.gearbox.as_mut()
+        {
+            gearbox.mode_3f0 = mode_3f0;
+        }
+    }
+
     /// `FUN_00420c70` at the stage load: the player's carried damage (the
     /// record from `+0x9a`, whose repaired parts are cleared in place) into
     /// the setup block, the handling and the gear ratios of the four-wheel
@@ -1712,6 +1722,7 @@ impl<'a> GameplaySession<'a> {
         )?;
         gearbox.tables.ratio_1d0 = gears.ratio_1d0;
         gearbox.tables.inverse_1f0 = gears.inverse_1f0;
+        gearbox.drive_ratios = gears.ratio_1d0;
         crate::race_state::populate_car_setup(wheel, &block);
         self.car_setup = block;
         self.wet_brakes = false;
@@ -1875,6 +1886,7 @@ impl<'a> GameplaySession<'a> {
         };
         gearbox.tables.ratio_1d0 = gears.ratio_1d0;
         gearbox.tables.inverse_1f0 = gears.inverse_1f0;
+        gearbox.drive_ratios = gears.ratio_1d0;
         crate::race_state::populate_car_setup(wheel, &block);
         self.car_setup = block;
     }

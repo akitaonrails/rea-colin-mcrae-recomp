@@ -772,6 +772,16 @@ pub struct WindowedGameFrame {
     /// Whether the recovered front-end music should play this frame (true during
     /// the front-end/menu band; false while racing or stopped).
     pub music_active: bool,
+    /// Whether the co-driver sequencer (`FUN_00444450`) runs this frame:
+    /// inside Mechanics (`FUN_0043afd0`) on an active driving tick (State 5),
+    /// paused in State `0xa` (`PauseEffect::MuteSpeech` / `RestoreSpeech`).
+    pub speech_active: bool,
+    /// Whether the co-driver sequencer ring buffer should be cleared (`FUN_004440f0`
+    /// on stage load/restart or when leaving the active driving/pause states).
+    pub speech_reset: bool,
+    /// The speech master percentage `DAT_004f6538` (`0..=100`), scaling
+    /// `PACENOTE_CHANNEL_VOLUME` (`0x7d00`) in `FUN_0047eba0`.
+    pub speech_master: i32,
     /// Co-driver note words submitted this frame (`FUN_00444380`), spoken by
     /// the recovered sequencer `FUN_00444450` on the speech channel.
     pub codriver_calls: Vec<u32>,
@@ -1003,7 +1013,13 @@ where
             && let Some(speech) = speech.as_mut()
             && let Ok(mut mixer) = host.mixer().lock()
         {
-            let commands = speech.frame(&*mixer, &frame.codriver_calls);
+            let commands = speech.frame(
+                &*mixer,
+                &frame.codriver_calls,
+                frame.speech_active,
+                frame.speech_reset,
+                frame.speech_master,
+            );
             let _ = apply_commands(&mut *mixer, &commands);
         }
         if let Some(host) = host.as_ref()
@@ -1106,18 +1122,38 @@ impl SpeechBank {
     }
 
     /// One frame: the sequencer runs before this frame's calls are queued
-    /// (`FUN_00444450` precedes the mechanics that submit them).
+    /// (`FUN_00444450` precedes the mechanics that submit them), only during
+    /// active driving ticks (`speech_active`), and clears its ring buffer
+    /// (`FUN_004440f0`) across stage load, restart, finish, or quit boundaries
+    /// (`speech_reset`).
     fn frame<M: AudioMixer>(
         &mut self,
         mixer: &M,
         calls: &[u32],
+        speech_active: bool,
+        speech_reset: bool,
+        speech_master: i32,
     ) -> Vec<cmr_core::audio_mixer::MixerCommand> {
         use cmr_core::audio_mixer::MixerCommand;
         let mut commands = Vec::new();
+        if speech_reset {
+            self.sequencer = cmr_core::pacenote_schedule::CodriverSequencer::default();
+            commands.push(MixerCommand::SetVolume {
+                channel: self.channel,
+                volume: 0,
+            });
+            return commands;
+        }
+        if !speech_active {
+            return commands;
+        }
         let busy = mixer.is_channel_busy(self.channel);
         if let Some(slot) = self.sequencer.tick(busy)
             && let Some(Some(wave)) = usize::try_from(slot).ok().and_then(|i| self.slots.get(i))
         {
+            let volume = cmr_core::audio_pacenote::PACENOTE_CHANNEL_VOLUME
+                .wrapping_mul(speech_master.clamp(0, 100))
+                / 100;
             commands.push(MixerCommand::Play {
                 slot: *wave,
                 channel: self.channel,
@@ -1125,7 +1161,7 @@ impl SpeechBank {
             });
             commands.push(MixerCommand::SetVolume {
                 channel: self.channel,
-                volume: cmr_core::audio_pacenote::PACENOTE_CHANNEL_VOLUME,
+                volume,
             });
         }
         for &word in calls {
@@ -1209,8 +1245,11 @@ mod tests {
             sequencer: cmr_core::pacenote_schedule::CodriverSequencer::default(),
         };
         // "3": the number field at bits 3-6 speaks slot 2 + 3.
-        assert!(bank.frame(&mixer, &[3 << 3]).is_empty());
-        let commands = bank.frame(&mixer, &[]);
+        assert!(bank.frame(&mixer, &[3 << 3], true, false, 100).is_empty());
+        // While paused (`speech_active = false`), the sequencer does not advance
+        // or overwrite the muted speech channel volume.
+        assert!(bank.frame(&mixer, &[], false, false, 100).is_empty());
+        let commands = bank.frame(&mixer, &[], true, false, 50);
         assert_eq!(
             commands,
             [
@@ -1221,12 +1260,22 @@ mod tests {
                 },
                 MixerCommand::SetVolume {
                     channel: bank.channel,
-                    volume: cmr_core::audio_pacenote::PACENOTE_CHANNEL_VOLUME,
+                    volume: cmr_core::audio_pacenote::PACENOTE_CHANNEL_VOLUME / 2,
                 },
             ]
         );
         // The spent entry advances with nothing behind it: silence.
-        assert!(bank.frame(&mixer, &[]).is_empty());
+        assert!(bank.frame(&mixer, &[], true, false, 100).is_empty());
+        // A reset clears queued entries and mutes the channel.
+        assert!(bank.frame(&mixer, &[3 << 3], true, false, 100).is_empty());
+        assert_eq!(
+            bank.frame(&mixer, &[], false, true, 100),
+            [MixerCommand::SetVolume {
+                channel: bank.channel,
+                volume: 0,
+            }]
+        );
+        assert!(bank.frame(&mixer, &[], true, false, 100).is_empty());
     }
 
     #[test]
