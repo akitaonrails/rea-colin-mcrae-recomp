@@ -64,6 +64,7 @@ pub struct StageSceneFrame {
     depth: SoftwareC3dDepthBuffer,
     stats: StageSceneFrameStats,
     rgba8: Option<Vec<u8>>,
+    projection: Option<(f32, f32, f32, f32)>,
 }
 
 impl StageSceneFrame {
@@ -91,6 +92,7 @@ impl StageSceneFrame {
             depth,
             stats: StageSceneFrameStats::default(),
             rgba8: None,
+            projection: None,
         }
     }
 
@@ -101,6 +103,21 @@ impl StageSceneFrame {
     pub fn with_rgba8(mut self, rgba8: Vec<u8>) -> Self {
         self.rgba8 = Some(rgba8);
         self
+    }
+
+    /// Overrides the projection parameters (`(w, h, z_near, z_far)`) used by
+    /// post-blend passes (`blend_shadows`, `blend_sprites`, `blend_coloured_triangles`,
+    /// `apply_night_pool`) so widescreen / extended draw-distance projections match.
+    #[must_use]
+    pub fn with_projection(mut self, projection: (f32, f32, f32, f32)) -> Self {
+        self.projection = Some(projection);
+        self
+    }
+
+    fn effective_projection(&self) -> (f32, f32, f32, f32) {
+        self.projection.unwrap_or_else(|| {
+            cmr_core::c3d_camera::gameplay_projection_default(self.extent[0], self.extent[1])
+        })
     }
 
     /// The frame extent `[width, height]`.
@@ -231,11 +248,12 @@ impl StageSceneFrame {
         let identity = [
             0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000,
         ];
-        let transforms = SoftwareC3dTransformState::for_gameplay_scene(
+        let transforms = SoftwareC3dTransformState::for_gameplay_scene_with_projection(
             width,
             height,
             camera_world_q16,
             &identity,
+            self.effective_projection(),
         )?;
         let palette = *self.palette;
         let mut cache = std::collections::HashMap::<(u8, u8), u8>::new();
@@ -310,11 +328,12 @@ impl StageSceneFrame {
         let identity = [
             0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000,
         ];
-        let transforms = SoftwareC3dTransformState::for_gameplay_scene(
+        let transforms = SoftwareC3dTransformState::for_gameplay_scene_with_projection(
             width,
             height,
             camera_world_q16,
             &identity,
+            self.effective_projection(),
         )?;
         let palette = *self.palette;
         let mut cache = std::collections::HashMap::<(u8, [u8; 3], u8, u8), u8>::new();
@@ -398,11 +417,12 @@ impl StageSceneFrame {
         let identity = [
             0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000,
         ];
-        let transforms = SoftwareC3dTransformState::for_gameplay_scene(
+        let transforms = SoftwareC3dTransformState::for_gameplay_scene_with_projection(
             width,
             height,
             camera_world_q16,
             &identity,
+            self.effective_projection(),
         )?;
         let palette = *self.palette;
         let mut cache = std::collections::HashMap::<(u8, [u8; 3], u8), u8>::new();
@@ -503,7 +523,7 @@ impl StageSceneFrame {
         if width == 0 || height == 0 {
             return;
         }
-        let (pw, ph, zn, zf) = cmr_core::c3d_camera::gameplay_projection_default(width, height);
+        let (pw, ph, zn, zf) = self.effective_projection();
         let m00 = pw * 0.5;
         let m11 = ph * 0.5;
         let w_half = f32::from(width) * 0.5;
@@ -625,11 +645,12 @@ impl StageSceneFrame {
         let identity = [
             0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000,
         ];
-        let transforms = SoftwareC3dTransformState::for_gameplay_scene(
+        let transforms = SoftwareC3dTransformState::for_gameplay_scene_with_projection(
             width,
             height,
             camera_world_q16,
             &identity,
+            self.effective_projection(),
         )?;
         let palette = *self.palette;
         let mut vertices = Vec::with_capacity(triangles.len() * 3);
@@ -958,6 +979,7 @@ where
         depth,
         stats,
         rgba8: None,
+        projection: Some(projection),
     })
 }
 
@@ -1045,6 +1067,7 @@ mod tests {
                 ..StageSceneFrameStats::default()
             },
             rgba8: None,
+            projection: None,
         }
     }
 

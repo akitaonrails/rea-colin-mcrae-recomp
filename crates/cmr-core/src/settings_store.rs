@@ -174,6 +174,13 @@ impl DataPaths {
         self.user_data.join(SETTINGS_DIR).join(SETTINGS_FILE_NAME)
     }
 
+    /// Path to the modern settings file (`<user-data>/save/modern.cfg`).
+    pub fn modern_settings_file(&self) -> PathBuf {
+        self.user_data
+            .join(SETTINGS_DIR)
+            .join(crate::modern_settings::MODERN_SETTINGS_FILE_NAME)
+    }
+
     /// Path to save slot `index` (`<user-data>/SAVE/SAVESLOT<index>.cms`).
     pub fn save_slot(&self, index: usize) -> PathBuf {
         self.user_data

@@ -146,8 +146,7 @@ use cmr_platform_sdl3::SharedSoftwareMixer;
 use cmr_platform_sdl3::input::GamepadDrivingState;
 use cmr_platform_sdl3::{
     InteractiveRootError, SdlHostError, WindowedGameFrame, WindowedInput, WindowedStepRequest,
-    present_software_frame, run_interactive_root_frame,
-    run_windowed_game_session_with_subticks as run_windowed_game_session_loop,
+    present_software_frame, run_interactive_root_frame, run_windowed_game_session_modern,
 };
 use cmr_video::c3d_software_raster::SoftwareC3dIndexedQuantization;
 use cmr_video::software_load_interstitial::{
@@ -2032,15 +2031,18 @@ impl WgpuStageRenderer {
         camera: &[i32; 16],
         dynamic_world_sets: &[&[[i32; 16]]],
         horizon_worlds: Option<&[[i32; 16]]>,
+        projection: (f32, f32, f32, f32),
         post: Option<&PostBlend<'_>>,
     ) -> Result<SoftwarePresentedFrame, StageFrameError> {
-        let frame = if self.prepared.dynamic_world_set_count() == 0 {
-            self.prepared.prepared_frame_for(camera)
+        let worlds = if self.prepared.dynamic_world_set_count() == 0 {
+            &[][..]
         } else {
-            self.prepared
-                .prepared_frame_for_worlds(camera, dynamic_world_sets)
-                .map_err(StageFrameError::GpuPrepare)?
+            dynamic_world_sets
         };
+        let frame = self
+            .prepared
+            .prepared_frame_for_worlds_with_projection(camera, worlds, projection)
+            .map_err(StageFrameError::GpuPrepare)?;
         let (indexed, rgba, depth) = if let (Some(horizon_prepared), Some(horizon_scene)) =
             (self.horizon_prepared.as_mut(), self.horizon_scene.as_mut())
         {
@@ -2050,10 +2052,7 @@ impl WgpuStageRenderer {
                     actual: 0,
                 },
             ))?;
-            let (w, h, z_near, _) = cmr_core::c3d_camera::gameplay_projection_default(
-                ROOT_EXTENT.width,
-                ROOT_EXTENT.height,
-            );
+            let (w, h, z_near, _) = projection;
             let horizon_frame = horizon_prepared
                 .prepared_frame_for_worlds_with_projection(
                     camera,
@@ -2085,6 +2084,7 @@ impl WgpuStageRenderer {
                 rgba.pixels().to_vec(),
                 depth.unwrap_or_default(),
                 self.palette,
+                projection,
                 post,
             );
         }
@@ -2106,6 +2106,7 @@ fn post_blend_gpu_frame(
     rgba8: Vec<u8>,
     depth: Vec<f32>,
     palette: [PaletteEntry; 256],
+    projection: (f32, f32, f32, f32),
     post: &PostBlend<'_>,
 ) -> Result<SoftwarePresentedFrame, StageFrameError> {
     let extent = [indexed.extent().width, indexed.extent().height];
@@ -2117,7 +2118,8 @@ fn post_blend_gpu_frame(
         palette,
         depth,
     )
-    .with_rgba8(rgba8);
+    .with_rgba8(rgba8)
+    .with_projection(projection);
     post(&mut scene)?;
     scene.to_presented_frame().map_err(StageFrameError::Present)
 }
@@ -2348,6 +2350,7 @@ pub struct StageRenderResources {
     /// `.obj` scene-graph local matrix overrides for hit/moving objects (`FUN_00452b70`).
     object_locals: Vec<(usize, [i32; 16])>,
     palette: [PaletteEntry; 256],
+    projection: (f32, f32, f32, f32),
     node_count: usize,
     draw_ops: usize,
     choice: StageRendererChoice,
@@ -2456,6 +2459,10 @@ impl StageRenderResources {
             night_pool_draw: None,
             object_locals: Vec::new(),
             palette,
+            projection: cmr_core::c3d_camera::gameplay_projection_default(
+                ROOT_EXTENT.width,
+                ROOT_EXTENT.height,
+            ),
             node_count,
             draw_ops,
             choice,
@@ -2524,6 +2531,12 @@ impl StageRenderResources {
     /// trackside objects that have moved (`FUN_00452b70`).
     pub fn set_object_locals(&mut self, locals: Vec<(usize, [i32; 16])>) {
         self.object_locals = locals;
+    }
+
+    /// Update the 3D gameplay projection parameters (`(w, h, z_near, z_far)`),
+    /// used for widescreen Hor+ FOV and extended draw distance.
+    pub fn set_projection(&mut self, projection: (f32, f32, f32, f32)) {
+        self.projection = projection;
     }
 
     fn prepare_gpu_foreground(&self) -> Result<PreparedRawStage, StageFrameError> {
@@ -3385,7 +3398,14 @@ impl StageRenderResources {
             if let Some(obj_worlds) = object_node_worlds.as_deref() {
                 dynamic_sets.push(obj_worlds);
             }
-            match gpu.compose(camera, &dynamic_sets, horizon_node_worlds.as_deref(), post) {
+            let projection = self.projection;
+            match gpu.compose(
+                camera,
+                &dynamic_sets,
+                horizon_node_worlds.as_deref(),
+                projection,
+                post,
+            ) {
                 Ok(frame) => {
                     return Ok(RenderedStageFrameOutput {
                         stage: self.stage.clone(),
@@ -5460,6 +5480,10 @@ struct FrontEndConfig {
     car: u8,
     /// `save\cmRally.cfg` under the writable root, when there is one.
     file: Option<PathBuf>,
+    /// `save\modern.cfg` under the writable root, when there is one.
+    modern_file: Option<PathBuf>,
+    /// Modern display, graphics, framerate, and gamepad settings.
+    modern: cmr_core::modern_settings::ModernSettings,
     /// The writable root's paths, for the save slots.
     paths: Option<cmr_core::settings_store::DataPaths>,
 }
@@ -5503,6 +5527,8 @@ impl FrontEndConfig {
             stage: cmr_core::stage_path::parse_stage_name(stage),
             car,
             file: None,
+            modern_file: None,
+            modern: cmr_core::modern_settings::ModernSettings::default(),
             paths: None,
         }
     }
@@ -5514,24 +5540,36 @@ impl FrontEndConfig {
     /// writable root is the runtime-data root (the native reads the
     /// registry's HDPath).
     fn with_file(mut self, writable_root: &Path) -> Self {
-        let file =
-            cmr_core::settings_store::DataPaths::new(writable_root, writable_root).settings_file();
+        let data_paths = cmr_core::settings_store::DataPaths::new(writable_root, writable_root);
+        let file = data_paths.settings_file();
+        let modern_file = data_paths.modern_settings_file();
+        let mut had_legacy = false;
         if let Some(mut loaded) = std::fs::read(&file)
             .ok()
             .and_then(|raw| cmr_core::settings_store::SettingsImage::from_file_bytes(&raw).ok())
         {
+            had_legacy = true;
             loaded.clear_runtime_region();
             self.image.copy_from_slice(loaded.as_bytes());
         }
+        let had_modern = if let Ok(raw) = std::fs::read_to_string(&modern_file) {
+            self.modern = cmr_core::modern_settings::ModernSettings::from_config_str(&raw);
+            true
+        } else {
+            false
+        };
+        self.modern
+            .apply_to_legacy_record(&mut self.image, !had_legacy);
         self.image[8] &= 0xfe;
         if self.image[0x20] & 7 == 4 {
             self.image[0x20] &= 0xf8;
         }
         self.file = Some(file);
-        self.paths = Some(cmr_core::settings_store::DataPaths::new(
-            writable_root,
-            writable_root,
-        ));
+        self.modern_file = Some(modern_file);
+        self.paths = Some(data_paths);
+        if !had_modern {
+            self.save_modern();
+        }
         self
     }
 
@@ -5573,6 +5611,7 @@ impl FrontEndConfig {
     /// The saver `FUN_004ba5e0`: the whole record unless its attract flag
     /// (`record[8] & 1`) is set.
     fn save(&self) {
+        self.save_modern();
         let Some(file) = &self.file else {
             return;
         };
@@ -5585,6 +5624,19 @@ impl FrontEndConfig {
             .and_then(|()| std::fs::write(file, &self.image[..]));
         if let Err(error) = written {
             eprintln!("cmr-app: cannot save cmRally.cfg: {error}");
+        }
+    }
+
+    fn save_modern(&self) {
+        let Some(modern_file) = &self.modern_file else {
+            return;
+        };
+        let written = modern_file
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(modern_file, self.modern.to_config_string()));
+        if let Err(error) = written {
+            eprintln!("cmr-app: cannot save modern.cfg: {error}");
         }
     }
 
@@ -5724,6 +5776,11 @@ fn front_end_frame(
                     let language = usize::from(config.image[0x20] & 7);
                     pause.play_name_cue(mixer, cue, language, master);
                 }
+                None
+            }
+            cmr_core::frontend_flow::ScreenEffect::ModernChanged(modern) => {
+                config.modern = modern;
+                config.save();
                 None
             }
             cmr_core::frontend_flow::ScreenEffect::Sound(_) => None,
@@ -6108,6 +6165,14 @@ fn advance_game_frame<C: HostClock>(
             true,
         );
         resources.set_object_locals(session.moving_object_node_locals_interpolated(alpha_q16));
+        let (res_w, res_h) = config.modern.resolution.dimensions();
+        let target_aspect = config.modern.aspect_ratio.effective_aspect(res_w, res_h);
+        resources.set_projection(cmr_core::c3d_camera::gameplay_projection_modern(
+            ROOT_EXTENT.width,
+            ROOT_EXTENT.height,
+            target_aspect,
+            config.modern.draw_distance.multiplier_f32(),
+        ));
         let world = resources
             .compose_with_posed_car(&camera_world, Some(&car_world), &wheels)
             .map(|rendered| rendered.frame)?;
@@ -6279,7 +6344,44 @@ fn advance_game_frame<C: HostClock>(
         } else {
             Vec::new()
         },
+        rumble_low_high_q16: if advanced.stepped {
+            Some(compute_gamepad_rumble(session, config.modern.rumble))
+        } else {
+            None
+        },
     })
+}
+
+fn compute_gamepad_rumble(session: &GameplaySession, enabled: bool) -> (u16, u16) {
+    if !enabled || session.state().id() != 5 {
+        return (0, 0);
+    }
+    let mut low = 0u32;
+    let mut high = 0u32;
+    for impact in session.last_static_impacts() {
+        let sev = (impact.severity.unsigned_abs() >> 2).min(0xFFFF);
+        low = low.max(sev);
+    }
+    if session.last_tumble_impact().is_some() {
+        low = low.max(0xC000);
+    }
+    if let Some(words) = session.surface_sound_words()
+        && words.speed_ec > 0x1000
+    {
+        for w in 0..4 {
+            if words.contact[w] == 0 {
+                continue;
+            }
+            let slip =
+                (words.longitudinal[w].unsigned_abs() + words.lateral[w].unsigned_abs()) >> 3;
+            high = high.max(slip.min(0xA000));
+            if words.surfaces[w] > 3 {
+                let rough = (words.speed_ec.unsigned_abs() >> 4).min(0x3800);
+                low = low.max(rough);
+            }
+        }
+    }
+    (low.min(0xFFFF) as u16, high.min(0xFFFF) as u16)
 }
 
 /// Compose an in-race sub-tick interpolated frame (`FUN_004a7c90` ->
@@ -6392,6 +6494,8 @@ struct GameFrameOutcome {
     speech_master: i32,
     /// Co-driver note words the trigger walk submitted this frame.
     codriver_calls: Vec<u32>,
+    /// Low/high frequency gamepad rumble amplitudes (`0..=0xFFFF`).
+    rumble_low_high_q16: Option<(u16, u16)>,
 }
 
 /// Reviewed surface inputs owned by a game session.
@@ -10176,6 +10280,7 @@ pub fn run_windowed_game_session(
     // `FUN_004ba060` at the config load: the record's bindings over the
     // keyboard device records (`FUN_0049d6e0`); player 1 drives from record 0.
     root_interaction.install_keyboard_record(&config.image);
+    root_interaction.enable_modern_mode(config.modern);
     let mut keyboard = KeyboardDriver::new(
         root_interaction.screens().controls().keyboards[0],
         cmr_core::input_map::ControlConfig::default(),
@@ -10234,9 +10339,10 @@ pub fn run_windowed_game_session(
             |root| {
                 let screen_bitmaps = root.load_screen_bitmaps(&store);
                 let screen_images = load_screen_images(root, &store, static_tables.as_ref());
-                run_windowed_game_session_loop(
+                run_windowed_game_session_modern(
                     &initial,
                     Some(audio_root),
+                    config.modern,
                     |request: WindowedStepRequest| {
                         let input = match request {
                             WindowedStepRequest::Tick(input) => input,
@@ -10256,6 +10362,8 @@ pub fn run_windowed_game_session(
                                     speech_master: pause.options.speech_master_4f6538,
                                     codriver_calls: Vec::new(),
                                     music_config: None,
+                                    modern_settings: Some(config.modern),
+                                    rumble_low_high_q16: None,
                                 };
                             }
                         };
@@ -10342,6 +10450,8 @@ pub fn run_windowed_game_session(
                                     speech_master: outcome.speech_master,
                                     codriver_calls: outcome.codriver_calls,
                                     music_config: Some(config.music_bytes()),
+                                    modern_settings: Some(config.modern),
+                                    rumble_low_high_q16: outcome.rumble_low_high_q16,
                                 }
                             }
                             Err(error) => {
@@ -10355,6 +10465,8 @@ pub fn run_windowed_game_session(
                                     speech_master: 100,
                                     codriver_calls: Vec::new(),
                                     music_config: Some(config.music_bytes()),
+                                    modern_settings: Some(config.modern),
+                                    rumble_low_high_q16: None,
                                 }
                             }
                         }
@@ -10373,9 +10485,10 @@ pub fn run_windowed_game_session(
         // through to the world-only loop below rather than failing the session.
     }
 
-    run_windowed_game_session_loop(
+    run_windowed_game_session_modern(
         &initial,
         Some(audio_root),
+        config.modern,
         |request: WindowedStepRequest| {
             let input = match request {
                 WindowedStepRequest::Tick(input) => input,
@@ -10395,6 +10508,8 @@ pub fn run_windowed_game_session(
                         speech_master: pause.options.speech_master_4f6538,
                         codriver_calls: Vec::new(),
                         music_config: None,
+                        modern_settings: Some(config.modern),
+                        rumble_low_high_q16: None,
                     };
                 }
             };
@@ -10443,6 +10558,8 @@ pub fn run_windowed_game_session(
                     speech_master: outcome.speech_master,
                     codriver_calls: outcome.codriver_calls,
                     music_config: Some(config.music_bytes()),
+                    modern_settings: Some(config.modern),
+                    rumble_low_high_q16: outcome.rumble_low_high_q16,
                 },
                 Err(error) => {
                     runtime_error = Some(error);
@@ -10455,6 +10572,8 @@ pub fn run_windowed_game_session(
                         speech_master: 100,
                         codriver_calls: Vec::new(),
                         music_config: Some(config.music_bytes()),
+                        modern_settings: Some(config.modern),
+                        rumble_low_high_q16: None,
                     }
                 }
             }

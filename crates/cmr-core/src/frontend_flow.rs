@@ -107,6 +107,8 @@ pub enum ScreenEffect {
     Keyboard { player: u8 },
     /// The name entry took a code or cheat and is entered again.
     NameCue(crate::frontend_name_entry::NameCue),
+    /// Modern display/graphics settings were adjusted in the Options menus.
+    ModernChanged(crate::modern_settings::ModernSettings),
 }
 
 /// The control screens' cues (the device type change is the host's input
@@ -382,6 +384,19 @@ impl FrontendScreens {
     /// The host's input devices the control setup asks about.
     pub fn set_input_devices(&mut self, devices: InputDevices) {
         self.devices = devices;
+    }
+
+    /// Enable the modern graphics (`ENHANCED`), high-resolution `ADVANCED`,
+    /// and `GAMEPAD 1` / `MODERN GAMEPAD` menus and defaults.
+    pub fn enable_modern_mode(&mut self, settings: crate::modern_settings::ModernSettings) {
+        self.options.enable_modern_mode(&mut self.set, settings);
+        self.controls.enable_modern_mode(&mut self.set);
+        self.devices = InputDevices::MODERN_GAMEPAD;
+    }
+
+    /// Current modern settings in the Options subtree.
+    pub const fn modern_settings(&self) -> crate::modern_settings::ModernSettings {
+        self.options.modern
     }
 
     /// `FUN_004ba060` at the config load: the record's bindings into the
@@ -793,6 +808,9 @@ impl FrontendScreens {
                             ScreenEffect::Volumes { effects, music }
                         }
                         OptionsEffect::PreviewCue => ScreenEffect::Cue { slot: 2, ok: true },
+                        OptionsEffect::ModernChanged(settings) => {
+                            ScreenEffect::ModernChanged(settings)
+                        }
                     });
                 }
                 None

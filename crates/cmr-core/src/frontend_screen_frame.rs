@@ -1460,6 +1460,14 @@ pub fn plan_options_frame<'f>(
     let w = i32::from(extent.width);
     let h = i32::from(extent.height);
     let (ox, oy) = input.camera.offset();
+    let lookup_text = |id: i32| -> Vec<u8> {
+        if let Some(modern) = crate::frontend_options::modern_text::lookup(id) {
+            modern.to_vec()
+        } else {
+            text(id)
+        }
+    };
+    let text = &lookup_text;
     let mut commands = Vec::new();
     if input.screen == OptionScreen::Options {
         commands.push(ScreenCommand::Palette(
@@ -1556,7 +1564,12 @@ fn value_panel<'f>(
         _ => {}
     }
     let lx = 0xf5c + px;
-    let mut y = 0x1eb8 + PANEL_Y;
+    let (first_y, row_gap) = if menu.items.len() >= 8 {
+        (0x1800 + PANEL_Y, 0x4e0)
+    } else {
+        (0x1eb8 + PANEL_Y, 0x7ae)
+    };
+    let mut y = first_y;
     for (index, item) in menu.items.iter().enumerate() {
         let row_y = y;
         let selected = index == menu.selected;
@@ -1579,7 +1592,7 @@ fn value_panel<'f>(
                 done_button(lx + 0xccc, row_y, selected, extent, commands);
             }
         }
-        y += 0x7ae;
+        y += row_gap;
         if item.kind == ItemKind::Value {
             value_commands(
                 input,
@@ -1661,17 +1674,39 @@ fn value_commands(
             };
             lcd(c_format(&label, &[]), commands);
         }
-        9 => lcd(
-            strings.resolutions[match v {
-                1 => 1,
-                2 => 2,
-                3 => 3,
-                _ => 0,
-            }]
-            .to_vec(),
-            commands,
-        ),
-        0xa => lcd(text(if v == 1 { 0xc0 } else { 0xbe }), commands),
+        9 => {
+            if input.options.modern_mode {
+                lcd(
+                    crate::modern_settings::ModernResolution::from_index(v)
+                        .label_bytes()
+                        .to_vec(),
+                    commands,
+                );
+            } else {
+                lcd(
+                    strings.resolutions[match v {
+                        1 => 1,
+                        2 => 2,
+                        3 => 3,
+                        _ => 0,
+                    }]
+                    .to_vec(),
+                    commands,
+                );
+            }
+        }
+        0xa => {
+            if input.options.modern_mode {
+                lcd(
+                    crate::modern_settings::TextureFilterMode::from_index(v)
+                        .label_bytes()
+                        .to_vec(),
+                    commands,
+                );
+            } else {
+                lcd(text(if v == 1 { 0xc0 } else { 0xbe }), commands);
+            }
+        }
         0xb => lcd(text(if v == 1 { 0x62 } else { 0x63 }), commands),
         0xc => lcd(pick(0xbe, 0xc0), commands),
         0xf => lcd(
@@ -1680,6 +1715,42 @@ fn value_commands(
                 1 => 0xbf,
                 _ => 0xc0,
             }),
+            commands,
+        ),
+        0x31 => lcd(
+            crate::modern_settings::ModernPreset::from_index(v)
+                .label_bytes()
+                .to_vec(),
+            commands,
+        ),
+        0x32 => lcd(
+            crate::modern_settings::AspectRatioMode::from_index(v)
+                .label_bytes()
+                .to_vec(),
+            commands,
+        ),
+        0x33 => lcd(
+            crate::modern_settings::FpsLimit::from_index(v)
+                .label_bytes()
+                .to_vec(),
+            commands,
+        ),
+        0x34 => lcd(
+            crate::modern_settings::DrawDistanceScale::from_index(v)
+                .label_bytes()
+                .to_vec(),
+            commands,
+        ),
+        0x35 => lcd(
+            crate::modern_settings::AntiAliasingMode::from_index(v)
+                .label_bytes()
+                .to_vec(),
+            commands,
+        ),
+        0x36 => lcd(
+            crate::modern_settings::UpscalingMode::from_index(v)
+                .label_bytes()
+                .to_vec(),
             commands,
         ),
         0x16 | 0x17 => {
@@ -2018,6 +2089,14 @@ pub fn plan_controls_frame<'f>(
     let w = i32::from(extent.width);
     let h = i32::from(extent.height);
     let (ox, oy) = input.camera.offset();
+    let lookup_text = |id: i32| -> Vec<u8> {
+        if let Some(modern) = crate::frontend_options::modern_text::lookup(id) {
+            modern.to_vec()
+        } else {
+            text(id)
+        }
+    };
+    let text = &lookup_text;
     let cx = input.controls.panel_x;
     let mut commands = vec![
         backdrop(input.camera, w, h),
@@ -2087,6 +2166,8 @@ pub fn plan_controls_frame<'f>(
                 0x6872,
                 if v == 0 {
                     text(0xb9)
+                } else if input.controls.modern_mode {
+                    format!("GAMEPAD {v}").into_bytes()
                 } else {
                     c_format(
                         input.method_format,
@@ -2098,11 +2179,20 @@ pub fn plan_controls_frame<'f>(
                 cx + 0x63d7,
                 0x5eb8,
                 0x6872,
-                match v {
-                    -1 => Vec::new(),
-                    0 => text(0xbb),
-                    1 => text(0xbc),
-                    _ => text(0xbd),
+                if input.controls.modern_mode {
+                    match v {
+                        -1 => Vec::new(),
+                        0 => b"D-PAD GAMEPAD".to_vec(),
+                        1 => b"MODERN GAMEPAD".to_vec(),
+                        _ => b"STEERING WHEEL".to_vec(),
+                    }
+                } else {
+                    match v {
+                        -1 => Vec::new(),
+                        0 => text(0xbb),
+                        1 => text(0xbc),
+                        _ => text(0xbd),
+                    }
                 },
             ),
             (ControlScreen::Analogue, key::STEERING | key::ACCELERATION | key::BRAKE) => (
@@ -2177,6 +2267,33 @@ fn buttons_rows<'f>(
                 .get(key as usize)
                 .cloned()
                 .unwrap_or_default()
+        } else if controls.modern_mode {
+            match mask {
+                0 => Vec::new(),
+                1 | 2 => continue,
+                4 => b"RT / R2".to_vec(),
+                8 => b"LT / L2".to_vec(),
+                0x10 => b"A / CROSS".to_vec(),
+                0x20 => b"X / SQUARE".to_vec(),
+                0x40 => b"Y / TRIANGLE".to_vec(),
+                0x80 => b"LB / L1".to_vec(),
+                0x100 => b"B / CIRCLE".to_vec(),
+                0x200 => b"RB / R1".to_vec(),
+                0x400 => b"LT / L2".to_vec(),
+                0x800 => b"RT / R2".to_vec(),
+                0x1000 => b"VIEW / SELECT".to_vec(),
+                0x2000 => b"MENU / START".to_vec(),
+                0x4000 => b"L3 / L-CLICK".to_vec(),
+                0x8000 => b"R3 / R-CLICK".to_vec(),
+                _ => {
+                    let (mut m, mut shifts) = (mask, 0);
+                    while m > 8 && shifts < 13 {
+                        m >>= 1;
+                        shifts += 1;
+                    }
+                    format!("BUTTON {shifts}").into_bytes()
+                }
+            }
         } else {
             match mask {
                 0 => Vec::new(),

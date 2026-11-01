@@ -435,20 +435,81 @@ fn redraw_present(
     Ok(())
 }
 
+fn redraw_present_modern(
+    canvas: &mut Canvas<Window>,
+    texture: &Texture<'_>,
+    extent: DisplayExtent,
+    aspect_mode: cmr_core::modern_settings::AspectRatioMode,
+) -> Result<(), SdlHostError> {
+    let physical = physical_drawable_size(canvas);
+    let target_aspect = aspect_mode.effective_aspect(physical.width, physical.height);
+    let logical_height = u32::from(extent.height).max(1);
+    let logical_width = ((logical_height as f32 * target_aspect).round() as u32).max(1);
+    let logical = LogicalSize {
+        width: logical_width,
+        height: logical_height,
+    };
+    let viewport = fit_viewport(logical, physical, DEFAULT_SCALING);
+    let destination = FRect::new(
+        viewport.x as f32,
+        viewport.y as f32,
+        viewport.width as f32,
+        viewport.height as f32,
+    );
+    canvas.clear();
+    canvas
+        .copy(texture, None, destination)
+        .map_err(|error| SdlHostError::sdl("frame redraw", error))?;
+    if !canvas.present() {
+        return Err(SdlHostError::sdl("frame redraw", sdl3::get_error()));
+    }
+    Ok(())
+}
+
 fn upload_rgba_frame(
     texture: &mut Texture<'_>,
     frame: &SoftwareRgba8Frame,
 ) -> Result<(), SdlHostError> {
+    upload_rgba_frame_with_cas(texture, frame, 0.0)
+}
+
+fn upload_rgba_frame_with_cas(
+    texture: &mut Texture<'_>,
+    frame: &SoftwareRgba8Frame,
+    sharpness: f32,
+) -> Result<(), SdlHostError> {
     let mut upload_result = Ok(());
+    let width = usize::from(frame.extent().width);
+    let height = usize::from(frame.extent().height);
+    let src_pitch = frame.row_pitch();
+    let src = frame.pixels();
     texture
         .with_lock(None, |destination, destination_pitch| {
-            upload_result = copy_packed_rows(
-                frame.pixels(),
-                frame.row_pitch(),
-                destination,
-                destination_pitch,
-                usize::from(frame.extent().height),
-            );
+            upload_result =
+                copy_packed_rows(src, src_pitch, destination, destination_pitch, height);
+            if upload_result.is_ok() && sharpness > 0.01 && width >= 3 && height >= 3 {
+                // 5-tap Contrast-Adaptive Sharpening (CAS) kernel on interior pixels.
+                let weight = (sharpness * 0.22).clamp(0.0, 0.25);
+                for y in 1..(height - 1) {
+                    let row_above = (y - 1) * src_pitch;
+                    let row_curr = y * src_pitch;
+                    let row_below = (y + 1) * src_pitch;
+                    let dst_row = y * destination_pitch;
+                    for x in 1..(width - 1) {
+                        let px = x * 4;
+                        for ch in 0..3 {
+                            let c = f32::from(src[row_curr + px + ch]);
+                            let n = f32::from(src[row_above + px + ch]);
+                            let s = f32::from(src[row_below + px + ch]);
+                            let w = f32::from(src[row_curr + px - 4 + ch]);
+                            let e = f32::from(src[row_curr + px + 4 + ch]);
+                            let avg = 0.25 * (n + s + w + e);
+                            let sharpened = (c + (c - avg) * (4.0 * weight)).clamp(0.0, 255.0);
+                            destination[dst_row + px + ch] = sharpened as u8;
+                        }
+                    }
+                }
+            }
         })
         .map_err(|error| SdlHostError::sdl("streaming texture lock", error))?;
     upload_result
@@ -789,6 +850,12 @@ pub struct WindowedGameFrame {
     /// the record holds, when the caller has the record; otherwise the
     /// harness bytes stay.
     pub music_config: Option<[u8; 2]>,
+    /// Updated modern settings when changed in-game (`OptionScreen::Modern` /
+    /// `OptionScreen::Advanced`).
+    pub modern_settings: Option<cmr_core::modern_settings::ModernSettings>,
+    /// Optional dual-motor gamepad rumble `(low_freq_q16, high_freq_q16)` for
+    /// this tick (gravel/skid vibration, landing thumps, collision impacts).
+    pub rumble_low_high_q16: Option<(u16, u16)>,
 }
 
 /// The documented harness music config byte for the windowed session's front-end
@@ -840,6 +907,8 @@ where
             speech_master: 100,
             codriver_calls: Vec::new(),
             music_config: None,
+            modern_settings: None,
+            rumble_low_high_q16: None,
         },
     })
 }
@@ -853,6 +922,27 @@ where
 pub fn run_windowed_game_session_with_subticks<F>(
     initial: &SoftwarePresentedFrame,
     source_root: Option<&Path>,
+    step: F,
+) -> Result<(), SdlHostError>
+where
+    F: FnMut(WindowedStepRequest<'_>) -> WindowedGameFrame,
+{
+    run_windowed_game_session_modern(
+        initial,
+        source_root,
+        cmr_core::modern_settings::ModernSettings::default(),
+        step,
+    )
+}
+
+/// Runs the modern windowed game session with high-resolution window sizing,
+/// widescreen Hor+ presentation, linear/CAS upscaling, gamepad rumble, and
+/// continuous high-FPS sub-tick pose interpolation (`25`, `60`, `75`, `120`,
+/// `144`, or `Uncapped` FPS).
+pub fn run_windowed_game_session_modern<F>(
+    initial: &SoftwarePresentedFrame,
+    source_root: Option<&Path>,
+    initial_modern: cmr_core::modern_settings::ModernSettings,
     mut step: F,
 ) -> Result<(), SdlHostError>
 where
@@ -862,6 +952,8 @@ where
         .expand_rgba8()
         .map_err(SdlHostError::FrameConversion)?;
     let extent = rgba.extent();
+    let mut active_modern = initial_modern;
+    let (win_w, win_h) = active_modern.resolution.dimensions();
 
     let sdl = sdl3::init().map_err(|error| SdlHostError::sdl("initialization", error))?;
     let video = sdl
@@ -871,11 +963,7 @@ where
         .gamepad()
         .map_err(|error| SdlHostError::sdl("gamepad initialization", error))?;
     let window = video
-        .window(
-            "Colin McRae Rally — reconstruction",
-            u32::from(extent.width),
-            u32::from(extent.height),
-        )
+        .window("Colin McRae Rally — Modern Edition", win_w, win_h)
         .position_centered()
         .resizable()
         .build()
@@ -889,9 +977,14 @@ where
             u32::from(extent.height),
         )
         .map_err(|error| SdlHostError::sdl("streaming texture creation", error))?;
-    texture.set_scale_mode(ScaleMode::Nearest);
-    upload_rgba_frame(&mut texture, &rgba)?;
-    redraw_present(&mut canvas, &texture, extent)?;
+    let scale_mode = if active_modern.texture_filter.uses_linear_filtering() {
+        ScaleMode::Linear
+    } else {
+        ScaleMode::Nearest
+    };
+    texture.set_scale_mode(scale_mode);
+    upload_rgba_frame_with_cas(&mut texture, &rgba, active_modern.upscaling.sharpness_f32())?;
+    redraw_present_modern(&mut canvas, &texture, extent, active_modern.aspect_ratio)?;
 
     let mut events = sdl
         .event_pump()
@@ -899,8 +992,6 @@ where
     let mut keys = KeyboardVkState::new();
     let mut pad = GamepadDrivingState::new();
     let mut frontend = FrontendInputMapper::new();
-    // Open any already-connected gamepads; hotplug is handled in the loop. The
-    // handles must be kept alive for the device to keep sending events.
     let mut open_gamepads = BTreeMap::new();
     if let Ok(ids) = gamepad.gamepads() {
         for id in ids {
@@ -909,18 +1000,9 @@ where
             }
         }
     }
-    // Drive focus/pause/restore/shutdown through the recovered host lifecycle
-    // (B12), seeded focused at window creation, exactly as the interactive root
-    // loop does.
     let mut lifecycle = HostLifecycle::new(WindowMode::Windowed);
     lifecycle.apply(PlatformLifecycleEvent::FocusGained);
 
-    // Best-effort front-end music: open the audio device, register the recovered
-    // front-end music wave (its shipped path is install-root-relative, so its
-    // leading separator is stripped for the source-rooted wave reader), and build
-    // the recovered music controller on channel 0. Any failure (no source root,
-    // no device, missing wave) leaves `audio` as None and the session runs
-    // silent.
     let host = source_root.and_then(|root| AudioHost::open(&sdl, root).ok());
     let mut music = host.as_ref().and_then(|host| {
         let name = FRONTEND_MUSIC.trim_start_matches(['\\', '/']);
@@ -942,16 +1024,21 @@ where
 
     let pacing_clock = Instant::now();
     let mut pacing = FixedStepDeadline::new(Duration::ZERO, GAME_SESSION_TICK_INTERVAL);
-    let mut subticks: [Option<(Duration, i32)>; 2] = [None, None];
+    let mut last_sim_tick_at = Duration::ZERO;
+    let mut in_race = false;
+    let subtick_interval = |m: &cmr_core::modern_settings::ModernSettings| -> Option<Duration> {
+        match m.fps_limit {
+            cmr_core::modern_settings::FpsLimit::Original25 => None,
+            cmr_core::modern_settings::FpsLimit::Uncapped => Some(Duration::from_micros(4_167)),
+            other => other.frame_interval(),
+        }
+    };
+    let mut next_subtick_at: Option<Duration> = None;
 
     loop {
         let mut host_events = Vec::new();
         let now = pacing_clock.elapsed();
-        let next_subtick_wait = subticks
-            .iter()
-            .flatten()
-            .map(|(deadline, _)| deadline.saturating_sub(now))
-            .min();
+        let next_subtick_wait = next_subtick_at.map(|deadline| deadline.saturating_sub(now));
         let wait_target = match (pacing.wait_duration(now), next_subtick_wait) {
             (Some(sim_wait), Some(sub_wait)) => Some(sim_wait.min(sub_wait)),
             (sim_wait, None) => sim_wait,
@@ -959,10 +1046,6 @@ where
         };
         let first_event = match wait_target {
             Some(wait) => {
-                // `SDL_WaitEventTimeout` accepts whole-millisecond timeouts and
-                // wakes on the OS scheduler quantum (`~0.5..1.5 ms` late). Sleep
-                // coarsely until the final `2 ms` before the deadline, then
-                // spin/poll sub-millisecond to hit the exact tick.
                 let spin_margin = Duration::from_micros(2_000);
                 if wait > spin_margin {
                     events.wait_event_timeout(sdl_wait_duration(wait - spin_margin))
@@ -973,10 +1056,7 @@ where
                         }
                         let cur = pacing_clock.elapsed();
                         let sim_due = pacing.wait_duration(cur) == Some(Duration::ZERO);
-                        let sub_due = subticks
-                            .iter()
-                            .flatten()
-                            .any(|(deadline, _)| cur >= *deadline);
+                        let sub_due = next_subtick_at.is_some_and(|deadline| cur >= deadline);
                         if sim_due || sub_due {
                             break None;
                         }
@@ -1031,40 +1111,64 @@ where
             break;
         }
         if decision.restore_surfaces {
-            redraw_present(&mut canvas, &texture, extent)?;
+            redraw_present_modern(&mut canvas, &texture, extent, active_modern.aspect_ratio)?;
         }
         let now = pacing_clock.elapsed();
         pacing.set_active(decision.active, now);
         if !decision.active {
-            // Unfocused: pause stepping and presenting; block on the next event.
-            subticks = [None, None];
+            next_subtick_at = None;
             continue;
         }
         if !pacing.consume_due(now) {
-            let mut due_alpha = None;
-            for slot in &mut subticks {
-                if let Some((deadline, alpha)) = *slot
-                    && now >= deadline
-                {
-                    due_alpha = Some(alpha);
-                    *slot = None;
-                }
-            }
-            if let Some(alpha) = due_alpha
-                && pacing
-                    .wait_duration(now)
-                    .is_some_and(|rem| rem > Duration::from_millis(4))
-                && let Some(presented) = step(WindowedStepRequest::Subtick(alpha)).present
+            if in_race
+                && let Some(deadline) = next_subtick_at
+                && now >= deadline
             {
-                let rgba = presented
-                    .expand_rgba8()
-                    .map_err(SdlHostError::FrameConversion)?;
-                upload_rgba_frame(&mut texture, &rgba)?;
-                redraw_present(&mut canvas, &texture, extent)?;
+                if let Some(interval) = subtick_interval(&active_modern) {
+                    let next = deadline.saturating_add(interval);
+                    next_subtick_at = Some(if next <= now {
+                        now.saturating_add(interval)
+                    } else {
+                        next
+                    });
+                } else {
+                    next_subtick_at = None;
+                }
+                if pacing
+                    .wait_duration(now)
+                    .is_some_and(|rem| rem > Duration::from_millis(2))
+                {
+                    let elapsed_ns = now
+                        .saturating_sub(last_sim_tick_at)
+                        .as_nanos()
+                        .min(40_000_000) as i64;
+                    // Continuous Q16 interpolation factor from the tick's starting
+                    // point (`0x5555`) up to `0x1_0000` at the end of the 40 ms period.
+                    let alpha_q16 = (0x5555
+                        + ((elapsed_ns * (0x1_0000 - 0x5555)) / 40_000_000) as i32)
+                        .clamp(0x5555, 0x1_0000);
+                    if let Some(presented) = step(WindowedStepRequest::Subtick(alpha_q16)).present {
+                        let rgba = presented
+                            .expand_rgba8()
+                            .map_err(SdlHostError::FrameConversion)?;
+                        upload_rgba_frame_with_cas(
+                            &mut texture,
+                            &rgba,
+                            active_modern.upscaling.sharpness_f32(),
+                        )?;
+                        redraw_present_modern(
+                            &mut canvas,
+                            &texture,
+                            extent,
+                            active_modern.aspect_ratio,
+                        )?;
+                    }
+                }
             }
             continue;
         }
 
+        last_sim_tick_at = now;
         let input = WindowedInput {
             keys: &keys,
             gamepad: (!open_gamepads.is_empty()).then_some(&pad),
@@ -1072,28 +1176,49 @@ where
             audio: game_mixer.as_ref(),
         };
         let frame = step(WindowedStepRequest::Tick(input));
+        if let Some(new_modern) = frame.modern_settings
+            && new_modern != active_modern
+        {
+            if new_modern.resolution != active_modern.resolution
+                && canvas.window().fullscreen_state() == sdl3::video::FullscreenType::Off
+            {
+                let (w, h) = new_modern.resolution.dimensions();
+                let _ = canvas.window_mut().set_size(w, h);
+                canvas.window_mut().set_position(
+                    sdl3::video::WindowPos::Centered,
+                    sdl3::video::WindowPos::Centered,
+                );
+            }
+            let mode = if new_modern.texture_filter.uses_linear_filtering() {
+                ScaleMode::Linear
+            } else {
+                ScaleMode::Nearest
+            };
+            texture.set_scale_mode(mode);
+            active_modern = new_modern;
+        }
+        if active_modern.rumble
+            && let Some((low, high)) = frame.rumble_low_high_q16
+            && (low > 0 || high > 0)
+        {
+            for handle in open_gamepads.values_mut() {
+                let _ = handle.set_rumble(low, high, 55);
+            }
+        }
+        in_race = !frame.music_active;
         pacing.set_interval(if frame.music_active {
             FRONTEND_SESSION_TICK_INTERVAL
         } else {
             GAME_SESSION_TICK_INTERVAL
         });
-        subticks = if frame.music_active {
-            [None, None]
+        next_subtick_at = if frame.music_active {
+            None
         } else {
-            [
-                Some((now.saturating_add(Duration::from_nanos(13_333_333)), 0xaaaa)),
-                Some((
-                    now.saturating_add(Duration::from_nanos(26_666_667)),
-                    0x1_0000,
-                )),
-            ]
+            subtick_interval(&active_modern).map(|interval| now.saturating_add(interval))
         };
         if frame.stopped {
             break;
         }
-        // Drive the recovered front-end music: start/fade it in during the
-        // front-end band (entering the frontend context gate), stop it otherwise,
-        // applying the emitted mixer commands to the shared software mixer.
         if let Some(host) = host.as_ref()
             && let Some(speech) = speech.as_mut()
             && let Ok(mut mixer) = host.mixer().lock()
@@ -1133,12 +1258,14 @@ where
                 let rgba = presented
                     .expand_rgba8()
                     .map_err(SdlHostError::FrameConversion)?;
-                upload_rgba_frame(&mut texture, &rgba)?;
-                redraw_present(&mut canvas, &texture, extent)?;
+                upload_rgba_frame_with_cas(
+                    &mut texture,
+                    &rgba,
+                    active_modern.upscaling.sharpness_f32(),
+                )?;
+                redraw_present_modern(&mut canvas, &texture, extent, active_modern.aspect_ratio)?;
             }
             None => {
-                // A route that composes no world scene: clear to black until the
-                // recovered front-end/overlay compositors are wired for this path.
                 canvas.clear();
                 if !canvas.present() {
                     return Err(SdlHostError::sdl("frame presentation", sdl3::get_error()));

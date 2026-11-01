@@ -103,6 +103,16 @@ impl InputDevices {
         buttons: [0; 18],
         edges: [0; 18],
     };
+
+    /// Two keyboards plus a modern 12-button dual-stick gamepad with rumble
+    /// (`device = 2`, `method = 1`).
+    pub const MODERN_GAMEPAD: Self = Self {
+        present: 0b0111,
+        polled: 0b1111,
+        force_feedback: true,
+        buttons: [0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        edges: [0; 18],
+    };
 }
 
 /// A host request.
@@ -203,6 +213,8 @@ pub struct ControlScreens {
     ready: bool,
     /// The keyboard device records 0 and 1 (`+0x78..`).
     pub keyboards: [crate::input_map::KeyBindings; 2],
+    /// Whether modern gamepad labels and defaults are active.
+    pub modern_mode: bool,
 }
 
 impl ControlScreens {
@@ -304,6 +316,25 @@ impl ControlScreens {
             saved_state: 0,
             ready: false,
             keyboards: crate::input_map::KeyBindings::DEVICE_INIT,
+            modern_mode: false,
+        }
+    }
+
+    /// Enable modern gamepad labels (`GAMEPAD 1`, `MODERN GAMEPAD`, `RUMBLE`,
+    /// and Xbox/PlayStation button prompts).
+    pub fn enable_modern_mode(&mut self, set: &mut MenuSet) {
+        self.modern_mode = true;
+        let analogue_id = self.id(ControlScreen::Analogue);
+        let analogue = set.menu_mut(analogue_id);
+        if let Some(item) = item_mut(analogue, key::ACCELERATION) {
+            item.value.value = 1;
+        }
+        if let Some(item) = item_mut(analogue, key::BRAKE) {
+            item.value.value = 1;
+        }
+        if let Some(item) = item_mut(analogue, key::FORCE_FEEDBACK) {
+            item.text_id = crate::frontend_options::modern_text::LABEL_RUMBLE;
+            item.value.value = 1;
         }
     }
 
@@ -1023,5 +1054,57 @@ mod tests {
         // OK: the empty slot 5 gets the first free default (0x10).
         c.buttons_ok(&mut img, 0, &mut effects);
         assert_eq!(c.masks[5], 0x10);
+    }
+
+    #[test]
+    fn modern_gamepad_mode_exposes_gamepad_and_enables_analogue_and_force_feedback() {
+        let (mut set, mut c, mut img) = build();
+        c.enable_modern_mode(&mut set);
+        assert!(c.modern_mode);
+        crate::modern_settings::ModernSettings::default().apply_to_legacy_record(&mut img, true);
+
+        let id = c.id(ControlScreen::Control);
+        let mut effects = Vec::new();
+        let m = set.menu_mut(id);
+        c.enter(
+            ControlScreen::Control,
+            0,
+            m,
+            &mut img,
+            0,
+            &InputDevices::MODERN_GAMEPAD,
+            true,
+            &mut effects,
+        );
+        // Method item has value_count = 2 (Keyboard = 0, Gamepad 1 = 1) and defaults to Gamepad 1 (1).
+        assert_eq!(m.items[0].value.value_count, 2);
+        assert_eq!(m.items[0].value.value, 1);
+        // Commit preserves value_count = 2 so the user can toggle between Keyboard and Gamepad 1.
+        c.commit(m, &img, 0, &InputDevices::MODERN_GAMEPAD, 0, false);
+        assert_eq!(m.items[0].value.value_count, 2);
+
+        // Enter ControlScreen::Analogue and verify Steering, Acceleration, Brake, and Force Feedback are ON (1).
+        let analogue_id = c.id(ControlScreen::Analogue);
+        let a = set.menu_mut(analogue_id);
+        c.enter(
+            ControlScreen::Analogue,
+            0,
+            a,
+            &mut img,
+            0,
+            &InputDevices::MODERN_GAMEPAD,
+            true,
+            &mut effects,
+        );
+        for row in 0..4 {
+            assert!(
+                a.items[row].enabled,
+                "analogue row {row} enabled for modern gamepad"
+            );
+            assert_eq!(
+                a.items[row].value.value, 1,
+                "analogue row {row} defaults to ON"
+            );
+        }
     }
 }

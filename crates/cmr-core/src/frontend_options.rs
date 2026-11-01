@@ -20,6 +20,10 @@ use crate::config::LEGACY_CONFIG_SIZE;
 use crate::descriptor_menu::{ItemKind, Menu, MenuId, MenuItem};
 use crate::frontend::ScreenId;
 use crate::frontend_menu::ValueWidget;
+use crate::modern_settings::{
+    AntiAliasingMode, AspectRatioMode, DrawDistanceScale, FpsLimit, ModernPreset, ModernResolution,
+    ModernSettings, TextureFilterMode, UpscalingMode,
+};
 use crate::scalar_tween::ScalarTween;
 
 type Record = [u8; LEGACY_CONFIG_SIZE];
@@ -38,10 +42,11 @@ pub enum OptionScreen {
     BestRally,
     ChampionshipScores,
     Difficulty,
+    Modern,
 }
 
 impl OptionScreen {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Options,
         Self::Settings,
         Self::Graphics,
@@ -53,6 +58,7 @@ impl OptionScreen {
         Self::BestRally,
         Self::ChampionshipScores,
         Self::Difficulty,
+        Self::Modern,
     ];
 
     /// The menu object's address.
@@ -69,6 +75,7 @@ impl OptionScreen {
             Self::BestRally => 0x00d4_4f10,
             Self::ChampionshipScores => 0x00d4_c428,
             Self::Difficulty => 0x00d4_9718,
+            Self::Modern => 0x00d4_7900,
         })
     }
 
@@ -77,7 +84,7 @@ impl OptionScreen {
         match self {
             Self::Options => 0x0050_7a80,
             Self::Settings => 0x0050_7aa8,
-            Self::Graphics | Self::Detail | Self::Advanced => 0x0050_7ac8,
+            Self::Graphics | Self::Detail | Self::Advanced | Self::Modern => 0x0050_7ac8,
             Self::Sound => 0x0050_7ad0,
             Self::HiScores | Self::BestStage | Self::BestRally | Self::ChampionshipScores => {
                 0x0050_7ab0
@@ -99,6 +106,7 @@ impl OptionScreen {
             Self::BestRally => 0x2d,
             Self::ChampionshipScores => 0x2e,
             Self::Difficulty => 0x66,
+            Self::Modern => modern_text::TITLE_ENHANCED,
         }
     }
 
@@ -108,6 +116,35 @@ impl OptionScreen {
 
     const fn index(self) -> usize {
         self as usize
+    }
+}
+
+/// Synthetic text IDs for the modern graphics & gamepad menus.
+pub mod modern_text {
+    pub const TITLE_ENHANCED: i32 = 0x300;
+    pub const LABEL_ENHANCED: i32 = 0x301;
+    pub const LABEL_PRESET: i32 = 0x302;
+    pub const LABEL_ASPECT: i32 = 0x303;
+    pub const LABEL_FPS: i32 = 0x304;
+    pub const LABEL_DRAW_DISTANCE: i32 = 0x305;
+    pub const LABEL_MSAA: i32 = 0x306;
+    pub const LABEL_UPSCALING: i32 = 0x307;
+    pub const LABEL_RUMBLE: i32 = 0x308;
+    pub const LABEL_VSYNC: i32 = 0x309;
+
+    pub const fn lookup(text_id: i32) -> Option<&'static [u8]> {
+        match text_id {
+            TITLE_ENHANCED | LABEL_ENHANCED => Some(b"ENHANCED"),
+            LABEL_PRESET => Some(b"PRESET"),
+            LABEL_ASPECT => Some(b"ASPECT RATIO"),
+            LABEL_FPS => Some(b"FRAME RATE"),
+            LABEL_DRAW_DISTANCE => Some(b"DRAW DISTANCE"),
+            LABEL_MSAA => Some(b"ANTI-ALIASING"),
+            LABEL_UPSCALING => Some(b"UPSCALING"),
+            LABEL_RUMBLE => Some(b"RUMBLE"),
+            LABEL_VSYNC => Some(b"VSYNC"),
+            _ => None,
+        }
     }
 }
 
@@ -147,6 +184,13 @@ pub mod key {
     pub const NOVICE: i32 = 0x18;
     pub const INTERMEDIATE: i32 = 0x19;
     pub const EXPERT: i32 = 0x1a;
+    pub const MODERN_ENHANCED: i32 = 0x30;
+    pub const MODERN_PRESET: i32 = 0x31;
+    pub const MODERN_ASPECT: i32 = 0x32;
+    pub const MODERN_FPS: i32 = 0x33;
+    pub const MODERN_DRAW_DISTANCE: i32 = 0x34;
+    pub const MODERN_MSAA: i32 = 0x35;
+    pub const MODERN_UPSCALING: i32 = 0x36;
 }
 
 /// The display hardware the advanced graphics rules ask about.
@@ -185,6 +229,9 @@ pub enum OptionsEffect {
     Volumes { effects: i32, music: i32 },
     /// `FUN_004c98e0(m, 0, 1)`: the preview cue (slot 2).
     PreviewCue,
+    /// Modern display/graphics settings changed in `OptionScreen::Modern` or
+    /// `OptionScreen::Advanced`.
+    ModernChanged(ModernSettings),
 }
 
 fn value_item(text: i32, key: i32, count: i32, value: i32, wrap: bool, draw: u32) -> MenuItem {
@@ -324,7 +371,7 @@ pub const PANEL_Y: i32 = 0x2666;
 /// The subtree's state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OptionsScreens {
-    ids: [MenuId; 11],
+    ids: [MenuId; 12],
     templates: RowTemplates,
     /// The row channels' tweens and positions (`d90550`/`d900e0`/`d90098`/
     /// `d904c0`).
@@ -343,6 +390,10 @@ pub struct OptionsScreens {
     resolution_d90128: i32,
     /// `DAT_00d90504`: the controls' player (0 or 1).
     pub player: u8,
+    /// Whether modern settings menus are enabled.
+    pub modern_mode: bool,
+    /// Current modern settings edited by `OptionScreen::Modern` and `OptionScreen::Advanced`.
+    pub modern: ModernSettings,
 }
 
 impl OptionsScreens {
@@ -576,6 +627,71 @@ impl OptionsScreens {
             ],
         );
         menus.push(m);
+        // Modern Enhanced graphics screen (`OptionScreen::Modern`).
+        let modern_defaults = ModernSettings::default();
+        let mut m = menu(S::Modern, id(S::Graphics));
+        m.items = vec![
+            value_item(
+                modern_text::LABEL_PRESET,
+                key::MODERN_PRESET,
+                ModernPreset::COUNT,
+                modern_defaults.preset.index(),
+                true,
+                0,
+            ),
+            value_item(
+                modern_text::LABEL_ASPECT,
+                key::MODERN_ASPECT,
+                AspectRatioMode::COUNT,
+                modern_defaults.aspect_ratio.index(),
+                true,
+                0,
+            ),
+            value_item(
+                modern_text::LABEL_FPS,
+                key::MODERN_FPS,
+                FpsLimit::COUNT,
+                modern_defaults.fps_limit.index(),
+                true,
+                0,
+            ),
+            value_item(
+                modern_text::LABEL_DRAW_DISTANCE,
+                key::MODERN_DRAW_DISTANCE,
+                DrawDistanceScale::COUNT,
+                modern_defaults.draw_distance.index(),
+                true,
+                0,
+            ),
+            value_item(
+                modern_text::LABEL_MSAA,
+                key::MODERN_MSAA,
+                AntiAliasingMode::COUNT,
+                modern_defaults.msaa.index(),
+                true,
+                0,
+            ),
+            value_item(
+                modern_text::LABEL_UPSCALING,
+                key::MODERN_UPSCALING,
+                UpscalingMode::COUNT,
+                modern_defaults.upscaling.index(),
+                true,
+                0,
+            ),
+            back(0xdf, 0),
+        ];
+        callbacks(
+            &mut m,
+            [
+                0x004c_a600,
+                0x004c_aaa0,
+                0x004c_aed0,
+                0x004c_a390,
+                0x004c_a3f0,
+            ],
+        );
+        menus.push(m);
         for m in menus {
             set.add(m);
         }
@@ -591,7 +707,64 @@ impl OptionsScreens {
             volume_latch: None,
             resolution_d90128: 0,
             player: 0,
+            modern_mode: false,
+            modern: modern_defaults,
         }
+    }
+
+    /// Enable the modern in-game graphics menus (`ENHANCED` submenu under
+    /// `Graphics`, and 7-resolution / 5-filter / VSync items under `Advanced`).
+    pub fn enable_modern_mode(
+        &mut self,
+        set: &mut crate::descriptor_menu::MenuSet,
+        settings: ModernSettings,
+    ) {
+        self.modern_mode = true;
+        self.modern = settings;
+        let modern_id = self.id(OptionScreen::Modern);
+        let graphics_id = self.id(OptionScreen::Graphics);
+        let graphics = set.menu_mut(graphics_id);
+        if graphics.find(key::MODERN_ENHANCED).is_none() {
+            let insert_at = graphics.items.len().saturating_sub(1);
+            graphics.items.insert(
+                insert_at,
+                submenu(
+                    modern_text::LABEL_ENHANCED,
+                    key::MODERN_ENHANCED,
+                    modern_id,
+                    0,
+                ),
+            );
+        }
+        let advanced_id = self.id(OptionScreen::Advanced);
+        let advanced = set.menu_mut(advanced_id);
+        if let Some(i) = advanced.find(key::RESOLUTION) {
+            advanced.items[i].value.value_count = ModernResolution::COUNT;
+            advanced.items[i].value.value = settings.resolution.index();
+        }
+        if let Some(i) = advanced.find(key::TEXTURES) {
+            advanced.items[i].value.value_count = TextureFilterMode::COUNT;
+            advanced.items[i].value.value = settings.texture_filter.index();
+        }
+        if let Some(i) = advanced.find(key::SMOOTHNESS) {
+            advanced.items[i].text_id = modern_text::LABEL_VSYNC;
+            advanced.items[i].value.value = i32::from(settings.vsync);
+        }
+        let modern_menu = set.menu_mut(modern_id);
+        Self::sync_modern_menu_items(modern_menu, &settings);
+    }
+
+    fn sync_modern_menu_items(menu: &mut Menu, settings: &ModernSettings) {
+        set_value(menu, key::MODERN_PRESET, settings.preset.index());
+        set_value(menu, key::MODERN_ASPECT, settings.aspect_ratio.index());
+        set_value(menu, key::MODERN_FPS, settings.fps_limit.index());
+        set_value(
+            menu,
+            key::MODERN_DRAW_DISTANCE,
+            settings.draw_distance.index(),
+        );
+        set_value(menu, key::MODERN_MSAA, settings.msaa.index());
+        set_value(menu, key::MODERN_UPSCALING, settings.upscaling.index());
     }
 
     /// The row screens' templates.
@@ -750,13 +923,28 @@ impl OptionsScreens {
                 }
                 set_value(menu, key::DEVICE, i32::from(img[0x11]));
                 set_value(menu, key::CHIPSET, i32::from(img[0x12]));
-                set_value(menu, key::RESOLUTION, i32::from(img[0x13]));
-                set_value(menu, key::TEXTURES, i32::from(img[0x14]));
-                set_value(
-                    menu,
-                    key::SMOOTHNESS,
-                    i32::from_le_bytes([img[0x1c], img[0x1d], img[0x1e], img[0x1f]]),
-                );
+                if self.modern_mode {
+                    if let Some(i) = menu.find(key::RESOLUTION) {
+                        menu.items[i].value.value_count = ModernResolution::COUNT;
+                    }
+                    if let Some(i) = menu.find(key::TEXTURES) {
+                        menu.items[i].value.value_count = TextureFilterMode::COUNT;
+                    }
+                    set_value(menu, key::RESOLUTION, self.modern.resolution.index());
+                    set_value(menu, key::TEXTURES, self.modern.texture_filter.index());
+                    set_value(menu, key::SMOOTHNESS, i32::from(self.modern.vsync));
+                } else {
+                    set_value(menu, key::RESOLUTION, i32::from(img[0x13]));
+                    set_value(menu, key::TEXTURES, i32::from(img[0x14]));
+                    set_value(
+                        menu,
+                        key::SMOOTHNESS,
+                        i32::from_le_bytes([img[0x1c], img[0x1d], img[0x1e], img[0x1f]]),
+                    );
+                }
+            }
+            OptionScreen::Modern => {
+                Self::sync_modern_menu_items(menu, &self.modern);
             }
             // `0x4cac90`: the volumes (the two keys it also loads do not
             // exist in this build).
@@ -819,7 +1007,8 @@ impl OptionsScreens {
                 img[0x10] = (img[0x10] & !0x80) | ((value(menu, key::CAR_EFFECTS) as u8 & 1) << 7);
             }
             // `0x4caaa0`.
-            OptionScreen::Advanced => self.commit_advanced(menu, img, caps),
+            OptionScreen::Advanced => self.commit_advanced(menu, img, caps, effects),
+            OptionScreen::Modern => self.commit_modern(menu, img, effects),
             // `0x4cadb0`.
             OptionScreen::Sound => {
                 let volumes = [
@@ -847,7 +1036,13 @@ impl OptionsScreens {
     /// `0x4caaa0`: the display device, the render mode (6 without a 3D
     /// device), the resolution the video memory allows, the texture quality
     /// and the smoothness.
-    fn commit_advanced(&mut self, menu: &mut Menu, img: &mut Record, caps: &DisplayCaps) {
+    fn commit_advanced(
+        &mut self,
+        menu: &mut Menu,
+        img: &mut Record,
+        caps: &DisplayCaps,
+        effects: &mut Vec<OptionsEffect>,
+    ) {
         let device = value(menu, key::DEVICE);
         img[0x11] = device as u8;
         if !caps.has_3d {
@@ -856,6 +1051,18 @@ impl OptionsScreens {
         img[0x12] = value(menu, key::CHIPSET) as u8;
         if caps.limited_b73c40 || matches!(render_mode(img[0x12]), 2 | 3 | 6) {
             img[0x10] &= !0x80;
+        }
+        if self.modern_mode {
+            let old = self.modern;
+            self.modern.resolution = ModernResolution::from_index(value(menu, key::RESOLUTION));
+            self.modern.texture_filter = TextureFilterMode::from_index(value(menu, key::TEXTURES));
+            self.modern.vsync = value(menu, key::SMOOTHNESS) != 0;
+            self.modern.refresh_preset_tag();
+            self.modern.apply_to_legacy_record(img, false);
+            if self.modern != old {
+                effects.push(OptionsEffect::ModernChanged(self.modern));
+            }
+            return;
         }
         let fits = |res: i32| {
             usize::try_from(res)
@@ -886,6 +1093,33 @@ impl OptionsScreens {
         }
         img[0x14] = value(menu, key::TEXTURES) as u8;
         img[0x1c..0x20].copy_from_slice(&value(menu, key::SMOOTHNESS).to_le_bytes());
+    }
+
+    fn commit_modern(
+        &mut self,
+        menu: &mut Menu,
+        img: &mut Record,
+        effects: &mut Vec<OptionsEffect>,
+    ) {
+        let old = self.modern;
+        let menu_preset = ModernPreset::from_index(value(menu, key::MODERN_PRESET));
+        if menu_preset != self.modern.preset && menu_preset != ModernPreset::Custom {
+            self.modern.apply_preset(menu_preset);
+            Self::sync_modern_menu_items(menu, &self.modern);
+        } else {
+            self.modern.aspect_ratio = AspectRatioMode::from_index(value(menu, key::MODERN_ASPECT));
+            self.modern.fps_limit = FpsLimit::from_index(value(menu, key::MODERN_FPS));
+            self.modern.draw_distance =
+                DrawDistanceScale::from_index(value(menu, key::MODERN_DRAW_DISTANCE));
+            self.modern.msaa = AntiAliasingMode::from_index(value(menu, key::MODERN_MSAA));
+            self.modern.upscaling = UpscalingMode::from_index(value(menu, key::MODERN_UPSCALING));
+            self.modern.refresh_preset_tag();
+            set_value(menu, key::MODERN_PRESET, self.modern.preset.index());
+        }
+        self.modern.apply_to_legacy_record(img, false);
+        if self.modern != old {
+            effects.push(OptionsEffect::ModernChanged(self.modern));
+        }
     }
 
     /// The activate callbacks: `0x4cda60` (the controls' player),
@@ -1089,5 +1323,83 @@ mod tests {
             options.activate(OptionScreen::BestStage, &table, &mut img),
             Some(options.id(OptionScreen::HiScores))
         );
+    }
+
+    #[test]
+    fn modern_mode_exposes_enhanced_screen_and_updates_modern_settings() {
+        use crate::modern_settings::{
+            AntiAliasingMode, AspectRatioMode, DrawDistanceScale, FpsLimit, ModernPreset,
+            ModernResolution, ModernSettings, TextureFilterMode, UpscalingMode,
+        };
+
+        let (mut set, mut options, mut img) = build();
+        let initial = ModernSettings::default();
+        options.enable_modern_mode(&mut set, initial);
+        assert!(options.modern_mode);
+
+        // Graphics menu now has ENHANCED before BACK.
+        let graphics_menu = set.menu(options.id(OptionScreen::Graphics));
+        assert!(
+            graphics_menu
+                .items
+                .iter()
+                .any(|item| item.key == key::MODERN_ENHANCED),
+            "Graphics menu must link to OptionScreen::Modern"
+        );
+
+        // Enter OptionScreen::Modern and verify initial item values match ModernSettings::default().
+        let modern_id = options.id(OptionScreen::Modern);
+        let m = set.menu_mut(modern_id);
+        options.enter(OptionScreen::Modern, 0, m, &img, &caps());
+        assert_eq!(
+            value(m, key::MODERN_PRESET),
+            ModernPreset::Enhanced1080p.index()
+        );
+        assert_eq!(
+            value(m, key::MODERN_ASPECT),
+            AspectRatioMode::Widescreen16x9.index()
+        );
+        assert_eq!(value(m, key::MODERN_FPS), FpsLimit::Fps120.index());
+
+        // Change frame rate to 144 FPS, draw distance to 3.0x, MSAA to 8x, and Upscaling to FSR Ultra.
+        set_value(m, key::MODERN_FPS, FpsLimit::Fps144.index());
+        set_value(
+            m,
+            key::MODERN_DRAW_DISTANCE,
+            DrawDistanceScale::Ultra3x.index(),
+        );
+        set_value(m, key::MODERN_MSAA, AntiAliasingMode::Msaa8x.index());
+        set_value(
+            m,
+            key::MODERN_UPSCALING,
+            UpscalingMode::FsrUltraQuality.index(),
+        );
+        let mut effects = Vec::new();
+        options.commit(OptionScreen::Modern, m, &mut img, &caps(), &mut effects);
+        assert_eq!(options.modern.preset, ModernPreset::Custom);
+        assert_eq!(options.modern.fps_limit, FpsLimit::Fps144);
+        assert_eq!(options.modern.draw_distance, DrawDistanceScale::Ultra3x);
+        assert_eq!(options.modern.msaa, AntiAliasingMode::Msaa8x);
+        assert_eq!(options.modern.upscaling, UpscalingMode::FsrUltraQuality);
+        assert!(effects.contains(&OptionsEffect::ModernChanged(options.modern)));
+
+        // Advanced screen in modern mode exposes all 7 resolutions (up to 4K) and 5 texture filter modes.
+        let adv_id = options.id(OptionScreen::Advanced);
+        let adv = set.menu_mut(adv_id);
+        options.enter(OptionScreen::Advanced, 0, adv, &img, &caps());
+        set_value(adv, key::RESOLUTION, ModernResolution::Res3840x2160.index());
+        set_value(
+            adv,
+            key::SMOOTHNESS,
+            TextureFilterMode::Anisotropic16x.index(),
+        );
+        effects.clear();
+        options.commit(OptionScreen::Advanced, adv, &mut img, &caps(), &mut effects);
+        assert_eq!(options.modern.resolution, ModernResolution::Res3840x2160);
+        assert_eq!(
+            options.modern.texture_filter,
+            TextureFilterMode::Anisotropic16x
+        );
+        assert!(effects.contains(&OptionsEffect::ModernChanged(options.modern)));
     }
 }

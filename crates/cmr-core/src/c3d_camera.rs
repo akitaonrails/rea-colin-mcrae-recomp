@@ -104,6 +104,36 @@ pub fn gameplay_projection_default(width: u16, height: u16) -> (f32, f32, f32, f
     )
 }
 
+/// Modern Hor+ widescreen and extended-draw-distance gameplay projection
+/// `(w, h, z_near, z_far)`.
+///
+/// Starting from [`gameplay_projection_default`], this scales `w` by
+/// `(render_aspect / target_aspect)` when `target_aspect > render_aspect`
+/// (true Hor+ widescreen: expanding the horizontal field of view so a `16:9`,
+/// `16:10`, or `21:9` presentation has 1:1 unstretched proportions with wider
+/// peripheral vision) and multiplies `z_far` by `draw_distance_mult`.
+#[must_use]
+pub fn gameplay_projection_modern(
+    width: u16,
+    height: u16,
+    target_aspect: f32,
+    draw_distance_mult: f32,
+) -> (f32, f32, f32, f32) {
+    let (w, h, z_near, z_far) = gameplay_projection_default(width, height);
+    let render_aspect = if width > 0 && height > 0 {
+        f32::from(width) / f32::from(height)
+    } else {
+        4.0 / 3.0
+    };
+    let hor_plus_scale = if target_aspect > 0.1 {
+        (render_aspect / target_aspect).clamp(0.35, 1.25)
+    } else {
+        1.0
+    };
+    let far_scale = draw_distance_mult.clamp(0.5, 5.0);
+    (w * hor_plus_scale, h, z_near, z_far * far_scale)
+}
+
 /// Builds the left-handed D3D perspective matrix (`FUN_004a71b0`) as a row-major
 /// `D3DMATRIX`: `m00 = w/2`, `m11 = h/2`, `m22 = zf/(zf-zn)`, `_34 = 1`,
 /// `_43 = -zn*zf/(zf-zn)`, `_44 = 0`.

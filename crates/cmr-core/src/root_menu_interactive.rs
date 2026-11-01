@@ -174,6 +174,12 @@ impl RootInteraction {
         self.screens.install_keyboard_record(record);
     }
 
+    /// Enable the modern graphics (`ENHANCED`), high-resolution `ADVANCED`,
+    /// and `GAMEPAD 1` / `MODERN GAMEPAD` menus and defaults.
+    pub fn enable_modern_mode(&mut self, settings: crate::modern_settings::ModernSettings) {
+        self.screens.enable_modern_mode(settings);
+    }
+
     /// The name entry's encoded cheat names (`FUN_004c6880`'s strings).
     #[must_use]
     pub fn with_name_cheats(mut self, cheats: Vec<Vec<u8>>) -> Self {
