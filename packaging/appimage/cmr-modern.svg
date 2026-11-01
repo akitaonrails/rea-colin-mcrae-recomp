@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="44" fill="#17191f"/>
+  <path d="M20 172 76 80h104l56 92-28 28H48Z" fill="#d6a313"/>
+  <path d="M54 164 92 104h72l38 60-12 12H66Z" fill="#242833"/>
+  <circle cx="86" cy="178" r="24" fill="#0c0d10" stroke="#e7e8ea" stroke-width="9"/>
+  <circle cx="174" cy="178" r="24" fill="#0c0d10" stroke="#e7e8ea" stroke-width="9"/>
+  <text x="128" y="148" text-anchor="middle" fill="#f4f4f2" font-family="sans-serif" font-size="52" font-weight="700">CMR</text>
+</svg>

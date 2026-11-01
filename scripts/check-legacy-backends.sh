@@ -30,25 +30,37 @@ if cargo tree --workspace --prefix none 2>/dev/null | grep -iE "$legacy"; then
 fi
 
 # 3. Any already-built binary must not import one either. Run after building
-#    cmr-app (`cargo build --release -p cmr-app`); absent artifacts are skipped
-#    because CI only type-checks a Windows binary (see I04).
+#    cmr-app (`cargo build --release -p cmr-app`); absent artifacts are skipped.
 checked=0
-for artifact in target/release/cmr-app target/x86_64-pc-windows-gnu/release/cmr-app.exe; do
+inspected=0
+for artifact in \
+  target/release/cmr-app \
+  target/release/cmr-app.exe \
+  target/x86_64-pc-windows-gnu/release/cmr-app.exe; do
   [[ -f "$artifact" ]] || continue
   checked=$((checked + 1))
   if [[ "$(head -c 2 "$artifact")" == "MZ" ]]; then
     if ! command -v objdump >/dev/null 2>&1; then
+      if [[ ${CMR_REQUIRE_BINARY_INSPECTION:-0} == 1 ]]; then
+        echo "error: objdump is required to inspect $artifact" >&2
+        exit 1
+      fi
       echo "  $(basename "$artifact"): PE import audit skipped (objdump unavailable)"
       continue
     fi
     imports=$(objdump -p "$artifact" | awk '$1 == "DLL" && $2 == "Name" { print $3 }')
   else
     if ! command -v readelf >/dev/null 2>&1; then
+      if [[ ${CMR_REQUIRE_BINARY_INSPECTION:-0} == 1 ]]; then
+        echo "error: readelf is required to inspect $artifact" >&2
+        exit 1
+      fi
       echo "  $(basename "$artifact"): ELF import audit skipped (readelf unavailable)"
       continue
     fi
     imports=$(readelf -d "$artifact" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p')
   fi
+  inspected=$((inspected + 1))
   if grep -qiE "$legacy" <<<"$imports"; then
     echo "error: $artifact imports a legacy Windows backend:" >&2
     grep -iE "$legacy" <<<"$imports" >&2
@@ -58,6 +70,10 @@ for artifact in target/release/cmr-app target/x86_64-pc-windows-gnu/release/cmr-
 done
 if ((checked == 0)); then
   echo "  no built cmr-app artifact found; import audit skipped (build one to include it)"
+fi
+if [[ ${CMR_REQUIRE_BINARY_INSPECTION:-0} == 1 ]] && ((inspected == 0)); then
+  echo "error: a built cmr-app artifact is required for release import inspection" >&2
+  exit 1
 fi
 
 echo "passed: no DirectDraw/DirectInput/DirectSound/QMixer/DirectPlay binding"

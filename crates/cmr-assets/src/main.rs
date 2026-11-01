@@ -33,6 +33,12 @@ fn main() -> ExitCode {
 fn run(args: impl Iterator<Item = OsString>) -> Result<String, String> {
     let mut args = args;
     let command = args.next().ok_or_else(usage)?;
+    if command == "--version" {
+        if args.next().is_some() {
+            return Err(usage());
+        }
+        return Ok(format!("cmr-assets {}", env!("CARGO_PKG_VERSION")));
+    }
     let options = parse_options(args)?;
     match command.to_str() {
         Some("catalog") => {
@@ -380,6 +386,15 @@ mod tests {
 
     fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
         bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    #[test]
+    fn version_command_is_stable_and_rejects_extra_arguments() {
+        assert_eq!(
+            run(args(&["--version"])).unwrap(),
+            format!("cmr-assets {}", env!("CARGO_PKG_VERSION"))
+        );
+        assert!(run(args(&["--version", "extra"])).is_err());
     }
 
     fn compiled_cli_synthetic_pe() -> Vec<u8> {

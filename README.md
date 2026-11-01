@@ -21,13 +21,12 @@ bit-exact software C3D reference rasterizer).
 
 This repository pursues two complementary goals across two official branches
 (see [`CONTRIBUTING.md`](CONTRIBUTING.md) for contributor guidelines and
-[`.github/workflows/release.yml`](.github/workflows/release.yml) for automated
-dual-binary builds):
+[`docs/RELEASING.md`](docs/RELEASING.md) for release automation):
 
 | Branch | Binary | Purpose & Scope |
 | --- | --- | --- |
-| **`main` (Preservation)** | `cmr-app-preservation` | **1:1 Historical Preservation**: Strict, instruction-verified replication of the 1998 EU `Rally.exe` behavior, Q16.16 fixed-point physics, 8-bit paletted lighting, and `cmRally.cfg` data formats. Audited in [`docs/PRESERVATION_AUDIT.md`](docs/PRESERVATION_AUDIT.md). |
-| **`modern` (Enhanced)** | `cmr-app-modern` | **Modern Enhancements (always ahead of `main`)**: Adds native 1080p / 1440p / 4K & widescreen (`16:9` / `16:10` / `21:9`) rendering, 60 / 120 / 144+ FPS continuous sub-tick interpolation, extended draw distance (`1.0x`–`3.0x`), anisotropic filtering (`4x`–`16x`), MSAA (`2x`–`8x`), FSR/CAS upscaling, in-game Modern Settings menus (`save/modern.cfg`), and modern Gamepad mappings + rumble by default. |
+| **`main` (Preservation)** | `cmr-app` from source | **1:1 Historical Preservation**: Strict, instruction-verified replication of the 1998 EU `Rally.exe` behavior, Q16.16 fixed-point physics, 8-bit paletted lighting, and `cmRally.cfg` data formats. Audited in [`docs/PRESERVATION_AUDIT.md`](docs/PRESERVATION_AUDIT.md). |
+| **`modern` (Enhanced)** | `cmr-app-modern` release | **Modern Enhancements (always ahead of `main`)**: Adds native 1080p / 1440p / 4K & widescreen (`16:9` / `16:10` / `21:9`) rendering, 60 / 120 / 144+ FPS continuous sub-tick interpolation, extended draw distance (`1.0x`–`3.0x`), anisotropic filtering (`4x`–`16x`), MSAA (`2x`–`8x`), FSR/CAS upscaling, in-game Modern Settings menus (`save/modern.cfg`), and modern Gamepad mappings + rumble by default. |
 
 ---
 
@@ -38,13 +37,17 @@ dual-binary builds):
   formats, fixed-point Q16.16 four-wheel vehicle physics, surface/weather
   dynamics, collision & damage, front-end menus, Championship & Rally School
   progression, replays, 3D rendering, and QMixer audio are implemented and
-  backed by **2,910+ automated tests**.
+  backed by **more than 2,980 source-owned automated tests**.
 - **Native Hardware & Software Rendering**:
   Supports hardware-accelerated rendering via `wgpu` (`--renderer auto` or
   `--renderer gpu`) alongside a pure-Rust software C3D rasterizer
   (`--renderer software`) that reproduces the original 8-bit paletted lighting,
   distance fog, horizon sky, Y-billboarded trackside foliage, planar car
-  shadows, and night headlight pools.
+  shadows, and night headlight pools. Automatic mode enumerates the native
+  Vulkan/Direct3D 12/OpenGL options, checks each adapter's required texture
+  capabilities, and tries compatible GPUs in a stable order before falling
+  back to software. Window sizing uses the active display's SDL-reported DPI
+  and usable bounds rather than machine-specific monitor dimensions.
 - **Full Front-End, Championship, Single Stage, Time Trial & Rally School**:
   Navigate the rotating 3D front-end menus, configure your car in the Service
   Area, drive any of the 56 stages across 8 countries (New Zealand, Greece,
@@ -57,11 +60,25 @@ dual-binary builds):
 
 ---
 
-## Quick Start (How to Play)
+## Binary Releases
+
+Tagged modern releases publish two data-free x86-64 artifacts:
+
+- a Linux AppImage containing `cmr-app`, the `cmr-assets` importer, SDL3, and
+  reviewed metadata profiles;
+- a Windows ZIP containing `cmr-app-modern.exe`, `cmr-assets.exe`, `SDL3.dll`,
+  and the same profiles.
+
+Download them from [GitHub Releases](https://github.com/akitaonrails/rea-colin-mcrae-recomp/releases)
+and verify `SHA256SUMS.txt`. Release archives never contain the original game,
+imported `runtime-data/`, save files, or the optional HD pack. See the bundled
+`RELEASE.md` and [`docs/RELEASING.md`](docs/RELEASING.md).
+
+## Quick Start (How to Play from Source)
 
 ### 1. Prerequisites
 
-- **Rust toolchain** (`rustup`, stable Rust 1.85+)
+- **Rust toolchain** (`rustup`, Rust 1.88+)
 - **SDL3** development libraries installed on your system (or built via Cargo)
 - **Your own copy of Colin McRae Rally (1998 PC, EU release)** located outside
   this repository
@@ -182,14 +199,14 @@ The workspace is organized into focused crates:
 - [`crates/cmr-video`](crates/cmr-video): Software C3D rasterizer, 8-bit
   palette lighting/fog tables, menu/HUD/service-area compositors, and AVI
   video decoding.
-- [`crates/cmr-gpu`](crates/cmr-gpu) & [`crates/cmr-gpu-stage`](crates/cmr-gpu-stage):
-  Hardware-accelerated `wgpu` indexed-palette presenter and persistent 3D stage
-  renderer.
-- [`crates/cmr-audio`](crates/cmr-audio): 16-API `QSWaveMix` software mixer,
-  engine RPM pitch/crossfade synthesizer, surface/skid/impact audio, and
-  co-driver speech sequencer.
-- [`crates/cmr-net`](crates/cmr-net): DirectPlay lobby/session protocol and
-  opt-in TCP transport.
+- [`crates/cmr-gpu-contract`](crates/cmr-gpu-contract) and
+  [`crates/cmr-gpu-stage`](crates/cmr-gpu-stage): Shared GPU contracts and the
+  persistent indexed 3D stage preparation layer.
+- [`crates/cmr-video-wgpu`](crates/cmr-video-wgpu) and
+  [`crates/cmr-video-sdl-gpu`](crates/cmr-video-sdl-gpu): `wgpu` and SDL GPU
+  implementations of the shared rendering contracts.
+- [`crates/cmr-hdpack`](crates/cmr-hdpack): Decoder and indexed conversion for
+  the optional content-addressed HD art pack.
 - [`crates/cmr-platform-sdl3`](crates/cmr-platform-sdl3): SDL3 windowing,
   keyboard/gamepad input translation, audio output stream, and 40 Hz / 25 Hz
   fixed-step frame pacing.
@@ -207,8 +224,8 @@ The workspace is organized into focused crates:
 
 Unsupported boundaries are explicit: native driver-owned padding and exact
 font/filter/alpha output, alternate type-1 lighting, a concrete FFB hardware
-device, other regional editions/locales, and native Windows or GitHub Actions
-execution not run locally. See [PRESERVATION_AUDIT.md](docs/PRESERVATION_AUDIT.md),
+device, other regional editions/locales, and native Windows runtime behavior
+outside the source-owned GitHub Actions test matrix. See [PRESERVATION_AUDIT.md](docs/PRESERVATION_AUDIT.md),
 [DECOMP_MAP.md](docs/DECOMP_MAP.md), [COMPARISON.md](docs/COMPARISON.md),
 [DEVIATIONS.md](docs/DEVIATIONS.md), and [CONTRIBUTING.md](CONTRIBUTING.md)
 for the 1:1 surface-area audit, evidence ledger, documented boundaries, and
@@ -287,6 +304,8 @@ CMR_RUNTIME_DATA="$PWD/runtime-data/installed-eu-derived-assets-v2" \
 - [docs/COMPARISON.md](docs/COMPARISON.md) — Differential verification methodology
 - [docs/DEVIATIONS.md](docs/DEVIATIONS.md) — Supported editions and intentional differences
 - [docs/MODERN_BACKEND_RESEARCH.md](docs/MODERN_BACKEND_RESEARCH.md) — GPU/platform backend evaluation
+- [docs/HD_ART.md](docs/HD_ART.md) — Optional local HD art-pack format and settings
+- [docs/RELEASING.md](docs/RELEASING.md) — Reproducible AppImage/Windows release process
 
 ---
 

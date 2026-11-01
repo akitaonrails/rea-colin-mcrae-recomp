@@ -453,8 +453,8 @@ pub fn compute_fitted_window_size(
     } else {
         1.0
     };
-    let mut w = ((desired_phys_w as f32) / density).round().max(320.0) as u32;
-    let mut h = ((desired_phys_h as f32) / density).round().max(240.0) as u32;
+    let mut w = ((desired_phys_w as f32) / density).round().max(1.0) as u32;
+    let mut h = ((desired_phys_h as f32) / density).round().max(1.0) as u32;
     if let Some((usable_w, usable_h)) = usable_bounds
         && usable_w > 0
         && usable_h > 0
@@ -463,11 +463,11 @@ pub fn compute_fitted_window_size(
         let fit_scale = (usable_w as f32 / w as f32).min(usable_h as f32 / h as f32);
         w = ((w as f32) * fit_scale)
             .floor()
-            .max(320.0)
+            .max(1.0)
             .min(usable_w as f32) as u32;
         h = ((h as f32) * fit_scale)
             .floor()
-            .max(240.0)
+            .max(1.0)
             .min(usable_h as f32) as u32;
     }
     (w, h)
@@ -1940,5 +1940,17 @@ mod tests {
             compute_fitted_window_size(1920, 1080, 1.5, Some((0, 0))),
             (1280, 720)
         );
+    }
+
+    #[test]
+    fn compute_fitted_window_size_is_not_tied_to_a_specific_monitor_layout() {
+        assert_eq!(
+            compute_fitted_window_size(640, 480, 2.5, Some((2048, 1152))),
+            (256, 192)
+        );
+        let (width, height) = compute_fitted_window_size(1920, 1080, 1.0, Some((300, 100)));
+        assert_eq!(height, 100);
+        assert!(width <= 300);
+        assert!((width as f32 / height as f32 - 16.0 / 9.0).abs() < 0.02);
     }
 }

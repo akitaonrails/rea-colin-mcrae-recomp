@@ -192,7 +192,11 @@ fn read_executable(
         if m.file_type().is_symlink() {
             return Err(CarSelectorImportError::Symlink(path));
         }
-        if cs.peek().is_some() && !m.is_dir() {
+        if cs.peek().is_some() {
+            if !m.is_dir() {
+                return Err(CarSelectorImportError::SpecialFile(path));
+            }
+        } else if !m.is_file() {
             return Err(CarSelectorImportError::SpecialFile(path));
         }
     }

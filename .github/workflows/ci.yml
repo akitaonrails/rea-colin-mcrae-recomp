@@ -7,28 +7,29 @@ on:
     branches: [main, modern]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  # The SDL-free portable compatibility slice (no system SDL3 required).
   PORTABLE_SLICE: >-
     -p cmr-core -p cmr-formats -p cmr-test-support -p cmr-assets -p cmr-video
 
 jobs:
-  # Format, lint, and test the portable slice. Needs no SDL3, so it is the fast
-  # gate that fails first on the common mistakes.
   portable-gate:
     name: Portable slice (fmt, clippy, test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
+          toolchain: 1.88.0
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
       - name: Format
         run: cargo fmt --all --check
       - name: Portability and legacy-backend audits
@@ -42,37 +43,41 @@ jobs:
       - name: Test (portable slice)
         run: cargo test ${{ env.PORTABLE_SLICE }}
 
-  # Prove the portable slice still type-checks for a Windows target. Mirrors the
-  # locally verified `cargo check --target x86_64-pc-windows-gnu` (type-check
-  # only; no mingw linker needed).
   windows-cross-check:
     name: Windows cross-check (portable slice)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
+          toolchain: 1.88.0
           targets: x86_64-pc-windows-gnu
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
       - name: Cross-check for Windows
         run: cargo check --target x86_64-pc-windows-gnu ${{ env.PORTABLE_SLICE }} --all-targets
 
-  # Full workspace including the SDL3 host crates. SDL3 is built from source via
-  # the bundled-sdl3 feature so the job needs no pre-installed SDL3 - only CMake
-  # and a C toolchain (present on the GitHub-hosted runners).
   full-workspace:
-    name: Full workspace with SDL3 (${{ matrix.os }})
+    name: Full workspace with bundled SDL3 (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-22.04, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
+          toolchain: 1.88.0
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
+      - name: Install SDL3 Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libdbus-1-dev libudev-dev libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
+            libxtst-dev libxkbcommon-dev
       - name: Clippy (full workspace, bundled SDL3)
         run: cargo clippy --workspace --all-targets --features cmr-platform-sdl3/bundled-sdl3 -- -D warnings
       - name: Test (full workspace, bundled SDL3)

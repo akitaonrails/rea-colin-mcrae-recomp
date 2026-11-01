@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+export LD_LIBRARY_PATH="${APPDIR}/usr/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+if [ "${1-}" = "--asset-tool" ]; then
+    shift
+    cd "${APPDIR}/usr/share/cmr"
+    exec "${APPDIR}/usr/bin/cmr-assets" "$@"
+fi
+
+exec "${APPDIR}/usr/bin/cmr-app" "$@"

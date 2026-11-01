@@ -238,7 +238,11 @@ fn read_profiled_executable(
         if metadata.file_type().is_symlink() {
             return Err(CompiledInitializerImportError::Symlink(path));
         }
-        if components.peek().is_some() && !metadata.is_dir() {
+        if components.peek().is_some() {
+            if !metadata.is_dir() {
+                return Err(CompiledInitializerImportError::SpecialFile(path));
+            }
+        } else if !metadata.is_file() {
             return Err(CompiledInitializerImportError::SpecialFile(path));
         }
     }

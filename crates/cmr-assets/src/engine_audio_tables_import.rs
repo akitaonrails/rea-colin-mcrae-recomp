@@ -214,7 +214,11 @@ fn read_executable(
         if m.file_type().is_symlink() {
             return Err(EngineAudioTablesImportError::Symlink(path));
         }
-        if cs.peek().is_some() && !m.is_dir() {
+        if cs.peek().is_some() {
+            if !m.is_dir() {
+                return Err(EngineAudioTablesImportError::SpecialFile(path));
+            }
+        } else if !m.is_file() {
             return Err(EngineAudioTablesImportError::SpecialFile(path));
         }
     }

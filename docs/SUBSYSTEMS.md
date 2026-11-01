@@ -2450,14 +2450,18 @@ languages rather than fabricating or silently aliasing Italian assets.
   host crates (`cmr-platform-sdl3`, `cmr-app`) require native SDL3 provisioning to
   build for Windows (gated with the Linux displayed run under I07). See evidence
   `impl.windows-portability`.
-- CI (`.github/workflows/ci.yml`, I05) runs three jobs on push/PR to `main`: a
+- CI (`.github/workflows/ci.yml`, I05) runs on pushes/PRs to `main` and
+  `modern`: a
   portable gate (fmt + clippy `-D warnings` + test over the SDL-free slice), a
   Windows cross-check (the I04 `cargo check --target x86_64-pc-windows-gnu`), and
   a full-workspace clippy+test on an ubuntu/windows matrix that builds SDL3 from
   source via the `cmr-platform-sdl3` `bundled-sdl3` feature (a passthrough to
-  `sdl3/build-from-source`, so no system SDL3 is needed). The first two jobs'
-  commands are locally verified; the SDL source-build jobs are authored but not
-  yet run under Actions. See evidence `impl.ci-workflow`.
+  `sdl3/build-from-source`). Ubuntu installs SDL's documented X11/Wayland build
+  dependencies, Windows builds SDL3 from the locked source, and all actions are
+  commit-pinned. Exact release-candidate and tag runs are required by
+  `docs/RELEASING.md`; hosted results remain attached to their GitHub commit,
+  rather than being asserted as a timeless documentation fact. See evidence
+  `impl.ci-workflow` and `impl.release-artifacts`.
 - The native GPU comparison now has an API-neutral presentation slice.
   `cmr-gpu-contract` validates borrowed indexed frames, defines canonical
   opaque RGBA8 expansion and readback normalization, reports capabilities and
@@ -2614,10 +2618,11 @@ languages rather than fabricating or silently aliasing Italian assets.
 - Co-driver calls are spoken by the recovered sequencer `FUN_00444450` from
   the 40-wave bank on the speech channel.
 - Verification covers source-owned fixtures, reviewed-import and offscreen SDL
-  runs on Linux, and a clean Windows-target `cargo check`. CI defines portable,
-  cross-target and full-workspace jobs; native Windows and Actions provisioning
-  are unrun. Comparison/deviation matrices and the README now reflect the full
-  117-complete / 2-partial roadmap.
+  runs on Linux, a clean Windows-target `cargo check`, and hosted native Windows
+  build/test jobs. CI defines portable, cross-target and full-workspace jobs;
+  an initial release additionally requires exact-commit Linux AppImage and
+  Windows ZIP builds to pass before its tag is created. Comparison/deviation
+  matrices and the README reflect the completed 119-item roadmap.
 - Edition support is limited to the reviewed official-EU/installed-EU profile.
   Other editions and locales are unsupported until separately evidenced;
   official-US and xdelta files are comparison-only artifacts.

@@ -83,7 +83,8 @@ Post-race replay/flyby/fade/quit flags remain harness inputs. No multiplayer is
 required.
 
 Verification boundaries are environmental, not silent passes: original-written
-save comparison requires user-owned files; native Windows execution and GitHub
-Actions provisioning are unrun here; a real video decoder and native driver-
-exact font/filter/alpha output are unsupported. These limits are recorded in
+save comparison requires user-owned files; hosted Windows compilation/tests do
+not replace an interactive run on every hardware/driver combination; a real
+video decoder and native driver-exact font/filter/alpha output are unsupported.
+These limits are recorded in
 [DECOMP_MAP.md](DECOMP_MAP.md) and are not presented as compatibility claims.

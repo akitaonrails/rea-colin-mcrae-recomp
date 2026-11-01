@@ -144,6 +144,20 @@ fn binary_reports_a_path_free_typed_store_failure() {
 }
 
 #[test]
+fn binary_reports_its_release_version() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cmr-app"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("cmr-app {}\n", env!("CARGO_PKG_VERSION"))
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 #[ignore = "requires a user-owned import selected with CMR_RUNTIME_DATA"]
 fn reviewed_import_produces_one_complete_official_root_frame() {
     let runtime_root = std::env::var_os(RUNTIME_DATA_ENV)

@@ -20,8 +20,13 @@ fn stage_inputs(config: &RuntimeConfig) -> (&Path, &str) {
 }
 
 fn main() -> ExitCode {
+    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments.as_slice() == ["--version"] {
+        println!("cmr-app {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
     match runtime_config(
-        std::env::args_os().skip(1),
+        arguments,
         std::env::var_os(RUNTIME_DATA_ENV),
         std::env::var_os(SOURCE_ENV),
     ) {

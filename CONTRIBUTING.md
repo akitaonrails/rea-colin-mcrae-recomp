@@ -73,11 +73,16 @@ Use Conventional Commit subjects (e.g., `fix(core): ...`, `feat(modern): ...`, `
 
 ---
 
-## 4. GitHub Actions CI & Dual-Branch Binary Automation
+## 4. GitHub Actions CI & Modern Binary Automation
 
 - **Continuous Integration ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))**:
   Runs automatically on pushes and pull requests to both `main` and `modern`, verifying formatting, portability gates, Windows cross-compilation (`x86_64-pc-windows-gnu`), and full-workspace tests with bundled SDL3 on Linux and Windows.
-- **Dual-Binary Build & Release ([`.github/workflows/release.yml`](.github/workflows/release.yml))**:
-  Builds and packages **both** editions side-by-side on Linux (`x86_64-unknown-linux-gnu`) and Windows (`x86_64-pc-windows-msvc`):
-  - **`cmr-app-preservation`** (built from `main` — 1:1 original 1998 preservation binary)
-  - **`cmr-app-modern`** (built from `modern` — modern high-res, high-FPS, widescreen, modern-gamepad binary)
+- **Modern Build & Release ([`.github/workflows/release.yml`](.github/workflows/release.yml))**:
+  Builds the exact triggering `modern` commit as a Linux x86-64 AppImage and a
+  Windows x86-64 ZIP. Branch pushes produce inspected CI artifacts; a verified
+  `v*` tag publishes those exact-tag artifacts and `SHA256SUMS.txt` to GitHub
+  Releases. The preservation branch remains buildable from source and is not
+  silently substituted into a modern release.
+
+See [`docs/RELEASING.md`](docs/RELEASING.md) for artifact contents, release
+gates, and the tag procedure.

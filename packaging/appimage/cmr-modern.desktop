@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Colin McRae Rally — Modern Reconstruction
+Comment=Run the clean-room Colin McRae Rally reconstruction with user-owned data
+Exec=cmr-app
+Icon=cmr-modern
+Terminal=false
+Categories=Game;SportsGame;
+Keywords=rally;racing;game;

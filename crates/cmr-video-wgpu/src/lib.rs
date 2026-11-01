@@ -278,14 +278,16 @@ fn fragment_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
 /// Native graphics API selected for the wgpu instance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WgpuApi {
+    Auto,
     Vulkan,
     Direct3d12,
     OpenGl,
 }
 
 impl WgpuApi {
-    const fn backends(self) -> wgpu::Backends {
+    fn backends(self) -> wgpu::Backends {
         match self {
+            Self::Auto => wgpu::Backends::PRIMARY | wgpu::Backends::GL,
             Self::Vulkan => wgpu::Backends::VULKAN,
             Self::Direct3d12 => wgpu::Backends::DX12,
             Self::OpenGl => wgpu::Backends::GL,
@@ -312,7 +314,7 @@ pub struct WgpuBackendConfig {
 impl Default for WgpuBackendConfig {
     fn default() -> Self {
         Self {
-            api: WgpuApi::Vulkan,
+            api: WgpuApi::Auto,
             adapter_name_contains: None,
             power_preference: WgpuPowerPreference::HighPerformance,
         }
@@ -463,83 +465,81 @@ impl WgpuIndexedPaletteBackend {
             let filter = filter.to_lowercase();
             adapters.retain(|adapter| adapter.get_info().name.to_lowercase().contains(&filter));
         }
+        adapters.retain(adapter_supports_required_roles);
         adapters.sort_by_key(|adapter| {
-            adapter_rank(adapter.get_info().device_type, config.power_preference)
+            let info = adapter.get_info();
+            (
+                adapter_rank(info.device_type, config.power_preference),
+                backend_rank(info.backend),
+                info.name.to_lowercase(),
+                info.vendor,
+                info.device,
+            )
         });
-        let adapter = adapters
-            .into_iter()
-            .next()
-            .ok_or_else(|| WgpuBackendError::NoAdapter {
-                api: config.api,
-                name_filter: config.adapter_name_contains.clone(),
-            })?;
-        let native_info = adapter.get_info();
-        let adapter_features = adapter.features();
-        let sampled_r8_uint = supports_usage(
-            &adapter,
-            wgpu::TextureFormat::R8Uint,
-            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        );
-        if !sampled_r8_uint {
-            return Err(WgpuBackendError::MissingRequiredTextureRole(
-                WgpuTextureRole::IndexedPlane,
-            ));
+        let mut last_device_error = None;
+        let mut selected = None;
+        for adapter in adapters {
+            let native_info = adapter.get_info();
+            let adapter_features = adapter.features();
+            let required_features = adapter_features
+                & (wgpu::Features::TIMESTAMP_QUERY
+                    | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
+            let adapter_limits = adapter.limits();
+            let mut required_limits = wgpu::Limits::default();
+            required_limits.max_texture_dimension_2d = required_limits
+                .max_texture_dimension_2d
+                .max(adapter_limits.max_texture_dimension_2d.min(8192));
+            required_limits.max_buffer_size = required_limits
+                .max_buffer_size
+                .max(adapter_limits.max_buffer_size.min(256 * 1024 * 1024));
+            let msaa_2x_supported = required_features
+                .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
+                && supports_sample_count(&adapter, OUTPUT_FORMAT, 2)
+                && supports_sample_count(&adapter, C3D_DEPTH_FORMAT, 2);
+            let msaa_4x_supported = supports_sample_count(&adapter, OUTPUT_FORMAT, 4)
+                && supports_sample_count(&adapter, C3D_DEPTH_FORMAT, 4);
+            match adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("cmr indexed-palette conformance device"),
+                    required_features,
+                    required_limits,
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                    trace: wgpu::Trace::Off,
+                })
+                .await
+            {
+                Ok((device, queue)) => {
+                    selected = Some((
+                        native_info,
+                        adapter_features,
+                        msaa_2x_supported,
+                        msaa_4x_supported,
+                        device,
+                        queue,
+                    ));
+                    break;
+                }
+                Err(error) => last_device_error = Some(error.to_string()),
+            }
         }
-        if !supports_usage(
-            &adapter,
-            wgpu::TextureFormat::Rgba8Uint,
-            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        ) {
-            return Err(WgpuBackendError::MissingRequiredTextureRole(
-                WgpuTextureRole::Palette,
+        let Some((
+            native_info,
+            adapter_features,
+            msaa_2x_supported,
+            msaa_4x_supported,
+            device,
+            queue,
+        )) = selected
+        else {
+            return Err(last_device_error.map_or_else(
+                || WgpuBackendError::NoAdapter {
+                    api: config.api,
+                    name_filter: config.adapter_name_contains.clone(),
+                },
+                WgpuBackendError::RequestDevice,
             ));
-        }
-        if !supports_usage(
-            &adapter,
-            OUTPUT_FORMAT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        ) {
-            return Err(WgpuBackendError::MissingRequiredTextureRole(
-                WgpuTextureRole::ReadbackTarget,
-            ));
-        }
-        if !supports_usage(
-            &adapter,
-            C3D_INDEX_FORMAT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        ) {
-            return Err(WgpuBackendError::MissingRequiredTextureRole(
-                WgpuTextureRole::ReadbackTarget,
-            ));
-        }
-        let required_features = adapter_features
-            & (wgpu::Features::TIMESTAMP_QUERY
-                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
-        let adapter_limits = adapter.limits();
-        let mut required_limits = wgpu::Limits::default();
-        required_limits.max_texture_dimension_2d = required_limits
-            .max_texture_dimension_2d
-            .max(adapter_limits.max_texture_dimension_2d.min(8192));
-        required_limits.max_buffer_size = required_limits
-            .max_buffer_size
-            .max(adapter_limits.max_buffer_size.min(256 * 1024 * 1024));
-        let msaa_2x_supported = required_features
-            .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
-            && supports_sample_count(&adapter, OUTPUT_FORMAT, 2)
-            && supports_sample_count(&adapter, C3D_DEPTH_FORMAT, 2);
-        let msaa_4x_supported = supports_sample_count(&adapter, OUTPUT_FORMAT, 4)
-            && supports_sample_count(&adapter, C3D_DEPTH_FORMAT, 4);
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("cmr indexed-palette conformance device"),
-                required_features,
-                required_limits,
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                memory_hints: wgpu::MemoryHints::Performance,
-                trace: wgpu::Trace::Off,
-            })
-            .await
-            .map_err(|error| WgpuBackendError::RequestDevice(error.to_string()))?;
+        };
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("cmr indexed-palette bind group layout"),
             entries: &[texture_layout_entry(0), texture_layout_entry(1)],
@@ -725,7 +725,7 @@ impl WgpuIndexedPaletteBackend {
             driver_info: native_info.driver_info,
         };
         let capabilities = BackendCapabilities {
-            sampled_r8_uint,
+            sampled_r8_uint: true,
             timestamp_queries: adapter_features.contains(wgpu::Features::TIMESTAMP_QUERY),
             headless_readback: true,
             device_recovery: false,
@@ -3039,6 +3039,46 @@ fn adapter_rank(device_type: wgpu::DeviceType, preference: WgpuPowerPreference) 
     }
 }
 
+fn backend_rank(backend: wgpu::Backend) -> u8 {
+    #[cfg(target_os = "windows")]
+    let preferred = [
+        wgpu::Backend::Dx12,
+        wgpu::Backend::Vulkan,
+        wgpu::Backend::Gl,
+    ];
+    #[cfg(not(target_os = "windows"))]
+    let preferred = [
+        wgpu::Backend::Vulkan,
+        wgpu::Backend::Gl,
+        wgpu::Backend::Dx12,
+    ];
+
+    preferred
+        .iter()
+        .position(|candidate| *candidate == backend)
+        .map_or(u8::MAX, |index| index as u8)
+}
+
+fn adapter_supports_required_roles(adapter: &wgpu::Adapter) -> bool {
+    supports_usage(
+        adapter,
+        wgpu::TextureFormat::R8Uint,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    ) && supports_usage(
+        adapter,
+        wgpu::TextureFormat::Rgba8Uint,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    ) && supports_usage(
+        adapter,
+        OUTPUT_FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    ) && supports_usage(
+        adapter,
+        C3D_INDEX_FORMAT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    )
+}
+
 fn graphics_api(backend: wgpu::Backend) -> GraphicsApi {
     match backend {
         wgpu::Backend::Vulkan => GraphicsApi::Vulkan,
@@ -3141,6 +3181,22 @@ mod tests {
                 WgpuPowerPreference::LowPower
             ) < adapter_rank(wgpu::DeviceType::DiscreteGpu, WgpuPowerPreference::LowPower)
         );
+    }
+
+    #[test]
+    fn automatic_api_enables_native_primary_backends_and_opengl_fallback() {
+        let backends = WgpuApi::Auto.backends();
+        assert!(backends.contains(wgpu::Backends::PRIMARY));
+        assert!(backends.contains(wgpu::Backends::GL));
+        assert_eq!(WgpuBackendConfig::default().api, WgpuApi::Auto);
+    }
+
+    #[test]
+    fn backend_rank_prefers_the_native_api_before_fallbacks() {
+        #[cfg(target_os = "windows")]
+        assert!(backend_rank(wgpu::Backend::Dx12) < backend_rank(wgpu::Backend::Vulkan));
+        #[cfg(not(target_os = "windows"))]
+        assert!(backend_rank(wgpu::Backend::Vulkan) < backend_rank(wgpu::Backend::Gl));
     }
 
     #[test]
