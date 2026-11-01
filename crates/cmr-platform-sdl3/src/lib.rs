@@ -813,6 +813,14 @@ const FRONTEND_MUSIC_CONFIG_BYTE: u8 = 8;
 /// sizes the window and is presented first. `Escape` is left to the game (its
 /// recovered pause binding, VK `0x1b`); the window close button and a quit event
 /// exit. Focus loss pauses the stepping, as the recovered host loop does.
+/// Request passed to [`run_windowed_game_session_with_subticks`]: either a
+/// 25 Hz / 40 Hz simulation tick (`Tick`) or an in-race sub-tick render
+/// interpolation (`Subtick(alpha_q16)`).
+pub enum WindowedStepRequest<'a> {
+    Tick(WindowedInput<'a>),
+    Subtick(i32),
+}
+
 pub fn run_windowed_game_session<F>(
     initial: &SoftwarePresentedFrame,
     source_root: Option<&Path>,
@@ -820,6 +828,35 @@ pub fn run_windowed_game_session<F>(
 ) -> Result<(), SdlHostError>
 where
     F: FnMut(WindowedInput<'_>) -> WindowedGameFrame,
+{
+    run_windowed_game_session_with_subticks(initial, source_root, |req| match req {
+        WindowedStepRequest::Tick(input) => step(input),
+        WindowedStepRequest::Subtick(_) => WindowedGameFrame {
+            present: None,
+            stopped: false,
+            music_active: false,
+            speech_active: false,
+            speech_reset: false,
+            speech_master: 100,
+            codriver_calls: Vec::new(),
+            music_config: None,
+        },
+    })
+}
+
+/// [`run_windowed_game_session`] with `WindowedStepRequest::Subtick(alpha_q16)`
+/// invoked at 1/3 and 2/3 of each 40 ms in-race simulation period (`alpha_q16 = 0xaaaa`
+/// at `+13.33 ms`, `alpha_q16 = 0x1_0000` at `+26.67 ms`, after the tick frame
+/// at `alpha_q16 = 0x5555`) to present 75 Hz interpolated frames (`FUN_004a7c90`
+/// / `FUN_00439ee0` / `FUN_00435400`) without altering the locked 25.000 Hz
+/// simulation cadence.
+pub fn run_windowed_game_session_with_subticks<F>(
+    initial: &SoftwarePresentedFrame,
+    source_root: Option<&Path>,
+    mut step: F,
+) -> Result<(), SdlHostError>
+where
+    F: FnMut(WindowedStepRequest<'_>) -> WindowedGameFrame,
 {
     let rgba = initial
         .expand_rgba8()
@@ -905,16 +942,27 @@ where
 
     let pacing_clock = Instant::now();
     let mut pacing = FixedStepDeadline::new(Duration::ZERO, GAME_SESSION_TICK_INTERVAL);
+    let mut subticks: [Option<(Duration, i32)>; 2] = [None, None];
 
     loop {
         let mut host_events = Vec::new();
         let now = pacing_clock.elapsed();
-        let first_event = match pacing.wait_duration(now) {
+        let next_subtick_wait = subticks
+            .iter()
+            .flatten()
+            .map(|(deadline, _)| deadline.saturating_sub(now))
+            .min();
+        let wait_target = match (pacing.wait_duration(now), next_subtick_wait) {
+            (Some(sim_wait), Some(sub_wait)) => Some(sim_wait.min(sub_wait)),
+            (sim_wait, None) => sim_wait,
+            (None, sub_wait) => sub_wait,
+        };
+        let first_event = match wait_target {
             Some(wait) => {
                 // `SDL_WaitEventTimeout` accepts whole-millisecond timeouts and
                 // wakes on the OS scheduler quantum (`~0.5..1.5 ms` late). Sleep
-                // coarsely until the final `2 ms` before the 40 ms deadline, then
-                // spin/poll sub-millisecond to hit the exact 25.000 Hz tick.
+                // coarsely until the final `2 ms` before the deadline, then
+                // spin/poll sub-millisecond to hit the exact tick.
                 let spin_margin = Duration::from_micros(2_000);
                 if wait > spin_margin {
                     events.wait_event_timeout(sdl_wait_duration(wait - spin_margin))
@@ -923,7 +971,13 @@ where
                         if let Some(ev) = events.poll_event() {
                             break Some(ev);
                         }
-                        if pacing.wait_duration(pacing_clock.elapsed()) == Some(Duration::ZERO) {
+                        let cur = pacing_clock.elapsed();
+                        let sim_due = pacing.wait_duration(cur) == Some(Duration::ZERO);
+                        let sub_due = subticks
+                            .iter()
+                            .flatten()
+                            .any(|(deadline, _)| cur >= *deadline);
+                        if sim_due || sub_due {
                             break None;
                         }
                         std::hint::spin_loop();
@@ -983,11 +1037,31 @@ where
         pacing.set_active(decision.active, now);
         if !decision.active {
             // Unfocused: pause stepping and presenting; block on the next event.
+            subticks = [None, None];
             continue;
         }
         if !pacing.consume_due(now) {
-            // Input and window events remain responsive, but an early wakeup
-            // cannot advance the fixed-step game clock.
+            let mut due_alpha = None;
+            for slot in &mut subticks {
+                if let Some((deadline, alpha)) = *slot
+                    && now >= deadline
+                {
+                    due_alpha = Some(alpha);
+                    *slot = None;
+                }
+            }
+            if let Some(alpha) = due_alpha
+                && pacing
+                    .wait_duration(now)
+                    .is_some_and(|rem| rem > Duration::from_millis(4))
+                && let Some(presented) = step(WindowedStepRequest::Subtick(alpha)).present
+            {
+                let rgba = presented
+                    .expand_rgba8()
+                    .map_err(SdlHostError::FrameConversion)?;
+                upload_rgba_frame(&mut texture, &rgba)?;
+                redraw_present(&mut canvas, &texture, extent)?;
+            }
             continue;
         }
 
@@ -997,12 +1071,26 @@ where
             frontend: frontend.poll(),
             audio: game_mixer.as_ref(),
         };
-        let frame = step(input);
+        let frame = step(WindowedStepRequest::Tick(input));
         pacing.set_interval(if frame.music_active {
             FRONTEND_SESSION_TICK_INTERVAL
         } else {
             GAME_SESSION_TICK_INTERVAL
         });
+        subticks = if frame.music_active {
+            [None, None]
+        } else {
+            [
+                Some((
+                    now.saturating_add(Duration::from_nanos(13_333_333)),
+                    0xaaaa,
+                )),
+                Some((
+                    now.saturating_add(Duration::from_nanos(26_666_667)),
+                    0x1_0000,
+                )),
+            ]
+        };
         if frame.stopped {
             break;
         }

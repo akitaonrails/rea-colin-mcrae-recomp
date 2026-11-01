@@ -38,6 +38,34 @@ Do not modernize behavior while it is still being recovered. A modern backend
 must implement an already-defined project interface and pass the same relevant
 contract tests.
 
+## Decompilation and subsystem wiring rules
+
+- **Verify x86 condition codes and signedness against disassembly**: Never trust
+  decompiler pseudocode for byte/word comparisons (`< 0`, `< 0x80`), shifts, or
+  widening multiplies without checking the raw x86 instructions (`jl`/`jg` vs
+  `jb`/`ja`, `imul` vs `mul`, `movsx` vs `movzx`). A single signed-vs-unsigned
+  branch error (e.g., `cmp al, 0x80` followed by `jl` vs `jb` in
+  `FUN_0040aa40`) can silently disable an entire physics fallback path.
+- **Reconstruct full routines rather than stopping at the first consumer**: When
+  a routine updates both simulation state and visual/presentation state (such as
+  `FUN_00416760` updating `roll_state_88` for tyre loads and `visual_roll_state_130`
+  for Node 5 body roll/heave), reconstruct the complete address range or
+  explicitly document the unimplemented tail in `docs/DECOMP_MAP.md`.
+- **Trace the caller's live execution order and data flow end-to-end**: Unit
+  testing a helper in isolation with synthetic defaults is not sufficient.
+  Always verify in the parent orchestrator (e.g., `FUN_00407690`,
+  `FUN_00409b40`, `FUN_00439ee0`, `FUN_004a7c90`):
+  1. Every struct field read by a helper is populated on the live path and
+     initialized with the binary's exact setup constants (e.g., `FUN_00407220` /
+     `FUN_00407270`).
+  2. Loops and sub-steps execute in the exact binary call order (e.g., wheel
+     velocity/slip preparation before tyre-load application).
+  3. Recomputed state is propagated across dependent subsystems (e.g., syncing
+     damage-scaled gear ratios into the active gearbox state, posing parent
+     scene-graph nodes such as Node 5 `[car + 0x04]` in addition to leaf wheel
+     nodes, and running sub-tick render interpolation alongside the 25 Hz
+     simulation tick).
+
 ## Code and commits
 
 - Prefer Rust for new code when it does not obstruct binary-compatible layouts,

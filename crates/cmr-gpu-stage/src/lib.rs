@@ -296,9 +296,8 @@ impl PreparedRawStage {
                     {
                         for (face_index, entry) in prim.entries_24().iter().enumerate() {
                             let tuples = entry.corner_tuples();
-                            for corner in 0..3 {
+                            for (corner, &[r, g, b, a]) in tuples.iter().enumerate() {
                                 let compact = usize::from(prim.indices()[face_index * 3 + corner]);
-                                let [r, g, b, a] = tuples[corner];
                                 if a != 0 {
                                     vertices[compact] =
                                         vertices[compact].with_diffuse_rgba([r, g, b, a]);

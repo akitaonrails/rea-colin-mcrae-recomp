@@ -145,8 +145,9 @@ use cmr_gpu_stage::{
 use cmr_platform_sdl3::SharedSoftwareMixer;
 use cmr_platform_sdl3::input::GamepadDrivingState;
 use cmr_platform_sdl3::{
-    InteractiveRootError, SdlHostError, WindowedGameFrame, WindowedInput, present_software_frame,
-    run_interactive_root_frame, run_windowed_game_session as run_windowed_game_session_loop,
+    InteractiveRootError, SdlHostError, WindowedGameFrame, WindowedInput, WindowedStepRequest,
+    present_software_frame, run_interactive_root_frame,
+    run_windowed_game_session_with_subticks as run_windowed_game_session_loop,
 };
 use cmr_video::c3d_software_raster::SoftwareC3dIndexedQuantization;
 use cmr_video::software_load_interstitial::{
@@ -2966,16 +2967,19 @@ impl StageRenderResources {
         session: &GameplaySession,
         camera_world: &[i32; 16],
         car_world: &[i32; 16],
+        body_local_override: Option<[i32; 16]>,
         interior_view: bool,
+        advance_flicker: bool,
     ) {
         self.lamp_overlay_draws.clear();
         self.lamp_flare_draws.clear();
         self.night_pool_draw = None;
-        let body_local_94 = self
-            .car_scene
-            .as_ref()
-            .and_then(|scene| scene.group0_records().find(|r| r.node_id() == 5))
-            .map_or(MATRIX_IDENTITY_Q16, |r| r.affine_matrix_q16());
+        let body_local_94 = body_local_override.unwrap_or_else(|| {
+            self.car_scene
+                .as_ref()
+                .and_then(|scene| scene.group0_records().find(|r| r.node_id() == 5))
+                .map_or(MATRIX_IDENTITY_Q16, |r| r.affine_matrix_q16())
+        });
         let body_world_d4 = cmr_core::c3d_camera::matmul_q16(&body_local_94, car_world);
         let Some(lamps) = self.lamps.as_mut() else {
             return;
@@ -2997,6 +3001,7 @@ impl StageRenderResources {
             lamps.lights_on_6f8,
             lamps.night,
         );
+        let saved_rand_index = lamps.rand_index_82a4d0;
         lamps.state.update_positions_44a950(
             &pose,
             camera_world,
@@ -3004,6 +3009,9 @@ impl StageRenderResources {
             &lamps.rand_table_82ae84,
             &mut lamps.rand_index_82a4d0,
         );
+        if !advance_flicker {
+            lamps.rand_index_82a4d0 = saved_rand_index;
+        }
         let plan = lamps.state.plan_draws_44bbc0(
             &pose,
             lamps.tables.model(0),
@@ -3131,7 +3139,9 @@ impl StageRenderResources {
         &mut self,
         session: &GameplaySession,
         camera_world: &[i32; 16],
+        car_world_offset: [i32; 3],
         interior_view: bool,
+        rebuild_template: bool,
     ) {
         use cmr_core::car_shadow::{
             CompiledShadowGround, ShadowCar, ShadowConditions, ShadowProfile, build_template,
@@ -3143,7 +3153,7 @@ impl StageRenderResources {
         };
         let event = session.event();
         let car = session.car();
-        if session.state().id() != 0xa {
+        if rebuild_template && session.state().id() != 0xa {
             shadow.last = car.ground.as_ref().map(|ground| {
                 let raw = |v: cmr_core::fixed_point::Vec3| [v.x.raw(), v.y.raw(), v.z.raw()];
                 let shadow_car = ShadowCar {
@@ -3195,9 +3205,16 @@ impl StageRenderResources {
         if interior_view {
             return;
         }
-        let Some(entry) = shadow.last else {
+        let Some(mut entry) = shadow.last else {
             return;
         };
+        if car_world_offset != [0; 3] {
+            for point in &mut entry.points {
+                point[0] = point[0].wrapping_add(car_world_offset[0]);
+                point[1] = point[1].wrapping_add(car_world_offset[1]);
+                point[2] = point[2].wrapping_add(car_world_offset[2]);
+            }
+        }
         let camera = [camera_world[12], camera_world[13], camera_world[14]];
         let pulled = camera_pull(&entry, camera, event.split_screen());
         let vertices = shadow_vertices(&pulled, true)
@@ -3753,6 +3770,8 @@ pub struct WheelRig {
     records: [usize; 4],
     rest_rows: [[Vec3; 3]; 4],
     rest_translation: [[i32; 3]; 4],
+    body_record: Option<usize>,
+    body_rest_translation: [i32; 3],
     radius: i32,
 }
 
@@ -3764,6 +3783,10 @@ impl WheelRig {
         let poses = indices.map(|index| {
             cmr_core::wheel_animation::matrix_rows(&records[index].affine_matrix_q16())
         });
+        let body_record = find(cmr_core::car_crash_damage::BODY_NODE_ID);
+        let body_rest_translation = body_record.map_or([0; 3], |index| {
+            cmr_core::wheel_animation::matrix_rows(&records[index].affine_matrix_q16()).1
+        });
         let radius_node = &records[find(6)?];
         let mesh = usize::from(radius_node.values().next()?);
         let bound = scene.group1_records().nth(mesh)?.collision_bounds_q16()[1];
@@ -3772,11 +3795,26 @@ impl WheelRig {
             records: indices,
             rest_rows: poses.map(|(rows, _)| rows),
             rest_translation: poses.map(|(_, translation)| translation),
+            body_record,
+            body_rest_translation,
             radius,
         })
     }
 
-    /// The four posed wheel locals for the car's current animation words.
+    fn body_local(&self, car: &CarState) -> [i32; 16] {
+        cmr_core::wheel_animation::body_pose(
+            &car.four_wheel.wheels,
+            car.motion.basis,
+            self.body_rest_translation,
+            self.radius,
+            car.motion.compiled_half_words.y.raw(),
+            false,
+        )
+    }
+
+    /// The four posed wheel locals and the posed Node 5 (`BODY_NODE_ID = 5`)
+    /// body local for the car's current animation words.
+    #[cfg(test)]
     fn locals(
         &self,
         car: &CarState,
@@ -3784,27 +3822,85 @@ impl WheelRig {
         analog_steer: bool,
         trig: &[i32],
     ) -> Vec<(usize, [i32; 16])> {
+        self.locals_interpolated(car, car, setup_800, analog_steer, 0x1_0000, trig)
+    }
+
+    /// Sub-tick interpolated wheel and body node locals (`FUN_00439ee0` /
+    /// `FUN_00435400`) between `prev_car` (`+0x54`) and `curr_car` (`+0x94`).
+    fn locals_interpolated(
+        &self,
+        prev_car: &CarState,
+        curr_car: &CarState,
+        setup_800: [i32; 4],
+        analog_steer: bool,
+        alpha_q16: i32,
+        trig: &[i32],
+    ) -> Vec<(usize, [i32; 16])> {
+        let steer_of = |c: &CarState| -> i32 {
+            i32::from(if analog_steer {
+                c.four_wheel.steering.target_3e2
+            } else {
+                c.four_wheel.steering.angle_3e0
+            })
+        };
+        let prev_steer = steer_of(prev_car);
+        let curr_steer = steer_of(curr_car);
+        let steer_angle = (prev_steer
+            + (((i64::from(curr_steer - prev_steer) * i64::from(alpha_q16)) >> 16) as i32))
+            as i16;
+        let state = cmr_core::wheel_animation::interpolate_wheel_animation_state(
+            &prev_car.four_wheel.wheels,
+            &curr_car.four_wheel.wheels,
+            alpha_q16,
+        );
         let input = cmr_core::wheel_animation::WheelPoseInput {
             rest_rows: self.rest_rows,
             rest_translation: self.rest_translation,
             wheel_radius: self.radius,
-            half_height_30: car.motion.compiled_half_words.y.raw(),
-            steer_angle: if analog_steer {
-                car.four_wheel.steering.target_3e2
-            } else {
-                car.four_wheel.steering.angle_3e0
-            },
+            half_height_30: curr_car.motion.compiled_half_words.y.raw(),
+            steer_angle,
             setup_800,
             rear_steer: false,
             no_ride_offset: false,
         };
-        (0..4)
+        let mut out: Vec<(usize, [i32; 16])> = (0..4)
             .filter_map(|wheel| {
-                cmr_core::wheel_animation::wheel_pose(&car.four_wheel.wheels, &input, wheel, trig)
+                cmr_core::wheel_animation::wheel_pose(&state, &input, wheel, trig)
                     .map(|local| (self.records[wheel], local))
             })
-            .collect()
+            .collect();
+        if let Some(body_index) = self.body_record {
+            let prev_body = self.body_local(prev_car);
+            let curr_body = self.body_local(curr_car);
+            let body_local = cmr_core::wheel_animation::interpolate_matrix_435400(
+                &prev_body,
+                &curr_body,
+                alpha_q16,
+            );
+            out.push((body_index, body_local));
+        }
+        out
     }
+}
+
+#[derive(Clone)]
+struct SubtickRenderSnapshot {
+    prev_camera_world: [i32; 16],
+    curr_camera_world: [i32; 16],
+    prev_car_world: [i32; 16],
+    curr_car_world: [i32; 16],
+    prev_car: CarState,
+    curr_car: CarState,
+    setup_800: Option<[i32; 4]>,
+    steer_analog: bool,
+    single_alpha: bool,
+    fade_step: FadeComposite,
+    quad_under_hud: bool,
+    reset_fade: u8,
+    hud_input: RaceHudPreparedInputs,
+    checkpoint_hud: cmr_core::race_hud_plan::RaceHudCheckpointInputs,
+    hud_countdown: Option<cmr_core::race_hud_plan::RaceHudCountdown>,
+    show_hud: bool,
 }
 
 /// The windowed session's camera state is the recovered multi-mode view
@@ -3819,6 +3915,13 @@ struct ViewHarness {
     trig: [i32; cmr_core::fixed_point::TRIG_TABLE_LEN],
     /// The camera record as the last camera-driver run left it.
     last: Option<[i32; 16]>,
+    /// Whether the 75 Hz sub-tick render interpolator (`FUN_004a7c90` /
+    /// `FUN_00439ee0` / `FUN_00435400`) is active for this session.
+    subtick_enabled: bool,
+    /// The previous 25 Hz tick's `(camera_world, car_world, car)` snapshot.
+    prev_tick_pose: Option<([i32; 16], [i32; 16], CarState)>,
+    /// The current 40 ms period's interpolation endpoints for sub-tick rendering.
+    subtick_snapshot: Option<Box<SubtickRenderSnapshot>>,
 }
 
 impl ViewHarness {
@@ -3847,6 +3950,9 @@ impl ViewHarness {
             rng: GameLcg::new(Self::VIEW_SEED),
             trig: cmr_core::fixed_point::build_sine_table(),
             last: None,
+            subtick_enabled: false,
+            prev_tick_pose: None,
+            subtick_snapshot: None,
         }
     }
 
@@ -3864,11 +3970,15 @@ impl ViewHarness {
 
     fn begin_start_orbit(&mut self) {
         self.controller.begin_start_orbit();
+        self.prev_tick_pose = None;
+        self.subtick_snapshot = None;
     }
 
     fn finish_start_orbit(&mut self) {
         self.controller
             .finish_start_orbit_to_mode(CameraMode::ChaseNear);
+        self.prev_tick_pose = None;
+        self.subtick_snapshot = None;
     }
 
     /// The camera record without a driver run: the pause (`0xa`) and hub
@@ -3887,6 +3997,8 @@ impl ViewHarness {
     /// is reconstructed.
     fn snap(&mut self) {
         self.controller = ViewController::new(self.controller.mode());
+        self.prev_tick_pose = None;
+        self.subtick_snapshot = None;
     }
 
     /// The camera record's mode word `+4`: the `Blending` sentinel while a
@@ -5855,6 +5967,10 @@ fn advance_game_frame<C: HostClock>(
     let quad_under_hud =
         matches!(advanced.route, Some(RenderRoute::StageWorld(_))) && session.results().is_none();
     let reset_fade = session.car().four_wheel.reset.fade_428;
+    if !advanced.stepped || session.state().id() != 5 {
+        camera.prev_tick_pose = None;
+        camera.subtick_snapshot = None;
+    }
     let mut tick_camera = None;
     let world = compose_world_for_route(advanced.route, || {
         // Compose the live world for every route that reaches the shared viewport
@@ -5875,7 +5991,7 @@ fn advance_game_frame<C: HostClock>(
         } else {
             (car.heading, camera.car_world(car.position, car.heading))
         };
-        let camera_world = if matches!(
+        let curr_camera_world = if matches!(
             advanced.route,
             Some(RenderRoute::OverlayAlt | RenderRoute::FadeComposite)
         ) {
@@ -5883,8 +5999,8 @@ fn advance_game_frame<C: HostClock>(
         } else {
             camera.update(change_view, car.position, heading, false)
         };
-        tick_camera = Some(camera_world);
-        let car_world = car_model_world_q16(&harness_car_world);
+        tick_camera = Some(curr_camera_world);
+        let curr_car_world = car_model_world_q16(&harness_car_world);
         let hud_input = live_race_hud_inputs(
             car,
             session.prepared_hud_values(false, false),
@@ -5892,15 +6008,102 @@ fn advance_game_frame<C: HostClock>(
             resources.bundle.nodes().map_or(0, <[CatNode]>::len),
             session.stage_clock(),
         );
-        // A four-wheel car's wheel nodes are posed from its animation words
-        // (`FUN_00439ee0`); the planar harness has none.
-        let wheels = match (session.wheel_setup_800(), resources.wheel_rig()) {
-            (Some(setup_800), Some(rig)) => rig.locals(&car, setup_800, steer_analog, &camera.trig),
+        let checkpoint_hud = build_race_checkpoint_hud_inputs(
+            progress,
+            hud_input.progress_q16,
+            results,
+            session.event(),
+            config,
+        );
+        let show_hud = !session.school_task().is_some_and(|task| !task.race.hud);
+        let setup_800 = session.wheel_setup_800();
+
+        let (prev_camera_world, prev_car_world, prev_car) = match camera.prev_tick_pose {
+            Some((prev_cam, prev_cw, prev_c))
+                if !change_view
+                    && (curr_car_world[12] - prev_cw[12]).saturating_abs() < (8 << 16)
+                    && (curr_car_world[14] - prev_cw[14]).saturating_abs() < (8 << 16) =>
+            {
+                (prev_cam, prev_cw, prev_c)
+            }
+            _ => (curr_camera_world, curr_car_world, car),
+        };
+        if advanced.stepped && session.state().id() == 5 {
+            camera.prev_tick_pose = Some((curr_camera_world, curr_car_world, car));
+        }
+        let use_subtick =
+            camera.subtick_enabled && advanced.stepped && session.state().id() == 5 && session.results().is_none();
+        if use_subtick {
+            camera.subtick_snapshot = Some(Box::new(SubtickRenderSnapshot {
+                prev_camera_world,
+                curr_camera_world,
+                prev_car_world,
+                curr_car_world,
+                prev_car,
+                curr_car: car,
+                setup_800,
+                steer_analog,
+                single_alpha,
+                fade_step,
+                quad_under_hud,
+                reset_fade,
+                hud_input,
+                checkpoint_hud: checkpoint_hud.clone(),
+                hud_countdown: session.hud_countdown(),
+                show_hud,
+            }));
+        } else {
+            camera.subtick_snapshot = None;
+        }
+        let alpha_q16 = if use_subtick { 0x5555 } else { 0x1_0000 };
+        let camera_world = cmr_core::wheel_animation::interpolate_matrix_435400(
+            &prev_camera_world,
+            &curr_camera_world,
+            alpha_q16,
+        );
+        let car_world = cmr_core::wheel_animation::interpolate_matrix_435400(
+            &prev_car_world,
+            &curr_car_world,
+            alpha_q16,
+        );
+        let rig = resources.wheel_rig();
+        // A four-wheel car's wheel and body nodes are posed from its animation
+        // words (`FUN_00439ee0`); the planar harness has none.
+        let wheels = match (setup_800, rig) {
+            (Some(setup_800), Some(rig)) => rig.locals_interpolated(
+                &prev_car,
+                &car,
+                setup_800,
+                steer_analog,
+                alpha_q16,
+                &camera.trig,
+            ),
             _ => Vec::new(),
         };
-        resources.plan_shadow(session, &camera_world, camera.interior());
+        let body_local_override = rig
+            .and_then(|r| r.body_record)
+            .and_then(|body_idx| wheels.iter().find(|(idx, _)| *idx == body_idx).map(|(_, m)| *m));
+        let car_world_offset = [
+            car_world[12].wrapping_sub(curr_car_world[12]),
+            car_world[13].wrapping_sub(curr_car_world[13]),
+            car_world[14].wrapping_sub(curr_car_world[14]),
+        ];
+        resources.plan_shadow(
+            session,
+            &camera_world,
+            car_world_offset,
+            camera.interior(),
+            true,
+        );
         resources.plan_particles(session, &camera_world, camera.interior(), single_alpha);
-        resources.plan_lamps(session, &camera_world, &car_world, camera.interior());
+        resources.plan_lamps(
+            session,
+            &camera_world,
+            &car_world,
+            body_local_override,
+            camera.interior(),
+            true,
+        );
         resources.set_object_locals(session.moving_object_node_locals());
         let world = resources
             .compose_with_posed_car(&camera_world, Some(&car_world), &wheels)
@@ -5911,16 +6114,9 @@ fn advance_game_frame<C: HostClock>(
             _ => world,
         };
         // `DAT_00551ae4`: the school hides the HUD on some tasks.
-        if session.school_task().is_some_and(|task| !task.race.hud) {
+        if !show_hud {
             return Ok(world);
         }
-        let checkpoint_hud = build_race_checkpoint_hud_inputs(
-            progress,
-            hud_input.progress_q16,
-            results,
-            session.event(),
-            config,
-        );
         compose_live_race_hud_with_countdown(
             resources,
             world,
@@ -6083,8 +6279,99 @@ fn advance_game_frame<C: HostClock>(
         })
     }
 
-    /// What one [`advance_game_frame`] produced for the windowed loop.
-    struct GameFrameOutcome {
+/// Compose an in-race sub-tick interpolated frame (`FUN_004a7c90` ->
+/// `FUN_00439ee0` -> `FUN_00435400`) at `alpha_q16` (`0..=0x1_0000`) between
+/// the previous and current 25 Hz simulation ticks without advancing any
+/// simulation or RNG state.
+fn compose_subtick_frame(
+    resources: &mut StageRenderResources,
+    session: &GameplaySession,
+    camera: &ViewHarness,
+    pause: &mut PauseHarness,
+    alpha_q16: i32,
+) -> Option<SoftwarePresentedFrame> {
+    let snap = camera.subtick_snapshot.as_ref()?;
+    let camera_world = cmr_core::wheel_animation::interpolate_matrix_435400(
+        &snap.prev_camera_world,
+        &snap.curr_camera_world,
+        alpha_q16,
+    );
+    let car_world = cmr_core::wheel_animation::interpolate_matrix_435400(
+        &snap.prev_car_world,
+        &snap.curr_car_world,
+        alpha_q16,
+    );
+    let rig = resources.wheel_rig();
+    let wheels = match (snap.setup_800, rig) {
+        (Some(setup_800), Some(rig)) => rig.locals_interpolated(
+            &snap.prev_car,
+            &snap.curr_car,
+            setup_800,
+            snap.steer_analog,
+            alpha_q16,
+            &camera.trig,
+        ),
+        _ => Vec::new(),
+    };
+    let body_local_override = rig
+        .and_then(|r| r.body_record)
+        .and_then(|body_idx| wheels.iter().find(|(idx, _)| *idx == body_idx).map(|(_, m)| *m));
+    let car_world_offset = [
+        car_world[12].wrapping_sub(snap.curr_car_world[12]),
+        car_world[13].wrapping_sub(snap.curr_car_world[13]),
+        car_world[14].wrapping_sub(snap.curr_car_world[14]),
+    ];
+    resources.plan_shadow(
+        session,
+        &camera_world,
+        car_world_offset,
+        camera.interior(),
+        false,
+    );
+    resources.plan_particles(session, &camera_world, camera.interior(), snap.single_alpha);
+    resources.plan_lamps(
+        session,
+        &camera_world,
+        &car_world,
+        body_local_override,
+        camera.interior(),
+        false,
+    );
+    let mut world = resources
+        .compose_with_posed_car(&camera_world, Some(&car_world), &wheels)
+        .ok()?
+        .frame;
+    if let FadeComposite::Quad(alpha) = snap.fade_step
+        && snap.quad_under_hud
+    {
+        world = world.under_black_quad(alpha);
+    }
+    if snap.show_hud {
+        world = compose_live_race_hud_with_countdown(
+            resources,
+            world,
+            snap.hud_input,
+            Some(&snap.checkpoint_hud),
+            snap.hud_countdown,
+        )
+        .ok()?;
+    }
+    if let FadeComposite::Quad(alpha) = snap.fade_step
+        && !snap.quad_under_hud
+    {
+        world = world.under_black_quad(alpha);
+    }
+    if let (Some(task), Some(state)) = (session.school_task(), session.render_state()) {
+        world = pause.draw_school_text(world, &task.race, state);
+    }
+    if snap.reset_fade > 0 {
+        world = world.modulated(0xff - snap.reset_fade);
+    }
+    Some(world)
+}
+
+/// What one [`advance_game_frame`] produced for the windowed loop.
+struct GameFrameOutcome {
         /// The country welcome (state 2) or service (state 3) screen's frame.
         screen: Option<SoftwarePresentedFrame>,
         world: Option<SoftwarePresentedFrame>,
@@ -8360,24 +8647,30 @@ impl SessionCompiledPose {
             limit_z_e0,
             heave_scale_e4,
             up_e8,
+            min_corner_y_ec,
             gravity_f0,
             max_step_f4,
             damping_f8,
+            up_deadzone_fc,
+            up_blend_slope_100,
             roll_limit_104,
             roll_gain_108,
+            up_blend_base_10c,
+            up_blend_range_110,
             load_transfer_118,
             travel_11c,
             limit_120,
             rate_124,
             crest_128,
             crest_12c,
+            visual_damping_13c,
         ] = aux
             .patch_words(
                 setup.suspension_093,
                 car.constants.state_word_48,
                 [
-                    0x0d8, 0x0dc, 0x0e0, 0x0e4, 0x0e8, 0x0f0, 0x0f4, 0x0f8, 0x104, 0x108, 0x118,
-                    0x11c, 0x120, 0x124, 0x128, 0x12c,
+                    0x0d8, 0x0dc, 0x0e0, 0x0e4, 0x0e8, 0x0ec, 0x0f0, 0x0f4, 0x0f8, 0x0fc, 0x100,
+                    0x104, 0x108, 0x10c, 0x110, 0x118, 0x11c, 0x120, 0x124, 0x128, 0x12c, 0x13c,
                 ],
             )
             .map_err(SessionFourWheelError::AuxControl)?;
@@ -8388,15 +8681,21 @@ impl SessionCompiledPose {
             limit_z_e0,
             heave_scale_e4,
             up_e8,
+            min_corner_y_ec,
             gravity_f0,
             max_step_f4,
             damping_f8,
+            up_deadzone_fc,
+            up_blend_slope_100,
             roll_limit_104,
             roll_gain_108,
+            up_blend_base_10c,
+            up_blend_range_110,
             load_transfer_118,
             travel_gain_11c: travel_11c,
             limit_120,
             rate_124,
+            visual_damping_13c,
         };
         Ok(wheel)
     }
@@ -9165,10 +9464,12 @@ fn reload_changed_stage<'a>(
         stage_crowd_points(resources),
         weather,
     );
-    // A fresh view; the shared `rand()` generator carries on.
+    // A fresh view; the shared `rand()` generator and sub-tick mode carry on.
     let rng = camera.rng;
+    let subtick_enabled = camera.subtick_enabled;
     *camera = ViewHarness::new();
     camera.rng = rng;
+    camera.subtick_enabled = subtick_enabled;
     if car != loaded.car {
         // The car loader `FUN_004872b0` registers the new car's waves.
         audio.engine = EngineAudio::open(context.runtime_data, car);
@@ -9842,6 +10143,7 @@ pub fn run_windowed_game_session(
     }
     let mut screen_state = cmr_core::frontend_screen_frame::ScreenFrameState::default();
     let mut camera = ViewHarness::new();
+    camera.subtick_enabled = true;
     let mut damage_owner = NoStaticDamageOwner;
     let mut audio = RaceAudio {
         engine: EngineAudio::open(runtime_data, compiled_pose.selector as u8),
@@ -9928,7 +10230,28 @@ pub fn run_windowed_game_session(
                 run_windowed_game_session_loop(
                     &initial,
                     Some(audio_root),
-                    |input: WindowedInput| {
+                    |request: WindowedStepRequest| {
+                        let input = match request {
+                            WindowedStepRequest::Tick(input) => input,
+                            WindowedStepRequest::Subtick(alpha_q16) => {
+                                return WindowedGameFrame {
+                                    present: compose_subtick_frame(
+                                        &mut resources,
+                                        &session,
+                                        &camera,
+                                        &mut pause,
+                                        alpha_q16,
+                                    ),
+                                    stopped: false,
+                                    music_active: false,
+                                    speech_active: false,
+                                    speech_reset: false,
+                                    speech_master: pause.options.speech_master_4f6538,
+                                    codriver_calls: Vec::new(),
+                                    music_config: None,
+                                };
+                            }
+                        };
                         session.set_results_input(results.poll_keys(input.keys));
                         // `GetAsyncKeyState(VK_F9/VK_F10)` tilt the front end's car.
                         let car_keys = cmr_core::championship_car_transform::ChampionshipCarInput {
@@ -10043,7 +10366,28 @@ pub fn run_windowed_game_session(
         // through to the world-only loop below rather than failing the session.
     }
 
-    run_windowed_game_session_loop(&initial, Some(audio_root), |input: WindowedInput| {
+    run_windowed_game_session_loop(&initial, Some(audio_root), |request: WindowedStepRequest| {
+        let input = match request {
+            WindowedStepRequest::Tick(input) => input,
+            WindowedStepRequest::Subtick(alpha_q16) => {
+                return WindowedGameFrame {
+                    present: compose_subtick_frame(
+                        &mut resources,
+                        &session,
+                        &camera,
+                        &mut pause,
+                        alpha_q16,
+                    ),
+                    stopped: false,
+                    music_active: false,
+                    speech_active: false,
+                    speech_reset: false,
+                    speech_master: pause.options.speech_master_4f6538,
+                    codriver_calls: Vec::new(),
+                    music_config: None,
+                };
+            }
+        };
         session.set_results_input(results.poll_keys(input.keys));
         let frame = reload_stage_for_event(
             &mut session,

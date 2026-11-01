@@ -663,7 +663,7 @@ pub fn plan_race_checkpoint_hud(
 
     // 1. Top-left 4-row classification bars and rank/driver labels (`FUN_00464930`).
     const ROW_Y_Q16: [i32; 4] = [0x08f5, 0x1333, 0x1d70, 0x27ae];
-    for row_idx in 0..4 {
+    for (row_idx, &y_q16) in ROW_Y_Q16.iter().enumerate() {
         let row_entry = checkpoint.classification_rows.get(row_idx);
         let bar_color = if row_entry.is_some_and(|row| row.is_player) {
             if checkpoint.player_rank_gained_or_held {
@@ -687,7 +687,6 @@ pub fn plan_race_checkpoint_hud(
             legacy: LegacyBitmapArguments::TINTED_CALL,
         });
         if let Some(row) = row_entry {
-            let y_q16 = ROW_Y_Q16[row_idx];
             commands.push(RaceHudCommand::Text {
                 font: RaceHudFont::PlaceNumbers640,
                 text: row.rank.to_string(),

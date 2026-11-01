@@ -49,8 +49,11 @@ pub const SPIN_RATE_SCALE: f64 = f64::from_bits(0xbf84_5f30_6dc9_c883);
 /// `1 / 5760` at `0x4e62f8`.
 pub const ANGLE_SCALE: f64 = f64::from_bits(0x3f26_c16c_16c1_6c17);
 
+/// Identity 3x3 rotation rows in Q16.16.
+pub const IDENTITY_ROWS: [[i32; 3]; 3] = [[0x1_0000, 0, 0], [0, 0x1_0000, 0], [0, 0, 0x1_0000]];
+
 /// The animation words of one car.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WheelAnimationState {
     /// `+0x55c[4]`: suspension compression.
     pub compression_55c: [i32; 4],
@@ -66,6 +69,18 @@ pub struct WheelAnimationState {
     pub roll_state_88: [i32; 3],
     /// `ctl +0xc8[4]`: per-corner dynamic roll/pitch height (`FUN_00416760`).
     pub corner_roll_c8: [i32; 4],
+    /// `ctl +0x130[3]`: visual body roll/heave/pitch integrator (`FUN_00416760` `0x4171ee..0x417ca7`).
+    pub visual_roll_state_130: [i32; 3],
+    /// `[ctl +0x00]` (`[car +0x04]`, Node 5) local 3x3 rotation rows (`FUN_00416760`).
+    pub visual_roll_rows: [[i32; 3]; 3],
+    /// `[ctl +0x00]` (`[car +0x04]`, Node 5) vertical heave displacement (`FUN_00416760`).
+    pub visual_heave_y: i32,
+    /// `[ctl +0x04]` (`[car +0x08]`) lagged visual chassis world basis (`FUN_00415df0`).
+    pub visual_chassis_basis: [[i32; 3]; 3],
+    /// `[ctl +0x04]` ground-clearance corner lift along car up (`FUN_00415df0`).
+    pub visual_chassis_lift_y: i32,
+    /// Whether `visual_chassis_basis` has been seeded from `car +0x2a0`.
+    pub visual_chassis_initialized: bool,
     /// `+0x654[4]`: the per-wheel normal load (`FUN_00417cf0`).
     pub wheel_load_654: [i32; 4],
     /// `+0x604[4]`: the wobble phase.
@@ -78,8 +93,15 @@ pub struct WheelAnimationState {
     pub flipped: [bool; 4],
 }
 
+impl Default for WheelAnimationState {
+    fn default() -> Self {
+        Self::REST
+    }
+}
+
 impl WheelAnimationState {
-    /// Every word zero, as the zeroed car record starts.
+    /// Every word zero (and 3x3 visual rotation bases at identity), as the
+    /// initialized car record starts.
     pub const REST: Self = Self {
         compression_55c: [0; 4],
         eased_56c: [0; 4],
@@ -88,6 +110,12 @@ impl WheelAnimationState {
         travel_594: [0; 4],
         roll_state_88: [0; 3],
         corner_roll_c8: [0; 4],
+        visual_roll_state_130: [0; 3],
+        visual_roll_rows: IDENTITY_ROWS,
+        visual_heave_y: 0,
+        visual_chassis_basis: IDENTITY_ROWS,
+        visual_chassis_lift_y: 0,
+        visual_chassis_initialized: false,
         wheel_load_654: [0; 4],
         wobble_phase_604: [0; 4],
         wobble_5e4: [[0; 2]; 4],
@@ -104,7 +132,7 @@ fn sine(trig: &[i32], angle: u16) -> i32 {
     trig[usize::from(angle & 0xfff)]
 }
 
-/// The suspension constants `ctl +0xd8..+0xf8` and `ctl +0x104/+0x108/+0x118/+0x11c/+0x120/+0x124`.
+/// The suspension constants `ctl +0xd8..+0x13c` patched by `FUN_00407270`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SuspensionConstants {
     pub limit_x_d8: i32,
@@ -112,15 +140,21 @@ pub struct SuspensionConstants {
     pub limit_z_e0: i32,
     pub heave_scale_e4: i32,
     pub up_e8: i32,
+    pub min_corner_y_ec: i32,
     pub gravity_f0: i32,
     pub max_step_f4: i32,
     pub damping_f8: i32,
+    pub up_deadzone_fc: i32,
+    pub up_blend_slope_100: i32,
     pub roll_limit_104: i32,
     pub roll_gain_108: i32,
+    pub up_blend_base_10c: i32,
+    pub up_blend_range_110: i32,
     pub load_transfer_118: i32,
     pub travel_gain_11c: i32,
     pub limit_120: i32,
     pub rate_124: i32,
+    pub visual_damping_13c: i32,
 }
 
 /// What `FUN_00416760` reads during the live force pass (`0x407f59`).
@@ -225,8 +259,8 @@ pub fn step_body_roll_416760(state: &mut WheelAnimationState, input: &BodyRollIn
         step[0] = q(q(step[0], inv_hlen), ctl.max_step_f4);
         step[2] = q(q(step[2], inv_hlen), ctl.max_step_f4);
     }
-    for axis in 0..3 {
-        state.roll_state_88[axis] = state.roll_state_88[axis].wrapping_add(step[axis]);
+    for (dst, &delta) in state.roll_state_88.iter_mut().zip(&step) {
+        *dst = dst.wrapping_add(delta);
     }
 
     let v = [
@@ -262,6 +296,83 @@ pub fn step_body_roll_416760(state: &mut WheelAnimationState, input: &BodyRollIn
         }
     }
     state.corner_roll_c8 = corner_roll;
+
+    // `0x4171ee..0x417ca7`: visual body roll/heave/pitch integrator `ctl +0x130`
+    // and `[ctl +0x00]` (`[car +0x04]`, Node 5) local rotation/heave.
+    let local_delta_130 = if input.count_674 != 0 {
+        if input.upright_404 {
+            let scaled = [
+                local_delta[0],
+                local_delta[1],
+                q(local_delta[2], 0x2_0000),
+            ];
+            if length(vec(scaled)) == 0 || input.resting_700 {
+                [0, 0, 0]
+            } else {
+                scaled
+            }
+        } else {
+            [0, 0, 0]
+        }
+    } else {
+        local_delta
+    };
+    let visual_damping = if ctl.visual_damping_13c != 0 {
+        ctl.visual_damping_13c
+    } else {
+        ctl.damping_f8
+    };
+    let len_130 = length(vec(state.visual_roll_state_130));
+    let damping_130 = if len_130 > 0 {
+        let scale = -q(len_130, visual_damping);
+        let inv_len = (0x1_0000_0000_i64 / i64::from(len_130)) as i32;
+        [
+            q(q(state.visual_roll_state_130[0], inv_len), scale),
+            q(q(state.visual_roll_state_130[1], inv_len), scale),
+            q(q(state.visual_roll_state_130[2], inv_len), scale),
+        ]
+    } else {
+        [0, 0, 0]
+    };
+    let raw_step_130 = [
+        local_delta_130[0].wrapping_add(damping_130[0]),
+        local_delta_130[1].wrapping_add(damping_130[1]),
+        local_delta_130[2].wrapping_add(damping_130[2]),
+    ];
+    let mut step_130 = [
+        q(raw_step_130[0], dt_scale),
+        q(raw_step_130[1], dt_scale),
+        q(raw_step_130[2], dt_scale),
+    ];
+    let horiz_len_130 = length(vec([step_130[0], 0, step_130[2]]));
+    if ctl.max_step_f4 > 0 && horiz_len_130 > ctl.max_step_f4 {
+        let inv_hlen = (0x1_0000_0000_i64 / i64::from(horiz_len_130)) as i32;
+        step_130[0] = q(q(step_130[0], inv_hlen), ctl.max_step_f4);
+        step_130[2] = q(q(step_130[2], inv_hlen), ctl.max_step_f4);
+    }
+    for (dst, &delta) in state.visual_roll_state_130.iter_mut().zip(&step_130) {
+        *dst = dst.wrapping_add(delta);
+    }
+    let v_130 = [
+        clamp_step(state.visual_roll_state_130[0], ctl.limit_x_d8),
+        ctl.up_e8,
+        clamp_step(state.visual_roll_state_130[2], ctl.limit_z_e0),
+    ];
+    if ctl.up_e8 != 0 {
+        let vrow1 = raw(normalize(vec(v_130)));
+        let vrow0 = raw(normalize(vec([
+            0x1_0000_i32.wrapping_sub(q(vrow1[0], vrow1[0])),
+            -q(vrow1[1], vrow1[0]),
+            -q(vrow1[2], vrow1[0]),
+        ])));
+        let vrow2 = raw(normalize(cross(vec(vrow0), vec(vrow1))));
+        state.visual_roll_rows = [vrow0, vrow1, vrow2];
+    }
+    state.visual_heave_y = clamp_step(
+        q(state.visual_roll_state_130[1], ctl.heave_scale_e4),
+        ctl.heave_limit_dc,
+    );
+
     state.wheel_load_654 = compute_wheel_loads_417cf0(
         input.mass_48,
         input.count_674,
@@ -270,6 +381,88 @@ pub fn step_body_roll_416760(state: &mut WheelAnimationState, input: &BodyRollIn
         state.corner_roll_c8,
         ctl,
     );
+}
+
+/// `FUN_00415df0` (`0x415df0..0x416754`): steps the visual chassis follower
+/// `[ctl +0x04]` (`[car +0x08]`) that lags behind `car +0x2a0` over bumps/crests
+/// when touching and upright, and computes the body-corner ground-clearance lift
+/// (`ctl.min_corner_y_ec`, `-0x4ccc`) along `car.motion.basis[1]`.
+pub fn step_visual_chassis_415df0(
+    state: &mut WheelAnimationState,
+    basis_2a0: [Vec3; 3],
+    half_words: [i32; 3],
+    count_674: i32,
+    upright_404: bool,
+    ctl: SuspensionConstants,
+) {
+    let car_rows = basis_2a0.map(raw);
+    if !state.visual_chassis_initialized {
+        state.visual_chassis_basis = car_rows;
+        state.visual_chassis_lift_y = 0;
+        state.visual_chassis_initialized = true;
+        return;
+    }
+    if count_674 > 0 && upright_404 && ctl.up_blend_base_10c > 0 {
+        let old_up = state.visual_chassis_basis[1];
+        let car_up = car_rows[1];
+        let diff_up = [
+            car_up[0].wrapping_sub(old_up[0]),
+            car_up[1].wrapping_sub(old_up[1]),
+            car_up[2].wrapping_sub(old_up[2]),
+        ];
+        let dist_up = length(vec(diff_up));
+        let over = dist_up.wrapping_sub(ctl.up_deadzone_fc);
+        let t_up = if over <= 0 {
+            ctl.up_blend_base_10c
+        } else if ctl.up_blend_slope_100 <= 0 || over >= ctl.up_blend_slope_100 {
+            ctl.up_blend_base_10c.wrapping_add(ctl.up_blend_range_110)
+        } else {
+            let frac = ((i64::from(over) << 16) / i64::from(ctl.up_blend_slope_100)) as i32;
+            ctl.up_blend_base_10c
+                .wrapping_add(q(frac, ctl.up_blend_range_110))
+        };
+        let inv_t_up = 0x1_0000_i32.wrapping_sub(t_up);
+        let blended_up = std::array::from_fn(|k| {
+            q(car_up[k], t_up).wrapping_add(q(old_up[k], inv_t_up))
+        });
+        let new_up = raw(normalize(vec(blended_up)));
+
+        let old_r2 = state.visual_chassis_basis[2];
+        let car_r2 = car_rows[2];
+        let blended_r2 =
+            std::array::from_fn(|k| q(car_r2[k], 0xcccc).wrapping_add(q(old_r2[k], 0x3333)));
+        let new_r2_init = raw(normalize(vec(blended_r2)));
+        let new_r0 = raw(normalize(cross(vec(new_up), vec(new_r2_init))));
+        let new_r2 = raw(normalize(cross(vec(new_r0), vec(new_up))));
+        state.visual_chassis_basis = [new_r0, new_up, new_r2];
+    } else {
+        state.visual_chassis_basis = car_rows;
+    }
+
+    let [r0, r1, r2] = state.visual_chassis_basis;
+    let car_up = car_rows[1];
+    let hx = half_words[0];
+    let hy = -half_words[1];
+    let hz = half_words[2];
+    let mut min_y = 0x64_0000_i32;
+    for (sx, sz) in [(hx, hz), (hx, -hz), (-hx, hz), (-hx, -hz)] {
+        let world_corner: [i32; 3] = std::array::from_fn(|k| {
+            q(sx, r0[k])
+                .wrapping_add(q(hy, r1[k]))
+                .wrapping_add(q(sz, r2[k]))
+        });
+        let local_y = q(world_corner[0], car_up[0])
+            .wrapping_add(q(world_corner[1], car_up[1]))
+            .wrapping_add(q(world_corner[2], car_up[2]));
+        if local_y < min_y {
+            min_y = local_y;
+        }
+    }
+    state.visual_chassis_lift_y = if ctl.min_corner_y_ec != 0 && min_y < ctl.min_corner_y_ec {
+        ctl.min_corner_y_ec.wrapping_sub(min_y)
+    } else {
+        0
+    };
 }
 
 /// `FUN_00417cf0` and the `0x417ca7..0x417ce0` tail of `FUN_00416760`:
@@ -637,6 +830,157 @@ pub fn matrix_rows(matrix: &[i32; 16]) -> ([Vec3; 3], [i32; 3]) {
     )
 }
 
+/// Node 5 (`BODY_NODE_ID = 5`, `[car + 0x04]`) local matrix relative to
+/// `car_world` (`[car + 0x2a0]`), combining the visual chassis follower
+/// `[ctl + 0x04]` (`FUN_00415df0`) and the dynamic body roll/pitch/heave
+/// transform `[ctl + 0x00]` (`FUN_00416760`).
+#[must_use]
+pub fn body_pose(
+    state: &WheelAnimationState,
+    car_basis: [Vec3; 3],
+    rest_translation: [i32; 3],
+    wheel_radius: i32,
+    half_height_30: i32,
+    no_ride_offset: bool,
+) -> [i32; 16] {
+    let car_rows = car_basis.map(raw);
+    let chassis_world = if state.visual_chassis_initialized {
+        state.visual_chassis_basis
+    } else {
+        car_rows
+    };
+    let chassis_local: [[i32; 3]; 3] = std::array::from_fn(|i| {
+        std::array::from_fn(|j| {
+            q(chassis_world[i][0], car_rows[j][0])
+                .wrapping_add(q(chassis_world[i][1], car_rows[j][1]))
+                .wrapping_add(q(chassis_world[i][2], car_rows[j][2]))
+        })
+    });
+    let mul_chassis_local = |v: [i32; 3]| -> [i32; 3] {
+        std::array::from_fn(|j| {
+            q(v[0], chassis_local[0][j])
+                .wrapping_add(q(v[1], chassis_local[1][j]))
+                .wrapping_add(q(v[2], chassis_local[2][j]))
+        })
+    };
+    let r0 = raw(normalize(vec(mul_chassis_local(state.visual_roll_rows[0]))));
+    let r1 = raw(normalize(vec(mul_chassis_local(state.visual_roll_rows[1]))));
+    let r2 = raw(normalize(vec(mul_chassis_local(state.visual_roll_rows[2]))));
+    let ride = if no_ride_offset {
+        0
+    } else {
+        wheel_radius.wrapping_sub(half_height_30)
+    };
+    let local_t = [
+        rest_translation[0],
+        rest_translation[1]
+            .wrapping_add(state.visual_heave_y)
+            .wrapping_add(ride),
+        rest_translation[2],
+    ];
+    let t = mul_chassis_local(local_t);
+    let x = t[0];
+    let y = t[1].wrapping_add(state.visual_chassis_lift_y);
+    let z = t[2];
+    [
+        r0[0], r0[1], r0[2], 0, r1[0], r1[1], r1[2], 0, r2[0], r2[1], r2[2], 0, x, y, z, 0x1_0000,
+    ]
+}
+
+fn lerp_q16(a: i32, b: i32, alpha_q16: i32) -> i32 {
+    a.wrapping_add(q(b.wrapping_sub(a), alpha_q16))
+}
+
+/// Interpolate a car's wheel animation state between two 25 Hz ticks at
+/// `alpha_q16` (`0..=0x1_0000`) for sub-tick `wheel_pose` evaluation
+/// (`FUN_00439ee0`).
+#[must_use]
+pub fn interpolate_wheel_animation_state(
+    prev: &WheelAnimationState,
+    next: &WheelAnimationState,
+    alpha_q16: i32,
+) -> WheelAnimationState {
+    if alpha_q16 <= 0 {
+        return *prev;
+    }
+    if alpha_q16 >= 0x1_0000 {
+        return *next;
+    }
+    let mut out = *next;
+    for w in 0..4 {
+        out.compression_55c[w] = lerp_q16(prev.compression_55c[w], next.compression_55c[w], alpha_q16);
+        out.eased_56c[w] = lerp_q16(prev.eased_56c[w], next.eased_56c[w], alpha_q16);
+        out.bounce_584[w] = lerp_q16(prev.bounce_584[w], next.bounce_584[w], alpha_q16);
+        out.wobble_5e4[w] = [
+            lerp_q16(prev.wobble_5e4[w][0], next.wobble_5e4[w][0], alpha_q16),
+            lerp_q16(prev.wobble_5e4[w][1], next.wobble_5e4[w][1], alpha_q16),
+        ];
+        let delta_spin = next.spin[w].wrapping_sub(prev.spin[w]) as i16;
+        out.spin[w] = prev.spin[w].wrapping_add(q(i32::from(delta_spin), alpha_q16) as u16);
+    }
+    out
+}
+
+/// `FUN_00435400` (`0x435400..0x435b94`): interpolates two Q16.16 affine
+/// transforms (`prev` at `+0x54`, `next` at `+0x94`) by `alpha_q16` (`0..=0x1_0000`),
+/// linearly interpolating translation (`[12..15]`) and rows 1 and 2 (`[4..7]`,
+/// `[8..11]`) and orthonormalizing via `r0 = normalize(r1 x r2)` and
+/// `r2 = normalize(r0 x r1)`.
+#[must_use]
+pub fn interpolate_matrix_435400(
+    prev: &[i32; 16],
+    next: &[i32; 16],
+    alpha_q16: i32,
+) -> [i32; 16] {
+    if alpha_q16 <= 0 {
+        return *prev;
+    }
+    if alpha_q16 >= 0x1_0000 {
+        return *next;
+    }
+    let r1_lerp = [
+        lerp_q16(prev[4], next[4], alpha_q16),
+        lerp_q16(prev[5], next[5], alpha_q16),
+        lerp_q16(prev[6], next[6], alpha_q16),
+    ];
+    let r2_lerp = [
+        lerp_q16(prev[8], next[8], alpha_q16),
+        lerp_q16(prev[9], next[9], alpha_q16),
+        lerp_q16(prev[10], next[10], alpha_q16),
+    ];
+    let r1 = raw(normalize(vec(r1_lerp)));
+    let r2_init = raw(normalize(vec(r2_lerp)));
+    let r0 = raw(normalize(cross(vec(r1), vec(r2_init))));
+    let r2 = raw(normalize(cross(vec(r0), vec(r1))));
+    let [r0, r1, r2] = if r0 == [0; 3] || r1 == [0; 3] || r2 == [0; 3] {
+        [
+            [next[0], next[1], next[2]],
+            [next[4], next[5], next[6]],
+            [next[8], next[9], next[10]],
+        ]
+    } else {
+        [r0, r1, r2]
+    };
+    [
+        r0[0],
+        r0[1],
+        r0[2],
+        0,
+        r1[0],
+        r1[1],
+        r1[2],
+        0,
+        r2[0],
+        r2[1],
+        r2[2],
+        0,
+        lerp_q16(prev[12], next[12], alpha_q16),
+        lerp_q16(prev[13], next[13], alpha_q16),
+        lerp_q16(prev[14], next[14], alpha_q16),
+        0x1_0000,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -870,21 +1214,27 @@ mod tests {
             limit_z_e0: 0x28_0000,
             heave_scale_e4: 0x3333,
             up_e8: 0x38_0000,
+            min_corner_y_ec: -0x4ccc,
             gravity_f0: 0x191,
             max_step_f4: 0x8_0000,
             damping_f8: 0x1999,
+            up_deadzone_fc: 0x1999,
+            up_blend_slope_100: 0x189,
             roll_limit_104: 0x4000,
             roll_gain_108: 0x4_0000,
+            up_blend_base_10c: 0x3333,
+            up_blend_range_110: 0x9999,
             load_transfer_118: 0x046d_c000 >> 3,
             travel_gain_11c: 0x3_2000,
             limit_120: 0x28f5,
             rate_124: 0x47a,
+            visual_damping_13c: 0xcccc,
         };
         let mut state = WheelAnimationState::default();
         let identity = [vec([ONE, 0, 0]), up(), vec([0, 0, ONE])];
         let input = BodyRollInput {
-            velocity_d4: vec([0x10_0000, 0, 0]),
-            prior_velocity_e0: vec([0x12_0000, 0, 0]),
+            velocity_d4: vec([0x10_0000, 0, 0x01_0000]),
+            prior_velocity_e0: vec([0x12_0000, 0x01_0000, 0]),
             start_basis_27c: identity,
             half_x_2c: 0x1_6000,
             half_z_34: 0x0_b000,
@@ -900,5 +1250,60 @@ mod tests {
         assert!(state.corner_roll_c8[0] < 0 && state.corner_roll_c8[1] < 0);
         assert!(state.corner_roll_c8[2] > 0 && state.corner_roll_c8[3] > 0);
         assert!(state.wheel_load_654[0] > state.wheel_load_654[2]);
+        // Visual roll state 130 integrates 2x lateral impulse and builds a tilted Node 5 basis.
+        assert_eq!(state.visual_roll_state_130[0], state.roll_state_88[0]);
+        assert!(state.visual_roll_state_130[2].abs() > state.roll_state_88[2].abs());
+        assert!(state.visual_roll_rows[0][1] < 0);
+        assert!(state.visual_heave_y > 0);
+    }
+
+    #[test]
+    fn visual_chassis_415df0_lags_car_basis_and_lifts_low_corner() {
+        let ctl = SuspensionConstants {
+            min_corner_y_ec: -0x4ccc,
+            up_deadzone_fc: 0x1999,
+            up_blend_slope_100: 0x189,
+            up_blend_base_10c: 0x3333,
+            up_blend_range_110: 0x9999,
+            ..SuspensionConstants::default()
+        };
+        let mut state = WheelAnimationState::default();
+        let flat = [vec([ONE, 0, 0]), up(), vec([0, 0, ONE])];
+        let half = [0x1_6000, 0x4ccc, 0x0_b000];
+        step_visual_chassis_415df0(&mut state, flat, half, 4, true, ctl);
+        assert!(state.visual_chassis_initialized);
+        assert_eq!(state.visual_chassis_lift_y, 0);
+
+        // Sudden pitch change on the physics basis: visual_chassis_basis blends
+        // partially and lifts the chassis so the lowest corner stays >= min_corner_y_ec.
+        let pitched_up = normalize(vec([0x2000, ONE, 0]));
+        let pitched_r0 = normalize(cross(pitched_up, vec([0, 0, ONE])));
+        let pitched = [pitched_r0, pitched_up, vec([0, 0, ONE])];
+        step_visual_chassis_415df0(&mut state, pitched, half, 4, true, ctl);
+        assert!(state.visual_chassis_basis[1][0] > 0);
+        assert!(state.visual_chassis_basis[1][0] < raw(pitched_up)[0]);
+        assert!(state.visual_chassis_lift_y > 0);
+
+        let pose = body_pose(&state, pitched, [0, 0x1000, 0], 0x5200, 0x4ccc, false);
+        assert!(pose[13] > 0x1000 + (0x5200 - 0x4ccc));
+    }
+
+    #[test]
+    fn interpolate_matrix_435400_blends_and_orthonormalizes() {
+        let prev = [
+            ONE, 0, 0, 0, 0, ONE, 0, 0, 0, 0, ONE, 0, 0, 0x1_0000, 0, ONE,
+        ];
+        let next = [
+            0, 0, -ONE, 0, 0, ONE, 0, 0, ONE, 0, 0, 0, 0x2_0000, 0x3_0000, 0x4_0000, ONE,
+        ];
+        assert_eq!(interpolate_matrix_435400(&prev, &next, 0), prev);
+        assert_eq!(interpolate_matrix_435400(&prev, &next, ONE), next);
+        let mid = interpolate_matrix_435400(&prev, &next, ONE / 2);
+        assert_eq!(&mid[12..15], &[0x1_0000, 0x2_0000, 0x2_0000]);
+        // At 45 degrees about Y, row 0 and row 2 are unit length (~0.7071).
+        let r0_len = length(vec([mid[0], mid[1], mid[2]]));
+        let r2_len = length(vec([mid[8], mid[9], mid[10]]));
+        assert!((r0_len - ONE).abs() <= 64);
+        assert!((r2_len - ONE).abs() <= 64);
     }
 }

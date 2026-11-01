@@ -3203,6 +3203,14 @@ impl RaceState {
             car.four_wheel.wheels.corner_roll_c8,
             wheel.suspension,
         );
+        crate::wheel_animation::step_visual_chassis_415df0(
+            &mut car.four_wheel.wheels,
+            car.motion.basis,
+            ground.half_words,
+            car.motion.contact_count_674,
+            car.four_wheel.upright_404,
+            wheel.suspension,
+        );
     }
 
     /// The trigger walk `FUN_00403a00` for this car over the `.dat` records of
@@ -3370,6 +3378,11 @@ impl RaceState {
             std::array::from_fn(|w| ground.lanes.output_vectors[w]);
         wheel.wheels.roll_state_88 = [0; 3];
         wheel.wheels.corner_roll_c8 = [0; 4];
+        wheel.wheels.visual_roll_state_130 = [0; 3];
+        wheel.wheels.visual_roll_rows = crate::wheel_animation::IDENTITY_ROWS;
+        wheel.wheels.visual_heave_y = 0;
+        wheel.wheels.visual_chassis_initialized = false;
+        wheel.wheels.visual_chassis_lift_y = 0;
         wheel.rollover = RolloverState::default();
         wheel.tumble.hull_ticks_678 = 0;
         wheel.tumble.inverted_684 = false;
