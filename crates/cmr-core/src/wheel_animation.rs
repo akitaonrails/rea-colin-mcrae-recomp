@@ -67,6 +67,8 @@ pub struct WheelAnimationState {
     pub travel_594: [i32; 4],
     /// `ctl +0x88[3]`: dynamic body roll/heave/pitch integrator (`FUN_00416760`).
     pub roll_state_88: [i32; 3],
+    /// `ctl +0x94[4][3]`: the four `[±hx, 0, ±hz]` corners rotated by the physics roll matrix (`0x4171b1..0x4171ec`).
+    pub roll_corners_94: [[i32; 3]; 4],
     /// `ctl +0xc8[4]`: per-corner dynamic roll/pitch height (`FUN_00416760`).
     pub corner_roll_c8: [i32; 4],
     /// `ctl +0x130[3]`: visual body roll/heave/pitch integrator (`FUN_00416760` `0x4171ee..0x417ca7`).
@@ -109,6 +111,7 @@ impl WheelAnimationState {
         bounce_584: [0; 4],
         travel_594: [0; 4],
         roll_state_88: [0; 3],
+        roll_corners_94: [[0; 3]; 4],
         corner_roll_c8: [0; 4],
         visual_roll_state_130: [0; 3],
         visual_roll_rows: IDENTITY_ROWS,
@@ -282,10 +285,17 @@ pub fn step_body_roll_416760(state: &mut WheelAnimationState, input: &BodyRollIn
         [-input.half_x_2c, input.half_z_34],
         [-input.half_x_2c, -input.half_z_34],
     ];
+    let mut roll_corners = [[0_i32; 3]; 4];
     let mut corner_roll = [0_i32; 4];
     let mut max_abs = 0_i32;
     for i in 0..4 {
-        let c8 = q(corners[i][0], row0[1]).wrapping_add(q(corners[i][1], row2[1]));
+        let rc = [
+            q(corners[i][0], row0[0]).wrapping_add(q(corners[i][1], row2[0])),
+            q(corners[i][0], row0[1]).wrapping_add(q(corners[i][1], row2[1])),
+            q(corners[i][0], row0[2]).wrapping_add(q(corners[i][1], row2[2])),
+        ];
+        roll_corners[i] = rc;
+        let c8 = rc[1];
         corner_roll[i] = c8;
         max_abs = max_abs.max(c8.wrapping_abs());
     }
@@ -295,6 +305,7 @@ pub fn step_body_roll_416760(state: &mut WheelAnimationState, input: &BodyRollIn
             *c8 = q(*c8, scale);
         }
     }
+    state.roll_corners_94 = roll_corners;
     state.corner_roll_c8 = corner_roll;
 
     // `0x4171ee..0x417ca7`: visual body roll/heave/pitch integrator `ctl +0x130`
@@ -411,58 +422,97 @@ pub fn step_visual_chassis_415df0(
             car_up[2].wrapping_sub(old_up[2]),
         ];
         let dist_up = length(vec(diff_up));
-        let over = dist_up.wrapping_sub(ctl.up_deadzone_fc);
-        let t_up = if over <= 0 {
-            ctl.up_blend_base_10c
-        } else if ctl.up_blend_slope_100 <= 0 || over >= ctl.up_blend_slope_100 {
-            ctl.up_blend_base_10c.wrapping_add(ctl.up_blend_range_110)
+        let (t_up, ecx_up) = if dist_up <= ctl.up_deadzone_fc {
+            (ctl.up_blend_base_10c, dist_up)
         } else {
-            let frac = ((i64::from(over) << 16) / i64::from(ctl.up_blend_slope_100)) as i32;
-            ctl.up_blend_base_10c
-                .wrapping_add(q(frac, ctl.up_blend_range_110))
+            let over = dist_up.wrapping_sub(ctl.up_deadzone_fc);
+            let frac = q(over, ctl.up_blend_slope_100).min(0x1_0000);
+            (
+                ctl.up_blend_base_10c
+                    .wrapping_add(q(frac, ctl.up_blend_range_110)),
+                over,
+            )
         };
-        let inv_t_up = 0x1_0000_i32.wrapping_sub(t_up);
-        let blended_up = std::array::from_fn(|k| {
-            q(car_up[k], t_up).wrapping_add(q(old_up[k], inv_t_up))
-        });
-        let new_up = raw(normalize(vec(blended_up)));
+        let (new_up, up_exact) = if ecx_up <= 0x41 {
+            (car_up, true)
+        } else {
+            let blended_up = std::array::from_fn(|k| {
+                old_up[k].wrapping_add(q(diff_up[k], t_up))
+            });
+            (raw(normalize(vec(blended_up))), false)
+        };
 
         let old_r2 = state.visual_chassis_basis[2];
         let car_r2 = car_rows[2];
-        let blended_r2 =
-            std::array::from_fn(|k| q(car_r2[k], 0xcccc).wrapping_add(q(old_r2[k], 0x3333)));
-        let new_r2_init = raw(normalize(vec(blended_r2)));
-        let new_r0 = raw(normalize(cross(vec(new_up), vec(new_r2_init))));
-        let new_r2 = raw(normalize(cross(vec(new_r0), vec(new_up))));
-        state.visual_chassis_basis = [new_r0, new_up, new_r2];
+        let diff_r2 = [
+            car_r2[0].wrapping_sub(old_r2[0]),
+            car_r2[1].wrapping_sub(old_r2[1]),
+            car_r2[2].wrapping_sub(old_r2[2]),
+        ];
+        let dist_r2 = length(vec(diff_r2));
+        let (r2_cand, r2_exact) = if dist_r2 <= 0x41 {
+            (car_r2, true)
+        } else {
+            let proj = q(new_up[0], diff_r2[0])
+                .wrapping_add(q(new_up[1], diff_r2[1]))
+                .wrapping_add(q(new_up[2], diff_r2[2]));
+            let inv_t_up = 0x1_0000_i32.wrapping_sub(t_up);
+            let scale = q(proj, inv_t_up);
+            let cand = std::array::from_fn(|k| car_r2[k].wrapping_sub(q(new_up[k], scale)));
+            (cand, false)
+        };
+        if up_exact && r2_exact {
+            state.visual_chassis_basis = car_rows;
+        } else {
+            let dot_r2_up = q(r2_cand[0], new_up[0])
+                .wrapping_add(q(r2_cand[1], new_up[1]))
+                .wrapping_add(q(r2_cand[2], new_up[2]));
+            let r2_orth = std::array::from_fn(|k| r2_cand[k].wrapping_sub(q(new_up[k], dot_r2_up)));
+            let new_r2 = raw(normalize(vec(r2_orth)));
+            let new_r0 = raw(normalize(cross(vec(new_up), vec(new_r2))));
+            state.visual_chassis_basis = [new_r0, new_up, new_r2];
+        }
     } else {
         state.visual_chassis_basis = car_rows;
     }
 
+    // `0x416659..0x4166c5`: transform the four roll corners `ctl +0x94..+0xc0`
+    // (offset by `[ctl +0x00]->translation.y` = `visual_heave_y`, with `ctl +0xc4 = 0`)
+    // by `[ctl +0x04]` (`visual_chassis_basis`) and project onto `car_up` (`[car +0x2a0]` row 1).
     let [r0, r1, r2] = state.visual_chassis_basis;
     let car_up = car_rows[1];
     let hx = half_words[0];
-    let hy = -half_words[1];
     let hz = half_words[2];
-    let mut min_y = 0x64_0000_i32;
-    for (sx, sz) in [(hx, hz), (hx, -hz), (-hx, hz), (-hx, -hz)] {
+    let fallback_corners = [
+        [hx, 0, hz],
+        [hx, 0, -hz],
+        [-hx, 0, hz],
+        [-hx, 0, -hz],
+    ];
+    let corners_94 = if state.roll_corners_94 == [[0; 3]; 4] {
+        fallback_corners
+    } else {
+        state.roll_corners_94
+    };
+    let mut max_lift = 0_i32;
+    for base in corners_94 {
+        let c = [base[0], base[1].wrapping_add(state.visual_heave_y), base[2]];
         let world_corner: [i32; 3] = std::array::from_fn(|k| {
-            q(sx, r0[k])
-                .wrapping_add(q(hy, r1[k]))
-                .wrapping_add(q(sz, r2[k]))
+            q(c[0], r0[k])
+                .wrapping_add(q(c[1], r1[k]))
+                .wrapping_add(q(c[2], r2[k]))
         });
         let local_y = q(world_corner[0], car_up[0])
             .wrapping_add(q(world_corner[1], car_up[1]))
             .wrapping_add(q(world_corner[2], car_up[2]));
-        if local_y < min_y {
-            min_y = local_y;
+        if ctl.min_corner_y_ec != 0 && local_y < ctl.min_corner_y_ec {
+            let lift = ctl.min_corner_y_ec.wrapping_sub(local_y);
+            if lift > max_lift {
+                max_lift = lift;
+            }
         }
     }
-    state.visual_chassis_lift_y = if ctl.min_corner_y_ec != 0 && min_y < ctl.min_corner_y_ec {
-        ctl.min_corner_y_ec.wrapping_sub(min_y)
-    } else {
-        0
-    };
+    state.visual_chassis_lift_y = max_lift;
 }
 
 /// `FUN_00417cf0` and the `0x417ca7..0x417ce0` tail of `FUN_00416760`:
@@ -844,28 +894,6 @@ pub fn body_pose(
     no_ride_offset: bool,
 ) -> [i32; 16] {
     let car_rows = car_basis.map(raw);
-    let chassis_world = if state.visual_chassis_initialized {
-        state.visual_chassis_basis
-    } else {
-        car_rows
-    };
-    let chassis_local: [[i32; 3]; 3] = std::array::from_fn(|i| {
-        std::array::from_fn(|j| {
-            q(chassis_world[i][0], car_rows[j][0])
-                .wrapping_add(q(chassis_world[i][1], car_rows[j][1]))
-                .wrapping_add(q(chassis_world[i][2], car_rows[j][2]))
-        })
-    });
-    let mul_chassis_local = |v: [i32; 3]| -> [i32; 3] {
-        std::array::from_fn(|j| {
-            q(v[0], chassis_local[0][j])
-                .wrapping_add(q(v[1], chassis_local[1][j]))
-                .wrapping_add(q(v[2], chassis_local[2][j]))
-        })
-    };
-    let r0 = raw(normalize(vec(mul_chassis_local(state.visual_roll_rows[0]))));
-    let r1 = raw(normalize(vec(mul_chassis_local(state.visual_roll_rows[1]))));
-    let r2 = raw(normalize(vec(mul_chassis_local(state.visual_roll_rows[2]))));
     let ride = if no_ride_offset {
         0
     } else {
@@ -878,7 +906,34 @@ pub fn body_pose(
             .wrapping_add(ride),
         rest_translation[2],
     ];
-    let t = mul_chassis_local(local_t);
+    let ([r0, r1, r2], t) =
+        if !state.visual_chassis_initialized || state.visual_chassis_basis == car_rows {
+            (state.visual_roll_rows, local_t)
+        } else {
+            let chassis_world = state.visual_chassis_basis;
+            let chassis_local: [[i32; 3]; 3] = std::array::from_fn(|i| {
+                std::array::from_fn(|j| {
+                    q(chassis_world[i][0], car_rows[j][0])
+                        .wrapping_add(q(chassis_world[i][1], car_rows[j][1]))
+                        .wrapping_add(q(chassis_world[i][2], car_rows[j][2]))
+                })
+            });
+            let mul_chassis_local = |v: [i32; 3]| -> [i32; 3] {
+                std::array::from_fn(|j| {
+                    q(v[0], chassis_local[0][j])
+                        .wrapping_add(q(v[1], chassis_local[1][j]))
+                        .wrapping_add(q(v[2], chassis_local[2][j]))
+                })
+            };
+            (
+                [
+                    raw(normalize(vec(mul_chassis_local(state.visual_roll_rows[0])))),
+                    raw(normalize(vec(mul_chassis_local(state.visual_roll_rows[1])))),
+                    raw(normalize(vec(mul_chassis_local(state.visual_roll_rows[2])))),
+                ],
+                mul_chassis_local(local_t),
+            )
+        };
     let x = t[0];
     let y = t[1].wrapping_add(state.visual_chassis_lift_y);
     let z = t[2];
@@ -1261,22 +1316,31 @@ mod tests {
     fn visual_chassis_415df0_lags_car_basis_and_lifts_low_corner() {
         let ctl = SuspensionConstants {
             min_corner_y_ec: -0x4ccc,
-            up_deadzone_fc: 0x1999,
-            up_blend_slope_100: 0x189,
+            up_deadzone_fc: 0x33,
+            up_blend_slope_100: 0x50_0000,
             up_blend_base_10c: 0x3333,
             up_blend_range_110: 0x9999,
             ..SuspensionConstants::default()
         };
         let mut state = WheelAnimationState::default();
         let flat = [vec([ONE, 0, 0]), up(), vec([0, 0, ONE])];
-        let half = [0x1_6000, 0x4ccc, 0x0_b000];
+        let half = [0x1_6000, 0xaf5c, 0x0_b000];
         step_visual_chassis_415df0(&mut state, flat, half, 4, true, ctl);
         assert!(state.visual_chassis_initialized);
         assert_eq!(state.visual_chassis_lift_y, 0);
 
-        // Sudden pitch change on the physics basis: visual_chassis_basis blends
-        // partially and lifts the chassis so the lowest corner stays >= min_corner_y_ec.
-        let pitched_up = normalize(vec([0x2000, ONE, 0]));
+        // Stepping again at rest on flat ground must keep visual_chassis_lift_y == 0
+        // (regression check: ctl +0xc4 is 0, not -half_height_30).
+        step_visual_chassis_415df0(&mut state, flat, half, 4, true, ctl);
+        assert_eq!(state.visual_chassis_lift_y, 0);
+        let rest_pose = body_pose(&state, flat, [0, 0, 0], 0xaf5c, 0xaf5c, false);
+        assert_eq!(rest_pose[13], 0);
+
+        // Steep pitch change on the physics basis combined with downward heave so a corner
+        // drops below min_corner_y_ec (-0x4ccc): visual_chassis_basis blends partially and
+        // lifts the chassis so the lowest corner stays >= min_corner_y_ec.
+        state.visual_heave_y = -0x3000;
+        let pitched_up = normalize(vec([0x8000, ONE, 0]));
         let pitched_r0 = normalize(cross(pitched_up, vec([0, 0, ONE])));
         let pitched = [pitched_r0, pitched_up, vec([0, 0, ONE])];
         step_visual_chassis_415df0(&mut state, pitched, half, 4, true, ctl);
@@ -1285,7 +1349,7 @@ mod tests {
         assert!(state.visual_chassis_lift_y > 0);
 
         let pose = body_pose(&state, pitched, [0, 0x1000, 0], 0x5200, 0x4ccc, false);
-        assert!(pose[13] > 0x1000 + (0x5200 - 0x4ccc));
+        assert!(pose[13] > 0x1000 + state.visual_heave_y + (0x5200 - 0x4ccc));
     }
 
     #[test]
