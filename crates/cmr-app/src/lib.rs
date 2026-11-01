@@ -2570,14 +2570,17 @@ impl StageRenderResources {
             layers.push(PreparedRawStageLayer::keyed(scene, textures, 0));
         }
         if let (Some(scene), Some(textures)) = (car.as_ref(), self.car_textures.as_ref()) {
-            layers.push(PreparedRawStageLayer::keyed_dynamic(
-                scene,
-                textures,
-                car_policy
-                    .body_source_color_key
-                    .expect("the recovered mode-5 body policy is source-keyed"),
-                0,
-            ));
+            layers.push(
+                PreparedRawStageLayer::keyed_dynamic(
+                    scene,
+                    textures,
+                    car_policy
+                        .body_source_color_key
+                        .expect("the recovered mode-5 body policy is source-keyed"),
+                    0,
+                )
+                .with_car_layer(),
+            );
         }
         PreparedRawStage::prepare_layers(layers, ROOT_EXTENT, &self.palette)
             .map_err(StageFrameError::GpuPrepare)
@@ -2710,6 +2713,7 @@ impl StageRenderResources {
                         cmr_gpu_contract::C3dStageVertex::from_raw_components([
                             p[0], p[1], p[2], uv[0], uv[1], n[0], n[1], n[2],
                         ])
+                        .with_diffuse_rgba([0xff, 0xff, 0xff, 0])
                     })
                     .collect();
                 if let Err(error) =
@@ -3195,18 +3199,7 @@ impl StageRenderResources {
             return;
         };
         let camera = [camera_world[12], camera_world[13], camera_world[14]];
-        let mut pulled = camera_pull(&entry, camera, event.split_screen());
-        // In `WgpuStageRenderer`, the car and world are drawn into the shared
-        // GPU depth buffer first and `blend_shadows` depth-tests against that
-        // buffer in `post_blend_gpu_frame`. Scaling the `FUN_0047bee0` camera-pull
-        // delta to 1/16th (`~6.25 cm` instead of `1.0m`) prevents ground z-fighting
-        // while keeping the shadow strictly behind the car's rear bumper, wheels,
-        // and bodywork (`~0.2m..1.5m` closer along the camera ray).
-        for (dst, src) in pulled.points.iter_mut().zip(entry.points.iter()) {
-            for axis in 0..3 {
-                dst[axis] = src[axis] + ((dst[axis] - src[axis]) >> 4);
-            }
-        }
+        let pulled = camera_pull(&entry, camera, event.split_screen());
         let vertices = shadow_vertices(&pulled, true)
             .into_iter()
             .map(|v| cmr_video::c3d_software_raster::SoftwareC3dLitVertex {
@@ -3336,6 +3329,13 @@ impl StageRenderResources {
                 self.night_pool_draw,
             );
             let blend = |scene: &mut cmr_video::software_stage_scene::StageSceneFrame| {
+                // `WgpuStageRenderer` draws both the stage and the car (`alpha = 0`)
+                // into the shared depth buffer before `post_blend_gpu_frame`. Mask
+                // car pixels to `depth = -1.0` during pre-car passes (`apply_night_pool`,
+                // `blend_coloured_triangles`, `blend_shadows`) so the `1.0 m` camera-pulled
+                // shadow (`FUN_0047bee0`) never draws over the car body, then restore
+                // the car's true depth for particles and lamp flares.
+                let saved_car_depths = scene.mask_car_depths_from_rgba8_alpha();
                 if let Some((light_world, radius_q16)) = lamps.4 {
                     scene.apply_night_pool(camera, light_world, radius_q16, None);
                 }
@@ -3350,6 +3350,7 @@ impl StageRenderResources {
                         .blend_shadows(camera, shadow_draws, &shadow.alpha)
                         .map_err(StageFrameError::Compose)?;
                 }
+                scene.restore_masked_depths(&saved_car_depths);
                 blend_sprite_draws(scene, camera, sprites.0, sprites.1)?;
                 blend_lamp_draws(scene, camera, lamps.0, lamps.1, lamps.2, lamps.3)
             };
@@ -8160,6 +8161,8 @@ impl SessionCompiledPose {
         // probes and centre stand in (an inference).
         start.four_wheel.trigger_prior_15c = probes;
         start.four_wheel.saved_position_3e4 = start.position;
+        start.four_wheel.previous_wheel_normals_39c =
+            std::array::from_fn(|w| effects.lanes.state.output_vectors[w]);
         Ok(publish_session_compiled_pose(
             start,
             [
@@ -8335,23 +8338,42 @@ impl SessionCompiledPose {
         wheel.steering =
             cmr_core::steering_response::steering_sensitivity(wheel.steering, setup.steering_097);
         let [
-            crest_128,
-            crest_12c,
+            limit_x_d8,
+            heave_limit_dc,
+            limit_z_e0,
+            heave_scale_e4,
+            up_e8,
+            gravity_f0,
+            max_step_f4,
+            damping_f8,
             roll_limit_104,
             roll_gain_108,
             load_transfer_118,
             travel_11c,
             limit_120,
             rate_124,
+            crest_128,
+            crest_12c,
         ] = aux
             .patch_words(
                 setup.suspension_093,
                 car.constants.state_word_48,
-                [0x128, 0x12c, 0x104, 0x108, 0x118, 0x11c, 0x120, 0x124],
+                [
+                    0x0d8, 0x0dc, 0x0e0, 0x0e4, 0x0e8, 0x0f0, 0x0f4, 0x0f8, 0x104, 0x108, 0x118,
+                    0x11c, 0x120, 0x124, 0x128, 0x12c,
+                ],
             )
             .map_err(SessionFourWheelError::AuxControl)?;
         wheel.crest_128_12c = [crest_128, crest_12c];
         wheel.suspension = cmr_core::wheel_animation::SuspensionConstants {
+            limit_x_d8,
+            heave_limit_dc,
+            limit_z_e0,
+            heave_scale_e4,
+            up_e8,
+            gravity_f0,
+            max_step_f4,
+            damping_f8,
             roll_limit_104,
             roll_gain_108,
             load_transfer_118,

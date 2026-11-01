@@ -660,6 +660,12 @@ pub struct FourWheelState {
     pub rollover: RolloverState,
     /// `+0x330`: the ground normal saved before the last ground pass.
     pub previous_normal_330: Vec3,
+    /// `+0xe0..+0xe8`: prior world velocity saved in `FUN_0040a4a0` (`0x40ab04`)
+    /// before `apply_translation_step` and read by `FUN_00416760`.
+    pub prior_velocity_e0: Vec3,
+    /// `+0x39c..+0x3c8`: the four wheel ground normals saved at the start of
+    /// `FUN_00410a60` (`0x410a9b`) and read by `FUN_0040fbe0`.
+    pub previous_wheel_normals_39c: [[i32; 3]; 4],
     /// The reset words `ctl +0x41c/+0x424/+0x428/+0x460` (`FUN_00414850`).
     pub reset: ResetFadeState,
     /// `+0x3e4..+0x3ec`: the centre saved before the physics step.
@@ -1120,6 +1126,8 @@ impl CarState {
                     roll_angle_60c: 0,
                 },
                 previous_normal_330: Vec3::ZERO,
+                prior_velocity_e0: Vec3::ZERO,
+                previous_wheel_normals_39c: [[0; 3]; 4],
                 reset: ResetFadeState {
                     active_41c: false,
                     countdown_424: 0,
@@ -1272,6 +1280,8 @@ impl CarState {
             roll_angle_60c: p_i16(0x60c),
         };
         wheel.previous_normal_330 = p_vec3(0x330);
+        wheel.prior_velocity_e0 = p_vec3(0xe0);
+        wheel.previous_wheel_normals_39c = std::array::from_fn(|w| p_raw3(0x39c + w * 12));
         wheel.reset = ResetFadeState {
             active_41c: c_i32(0x41c) != 0,
             countdown_424: c_i32(0x424),
@@ -1290,6 +1300,9 @@ impl CarState {
         wheel.wheels.vibration_57c = std::array::from_fn(|w| p_u16(0x57c + w * 2));
         wheel.wheels.bounce_584 = std::array::from_fn(|w| p_i32(0x584 + w * 4));
         wheel.wheels.travel_594 = std::array::from_fn(|w| p_i32(0x594 + w * 4));
+        wheel.wheels.roll_state_88 = [c_i32(0x88), c_i32(0x8c), c_i32(0x90)];
+        wheel.wheels.corner_roll_c8 = std::array::from_fn(|w| c_i32(0xc8 + w * 4));
+        wheel.wheels.wheel_load_654 = std::array::from_fn(|w| p_i32(0x654 + w * 4));
         wheel.wheels.wobble_phase_604 = std::array::from_fn(|w| p_u16(0x604 + w * 2));
         wheel.wheels.wobble_5e4 =
             std::array::from_fn(|w| [p_i32(0x5e4 + w * 8), p_i32(0x5e8 + w * 8)]);
@@ -2011,6 +2024,10 @@ impl RaceState {
 
         let accel = net_accel(net_force, params.inverse_mass, params.gravity);
         let pending_collision_acceleration = self.car.collision.consume_pending_linear();
+        // `FUN_0040a4a0` (`0x40ab04..0x40ab21`) saves `velocity_d4` into
+        // `prior_velocity_e0` right before the translation step integrates the
+        // new velocity.
+        self.car.four_wheel.prior_velocity_e0 = self.car.velocity;
         let translation = apply_translation_step(TranslationStepInput {
             position: self.car.position,
             velocity: self.car.velocity,
@@ -2370,7 +2387,11 @@ impl RaceState {
             }
         }
         let compiled_live_path = wheel.gearbox.is_some() && wheel.tyre.is_some();
-        if !compiled_live_path {
+        if compiled_live_path {
+            // `FUN_00407690` (`0x407df0..0x407efd`) clears `car + 0x45c..+0x4b8`
+            // (`contact_updates[0..8]`) at the start of every tick.
+            self.car.four_wheel.contact_updates = [Vec3::ZERO; 8];
+        } else {
             self.car.four_wheel.residual_enable = advance_residual_enable(
                 self.car.four_wheel.residual_enable,
                 wheel.first[0].config_158,
@@ -2504,7 +2525,11 @@ impl RaceState {
             input.scale_528 = scale_528;
             input.extra_vector = Vec3::ZERO;
             input.update_gate = update_gate;
-            input.enabled = thresholds.flags_73a[index] != 0;
+            input.enabled = if compiled_live_path {
+                thresholds.flags_73a[index] == 0
+            } else {
+                thresholds.flags_73a[index] != 0
+            };
         }
         let source_s = stabilize_lane_source_s(
             self.car.motion.lane_source_s,
@@ -2558,6 +2583,27 @@ impl RaceState {
                 &mut first,
                 &mut second,
             );
+            if compiled_live_path && wheel.suspension.up_e8 != 0 {
+                let mass_48 = wheel.angular.momentum.moment_scale;
+                let count_u8 = u8::try_from(self.car.motion.contact_count_674).unwrap_or(0);
+                let scale_52c = contact_count_scale(mass_48, count_u8);
+                crate::wheel_animation::step_body_roll_416760(
+                    &mut self.car.four_wheel.wheels,
+                    &crate::wheel_animation::BodyRollInput {
+                        velocity_d4: self.car.velocity,
+                        prior_velocity_e0: self.car.four_wheel.prior_velocity_e0,
+                        start_basis_27c: self.car.four_wheel.start_basis_27c,
+                        half_x_2c: ground.half_words[0],
+                        half_z_34: ground.half_words[2],
+                        mass_48: mass_48.raw(),
+                        count_674: self.car.motion.contact_count_674,
+                        scale_52c: scale_52c.raw(),
+                        upright_404: self.car.four_wheel.upright_404,
+                        resting_700: self.car.four_wheel.resting_700,
+                        constants: wheel.suspension,
+                    },
+                );
+            }
             self.apply_tyre_loads(
                 tyre,
                 &ground,
@@ -2680,9 +2726,30 @@ impl RaceState {
             self.car.four_wheel.first[axle + 1].wheel_speed = right.raw();
         }
         let mut lanes = wheel.postprocess.lanes;
-        for (lane, output) in lanes.iter_mut().enumerate() {
-            output.vector_a = directions.direction_a[lane];
-            output.vector_b = directions.direction_b[lane];
+        if compiled_live_path
+            && let Some(ground) = &self.car.ground
+        {
+            for (lane, output) in lanes.iter_mut().enumerate() {
+                output.active = self.car.motion.contact_distance_flags[lane];
+                let n_cur = ground.lanes.output_vectors[lane];
+                let n_prev = self.car.four_wheel.previous_wheel_normals_39c[lane];
+                output.vector_a = Vec3::new(
+                    Fixed16::from_raw(n_cur[0]),
+                    Fixed16::from_raw(n_cur[1]),
+                    Fixed16::from_raw(n_cur[2]),
+                );
+                output.vector_b = Vec3::new(
+                    Fixed16::from_raw(n_prev[0]),
+                    Fixed16::from_raw(n_prev[1]),
+                    Fixed16::from_raw(n_prev[2]),
+                );
+                output.vector_c = self.car.four_wheel.contact_vectors_4bc[lane];
+            }
+        } else {
+            for (lane, output) in lanes.iter_mut().enumerate() {
+                output.vector_a = directions.direction_a[lane];
+                output.vector_b = directions.direction_b[lane];
+            }
         }
         for index in (0..4).rev() {
             if !grounded {
@@ -2719,8 +2786,12 @@ impl RaceState {
             );
         }
         if grounded {
-            let outcome =
-                apply_geometric_lane_postprocess(&mut lanes, wheel.postprocess.argument_scale)?;
+            let postprocess_scale = if compiled_live_path {
+                Fixed16::from_raw(second[0].scale_c5c4)
+            } else {
+                wheel.postprocess.argument_scale
+            };
+            let outcome = apply_geometric_lane_postprocess(&mut lanes, postprocess_scale)?;
             self.car.four_wheel.postprocess = FourWheelPostprocessState {
                 accumulators: lanes.map(|lane| lane.accumulator),
                 qualified: outcome.qualified,
@@ -2854,6 +2925,10 @@ impl RaceState {
         // `+0x742 > 0` (`0x40afcc`), not on the wheel flags. Unlike the planar
         // harness there is no heading-rate steering, no separate drag, and no
         // lateral grip: lateral and drive forces arrive through the lanes.
+        // `FUN_0040a4a0` (`0x40ab04..0x40ab21`) saves `velocity_d4` into
+        // `prior_velocity_e0` right before the translation step integrates the
+        // new velocity.
+        self.car.four_wheel.prior_velocity_e0 = self.car.velocity;
         let translation = apply_translation_step(TranslationStepInput {
             position: self.car.position,
             velocity: self.car.velocity,
@@ -3009,8 +3084,11 @@ impl RaceState {
         let Some(ground) = self.car.ground else {
             return Ok(());
         };
-        // `FUN_00410a60` saves the normal before either path updates it.
+        // `FUN_00410a60` saves the normal and the four wheel contact normals
+        // (`0x410a9b..0x410ac4`) before either path updates them.
         self.car.four_wheel.previous_normal_330 = self.car.motion.projection_axis;
+        self.car.four_wheel.previous_wheel_normals_39c =
+            std::array::from_fn(|w| ground.lanes.output_vectors[w]);
         let car = GroundPassCar {
             position: self.car.position,
             velocity: self.car.velocity,
@@ -3130,7 +3208,7 @@ impl RaceState {
             car.motion.contact_count_674,
             scale_52c.raw(),
             car.four_wheel.wheels.travel_594,
-            [0; 4],
+            car.four_wheel.wheels.corner_roll_c8,
             wheel.suspension,
         );
     }
@@ -3293,8 +3371,13 @@ impl RaceState {
             Vec3::new(Fixed16::ZERO, Fixed16::ONE, Fixed16::ZERO);
         let wheel = &mut car.four_wheel;
         wheel.speed_ec = 0;
+        wheel.prior_velocity_e0 = Vec3::ZERO;
         wheel.start_basis_27c = placement.basis;
         wheel.previous_normal_330 = placement.normal;
+        wheel.previous_wheel_normals_39c =
+            std::array::from_fn(|w| ground.lanes.output_vectors[w]);
+        wheel.wheels.roll_state_88 = [0; 3];
+        wheel.wheels.corner_roll_c8 = [0; 4];
         wheel.rollover = RolloverState::default();
         wheel.tumble.hull_ticks_678 = 0;
         wheel.tumble.inverted_684 = false;

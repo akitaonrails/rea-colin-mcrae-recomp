@@ -131,7 +131,7 @@ fn fragment_true_color(input: VertexOutput) -> @location(0) vec4f {
     if w_sum > 0.001 {
         sampled_rgb = (t00.rgb * w00 + t10.rgb * w10 + t01.rgb * w01 + t11.rgb * w11) / w_sum;
     }
-    return vec4f(sampled_rgb * input.diffuse.rgb, 1.0);
+    return vec4f(sampled_rgb * input.diffuse.rgb, input.diffuse.a);
 }
 
 // Presentation readback: emit the resolved active-palette slot instead of the

@@ -123,6 +123,41 @@ impl StageSceneFrame {
         &self.depth
     }
 
+    /// Temporarily masks pixels whose RGBA8 alpha is `0` (written by a car
+    /// layer in `WgpuStageRenderer`) to `depth = -1.0` so pre-car passes
+    /// (`apply_night_pool`, `blend_coloured_triangles`, `blend_shadows`) cannot
+    /// draw over the car mesh even when a shadow vertex is pulled `1.0 m`
+    /// toward the camera (`FUN_0047bee0`), and restores their RGBA8 alpha to
+    /// `255`. Returns the `(pixel_index, original_depth)` list for
+    /// [`Self::restore_masked_depths`].
+    pub fn mask_car_depths_from_rgba8_alpha(&mut self) -> Vec<(usize, f32)> {
+        let Some(rgba) = self.rgba8.as_mut() else {
+            return Vec::new();
+        };
+        let total = usize::from(self.extent[0]) * usize::from(self.extent[1]);
+        let mut saved = Vec::new();
+        for at in 0..total {
+            if let Some(alpha) = rgba.get_mut(at * 4 + 3)
+                && *alpha == 0
+            {
+                *alpha = 255;
+                let orig = self.depth.values()[at];
+                saved.push((at, orig));
+                self.depth.set_value(at, -1.0);
+            }
+        }
+        saved
+    }
+
+    /// Restores depths masked by [`Self::mask_car_depths_from_rgba8_alpha`] so
+    /// post-car passes (particles and lamp flares) depth-test against the car's
+    /// true depth.
+    pub fn restore_masked_depths(&mut self, saved: &[(usize, f32)]) {
+        for &(at, orig) in saved {
+            self.depth.set_value(at, orig);
+        }
+    }
+
     /// The run statistics.
     pub fn stats(&self) -> &StageSceneFrameStats {
         &self.stats
@@ -512,7 +547,7 @@ impl StageSceneFrame {
             for x in 0..w_usize {
                 let at = row + x;
                 let z_ndc = depth_vals[at];
-                if z_ndc >= 1.0 {
+                if !(0.0..1.0).contains(&z_ndc) {
                     continue;
                 }
                 let denom = zf - z_ndc * (zf - zn);

@@ -41,7 +41,7 @@
 //!   the ride offset `wheel radius - +0x30`.
 
 use crate::fixed_point::Vec3;
-use crate::tumble::{normalize, q, raw, vec};
+use crate::tumble::{cross, length, normalize, q, raw, vec};
 use crate::vehicle_dynamics::{axis_angle_matrix, transform_by_matrix};
 
 /// `K` at `0x4e6300`: `-1 / (32 pi)`.
@@ -62,6 +62,10 @@ pub struct WheelAnimationState {
     pub bounce_584: [i32; 4],
     /// `+0x594[4]`: the normalized relative travel.
     pub travel_594: [i32; 4],
+    /// `ctl +0x88[3]`: dynamic body roll/heave/pitch integrator (`FUN_00416760`).
+    pub roll_state_88: [i32; 3],
+    /// `ctl +0xc8[4]`: per-corner dynamic roll/pitch height (`FUN_00416760`).
+    pub corner_roll_c8: [i32; 4],
     /// `+0x654[4]`: the per-wheel normal load (`FUN_00417cf0`).
     pub wheel_load_654: [i32; 4],
     /// `+0x604[4]`: the wobble phase.
@@ -82,6 +86,8 @@ impl WheelAnimationState {
         vibration_57c: [0; 4],
         bounce_584: [0; 4],
         travel_594: [0; 4],
+        roll_state_88: [0; 3],
+        corner_roll_c8: [0; 4],
         wheel_load_654: [0; 4],
         wobble_phase_604: [0; 4],
         wobble_5e4: [[0; 2]; 4],
@@ -98,15 +104,172 @@ fn sine(trig: &[i32], angle: u16) -> i32 {
     trig[usize::from(angle & 0xfff)]
 }
 
-/// The suspension constants `ctl +0x104/+0x108/+0x118/+0x11c/+0x120/+0x124`.
+/// The suspension constants `ctl +0xd8..+0xf8` and `ctl +0x104/+0x108/+0x118/+0x11c/+0x120/+0x124`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SuspensionConstants {
+    pub limit_x_d8: i32,
+    pub heave_limit_dc: i32,
+    pub limit_z_e0: i32,
+    pub heave_scale_e4: i32,
+    pub up_e8: i32,
+    pub gravity_f0: i32,
+    pub max_step_f4: i32,
+    pub damping_f8: i32,
     pub roll_limit_104: i32,
     pub roll_gain_108: i32,
     pub load_transfer_118: i32,
     pub travel_gain_11c: i32,
     pub limit_120: i32,
     pub rate_124: i32,
+}
+
+/// What `FUN_00416760` reads during the live force pass (`0x407f59`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodyRollInput {
+    pub velocity_d4: Vec3,
+    pub prior_velocity_e0: Vec3,
+    pub start_basis_27c: [Vec3; 3],
+    pub half_x_2c: i32,
+    pub half_z_34: i32,
+    pub mass_48: i32,
+    pub count_674: i32,
+    pub scale_52c: i32,
+    pub upright_404: bool,
+    pub resting_700: bool,
+    pub constants: SuspensionConstants,
+}
+
+/// `FUN_00416760` (`0x416760..0x417ce7`): steps the dynamic body roll/pitch/heave
+/// vector `ctl +0x88..+0x90`, computes the four corner roll displacements
+/// `ctl +0xc8..+0xd4`, and updates `car +0x654..+0x660` (`wheel_load_654`) via
+/// `FUN_00417cf0`.
+pub fn step_body_roll_416760(state: &mut WheelAnimationState, input: &BodyRollInput) {
+    let ctl = input.constants;
+    let r0 = raw(input.start_basis_27c[0]);
+    let r1 = raw(input.start_basis_27c[1]);
+    let r2 = raw(input.start_basis_27c[2]);
+    let transform_into_basis = |v: [i32; 3]| -> [i32; 3] {
+        [
+            q(v[0], r0[0])
+                .wrapping_add(q(v[1], r0[1]))
+                .wrapping_add(q(v[2], r0[2])),
+            q(v[0], r1[0])
+                .wrapping_add(q(v[1], r1[1]))
+                .wrapping_add(q(v[2], r1[2])),
+            q(v[0], r2[0])
+                .wrapping_add(q(v[1], r2[1]))
+                .wrapping_add(q(v[2], r2[2])),
+        ]
+    };
+
+    let local_delta = if input.count_674 != 0 {
+        if input.upright_404 {
+            let delta_world = [
+                input
+                    .prior_velocity_e0
+                    .x
+                    .raw()
+                    .wrapping_sub(input.velocity_d4.x.raw()),
+                input
+                    .prior_velocity_e0
+                    .y
+                    .raw()
+                    .wrapping_sub(input.velocity_d4.y.raw()),
+                input
+                    .prior_velocity_e0
+                    .z
+                    .raw()
+                    .wrapping_sub(input.velocity_d4.z.raw()),
+            ];
+            let local = transform_into_basis(delta_world);
+            if length(vec(local)) == 0 || input.resting_700 {
+                [0, 0, 0]
+            } else {
+                local
+            }
+        } else {
+            [0, 0, 0]
+        }
+    } else {
+        let grav_local = transform_into_basis([0, ctl.gravity_f0, 0]);
+        [0, grav_local[1].max(0), 0]
+    };
+
+    let len_88 = length(vec(state.roll_state_88));
+    let damping_vec = if len_88 > 0 {
+        let scale = -q(len_88, ctl.damping_f8);
+        let inv_len = (0x1_0000_0000_i64 / i64::from(len_88)) as i32;
+        [
+            q(q(state.roll_state_88[0], inv_len), scale),
+            q(q(state.roll_state_88[1], inv_len), scale),
+            q(q(state.roll_state_88[2], inv_len), scale),
+        ]
+    } else {
+        [0, 0, 0]
+    };
+
+    let raw_step = [
+        local_delta[0].wrapping_add(damping_vec[0]),
+        local_delta[1].wrapping_add(damping_vec[1]),
+        local_delta[2].wrapping_add(damping_vec[2]),
+    ];
+    let dt_scale = q(0xa3d, 0x1_3333);
+    let mut step = [
+        q(raw_step[0], dt_scale),
+        q(raw_step[1], dt_scale),
+        q(raw_step[2], dt_scale),
+    ];
+    let horiz_len = length(vec([step[0], 0, step[2]]));
+    if ctl.max_step_f4 > 0 && horiz_len > ctl.max_step_f4 {
+        let inv_hlen = (0x1_0000_0000_i64 / i64::from(horiz_len)) as i32;
+        step[0] = q(q(step[0], inv_hlen), ctl.max_step_f4);
+        step[2] = q(q(step[2], inv_hlen), ctl.max_step_f4);
+    }
+    for axis in 0..3 {
+        state.roll_state_88[axis] = state.roll_state_88[axis].wrapping_add(step[axis]);
+    }
+
+    let v = [
+        clamp_step(state.roll_state_88[0], ctl.limit_x_d8),
+        ctl.up_e8,
+        clamp_step(state.roll_state_88[2], ctl.limit_z_e0),
+    ];
+    let row1 = raw(normalize(vec(v)));
+    let row0 = raw(normalize(vec([
+        0x1_0000_i32.wrapping_sub(q(row1[0], row1[0])),
+        -q(row1[1], row1[0]),
+        -q(row1[2], row1[0]),
+    ])));
+    let row2 = raw(normalize(cross(vec(row0), vec(row1))));
+
+    let corners = [
+        [input.half_x_2c, input.half_z_34],
+        [input.half_x_2c, -input.half_z_34],
+        [-input.half_x_2c, input.half_z_34],
+        [-input.half_x_2c, -input.half_z_34],
+    ];
+    let mut corner_roll = [0_i32; 4];
+    let mut max_abs = 0_i32;
+    for i in 0..4 {
+        let c8 = q(corners[i][0], row0[1]).wrapping_add(q(corners[i][1], row2[1]));
+        corner_roll[i] = c8;
+        max_abs = max_abs.max(c8.wrapping_abs());
+    }
+    if ctl.roll_limit_104 > 0 && max_abs > ctl.roll_limit_104 {
+        let scale = ((i64::from(ctl.roll_limit_104) << 16) / i64::from(max_abs)) as i32;
+        for c8 in &mut corner_roll {
+            *c8 = q(*c8, scale);
+        }
+    }
+    state.corner_roll_c8 = corner_roll;
+    state.wheel_load_654 = compute_wheel_loads_417cf0(
+        input.mass_48,
+        input.count_674,
+        input.scale_52c,
+        state.travel_594,
+        state.corner_roll_c8,
+        ctl,
+    );
 }
 
 /// `FUN_00417cf0` and the `0x417ca7..0x417ce0` tail of `FUN_00416760`:
@@ -498,6 +661,7 @@ mod tests {
                 travel_gain_11c: ONE,
                 limit_120: 0x8000,
                 rate_124: 0x1000,
+                ..SuspensionConstants::default()
             },
             out_of_control_680: false,
             surface_types: [0; 4],
@@ -677,6 +841,7 @@ mod tests {
             travel_gain_11c: 0x3_2000,
             limit_120: 0x28f5,
             rate_124: 0x47a,
+            ..SuspensionConstants::default()
         };
         let mass_48 = 0x046d_c000;
         let rest_loads =
@@ -695,5 +860,45 @@ mod tests {
         let non_four =
             compute_wheel_loads_417cf0(mass_48, 2, 0x0236_e000, [0; 4], [0; 4], constants);
         assert_eq!(non_four, [0x0236_e000; 4]);
+    }
+
+    #[test]
+    fn body_roll_416760_shifts_load_forward_under_braking_deceleration() {
+        let constants = SuspensionConstants {
+            limit_x_d8: 0x1e_0000,
+            heave_limit_dc: 0x1333,
+            limit_z_e0: 0x28_0000,
+            heave_scale_e4: 0x3333,
+            up_e8: 0x38_0000,
+            gravity_f0: 0x191,
+            max_step_f4: 0x8_0000,
+            damping_f8: 0x1999,
+            roll_limit_104: 0x4000,
+            roll_gain_108: 0x4_0000,
+            load_transfer_118: 0x046d_c000 >> 3,
+            travel_gain_11c: 0x3_2000,
+            limit_120: 0x28f5,
+            rate_124: 0x47a,
+        };
+        let mut state = WheelAnimationState::default();
+        let identity = [vec([ONE, 0, 0]), up(), vec([0, 0, ONE])];
+        let input = BodyRollInput {
+            velocity_d4: vec([0x10_0000, 0, 0]),
+            prior_velocity_e0: vec([0x12_0000, 0, 0]),
+            start_basis_27c: identity,
+            half_x_2c: 0x1_6000,
+            half_z_34: 0x0_b000,
+            mass_48: 0x046d_c000,
+            count_674: 4,
+            scale_52c: 0x011b_7000,
+            upright_404: true,
+            resting_700: false,
+            constants,
+        };
+        step_body_roll_416760(&mut state, &input);
+        assert!(state.roll_state_88[0] > 0);
+        assert!(state.corner_roll_c8[0] < 0 && state.corner_roll_c8[1] < 0);
+        assert!(state.corner_roll_c8[2] > 0 && state.corner_roll_c8[3] > 0);
+        assert!(state.wheel_load_654[0] > state.wheel_load_654[2]);
     }
 }

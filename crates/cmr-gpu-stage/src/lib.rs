@@ -51,6 +51,7 @@ pub struct PreparedRawStageLayer<'a, 'scene> {
     textures: &'a StageC3dTextures,
     color_key_index: Option<u8>,
     dynamic_world_set: Option<usize>,
+    car_layer: bool,
 }
 
 impl<'a, 'scene> PreparedRawStageLayer<'a, 'scene> {
@@ -61,6 +62,7 @@ impl<'a, 'scene> PreparedRawStageLayer<'a, 'scene> {
             textures,
             color_key_index: None,
             dynamic_world_set: None,
+            car_layer: false,
         }
     }
 
@@ -75,6 +77,7 @@ impl<'a, 'scene> PreparedRawStageLayer<'a, 'scene> {
             textures,
             color_key_index: Some(color_key_index),
             dynamic_world_set: None,
+            car_layer: false,
         }
     }
 
@@ -90,6 +93,7 @@ impl<'a, 'scene> PreparedRawStageLayer<'a, 'scene> {
             textures,
             color_key_index: Some(color_key_index),
             dynamic_world_set: Some(dynamic_world_set),
+            car_layer: false,
         }
     }
 
@@ -104,7 +108,17 @@ impl<'a, 'scene> PreparedRawStageLayer<'a, 'scene> {
             textures,
             color_key_index: None,
             dynamic_world_set: Some(dynamic_world_set),
+            car_layer: false,
         }
+    }
+
+    /// Marks this layer as a car mesh (`FUN_004a2070`), tagging its vertices
+    /// with `diffuse_rgba[3] = 0` so post-blend passes can distinguish car
+    /// pixels from stage terrain pixels in the shared GPU depth buffer.
+    #[must_use]
+    pub const fn with_car_layer(mut self) -> Self {
+        self.car_layer = true;
+        self
     }
 }
 
@@ -266,7 +280,15 @@ impl PreparedRawStage {
                         .unique_entries_32()
                         .iter()
                         .copied()
-                        .map(C3dStageVertex::from)
+                        .map(|entry| {
+                            let v = C3dStageVertex::from(entry);
+                            if layer.car_layer {
+                                let [r, g, b, _] = v.diffuse_rgba();
+                                v.with_diffuse_rgba([r, g, b, 0])
+                            } else {
+                                v
+                            }
+                        })
                         .collect::<Vec<_>>();
                     if draw_group.has_per_vertex_diffuse()
                         && layer.color_key_index.is_none()

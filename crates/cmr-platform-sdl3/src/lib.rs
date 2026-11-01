@@ -900,7 +900,26 @@ where
         let mut host_events = Vec::new();
         let now = pacing_clock.elapsed();
         let first_event = match pacing.wait_duration(now) {
-            Some(wait) => events.wait_event_timeout(sdl_wait_duration(wait)),
+            Some(wait) => {
+                // `SDL_WaitEventTimeout` accepts whole-millisecond timeouts and
+                // wakes on the OS scheduler quantum (`~0.5..1.5 ms` late). Sleep
+                // coarsely until the final `2 ms` before the 40 ms deadline, then
+                // spin/poll sub-millisecond to hit the exact 25.000 Hz tick.
+                let spin_margin = Duration::from_micros(2_000);
+                if wait > spin_margin {
+                    events.wait_event_timeout(sdl_wait_duration(wait - spin_margin))
+                } else {
+                    loop {
+                        if let Some(ev) = events.poll_event() {
+                            break Some(ev);
+                        }
+                        if pacing.wait_duration(pacing_clock.elapsed()) == Some(Duration::ZERO) {
+                            break None;
+                        }
+                        std::hint::spin_loop();
+                    }
+                }
+            }
             None => Some(events.wait_event()),
         };
         if let Some(event) = first_event {

@@ -419,6 +419,13 @@ impl SoftwareC3dDepthBuffer {
         self.values.fill(1.0);
     }
 
+    /// Updates one depth value at `index` (`y * width + x`).
+    pub fn set_value(&mut self, index: usize, value: f32) {
+        if let Some(slot) = self.values.get_mut(index) {
+            *slot = value;
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn from_test_values(extent: [u16; 2], values: &[f32]) -> Self {
         assert_eq!(
