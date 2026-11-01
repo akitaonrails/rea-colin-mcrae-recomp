@@ -80,5 +80,14 @@ jobs:
             libxtst-dev libxkbcommon-dev
       - name: Clippy (full workspace, bundled SDL3)
         run: cargo clippy --workspace --all-targets --features cmr-platform-sdl3/bundled-sdl3 -- -D warnings
+      - name: Expose bundled SDL3 runtime to Windows tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sdlDll = Get-ChildItem -Path target -Filter SDL3.dll -File -Recurse | Select-Object -First 1
+          if (-not $sdlDll) {
+            throw "bundled SDL3.dll was not produced by the workspace build"
+          }
+          $sdlDll.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Test (full workspace, bundled SDL3)
         run: cargo test --workspace --features cmr-platform-sdl3/bundled-sdl3
