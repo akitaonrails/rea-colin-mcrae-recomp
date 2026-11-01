@@ -5511,7 +5511,6 @@ impl FrontEndConfig {
         pause.options.cfg_8 = live[8];
         pause.options.effects_master_4f653c = masters.effects_4f653c;
         pause.options.speech_master_4f6538 = masters.master_4f6538;
-        self.returning = true;
     }
 
     /// The music bytes the front-end music reads: the live volume (`+7`) and
@@ -5627,11 +5626,13 @@ fn front_end_frame(
         match effect {
             // The front end's teardown `FUN_004c25a0` saves the record.
             cmr_core::frontend::FrontendEffect::StartRace => {
+                config.returning = true;
                 config.save();
                 session.event_mut().start_race_session();
             }
             cmr_core::frontend::FrontendEffect::StartRallySchool => {
                 config.commit(session.event_mut(), pause);
+                config.returning = true;
                 config.save();
                 session.event_mut().start_school_session();
             }
@@ -14523,5 +14524,26 @@ mod tests {
             "automatic gearbox must upshift out of 1st gear, got gear {}",
             state.gear_43a
         );
+    }
+
+    #[test]
+    fn commit_does_not_abort_camera_handoff_to_race_before_start_race_fires() {
+        let mut config = FrontEndConfig::new("AU1", 0);
+        let mut event = EventState::default();
+        let mut pause = PauseHarness::new();
+
+        // NameEntry or StageSelect commits the record before the camera finishes panning
+        // to the `0x16` race sentinel. `commit` must NOT set `returning = true`, otherwise
+        // the next `front_end_frame` tick would treat the session as returning from a race
+        // and call `resume_to_root`, looping back to the main menu instead of starting the race.
+        config.commit(&mut event, &mut pause);
+        assert!(!config.returning);
+        assert!(!config.resume(&event, &pause));
+
+        // Only once the race handoff actually fires (`StartRace` / `StartRallySchool`)
+        // is `returning` armed so that returning from the race restores the root menu.
+        config.returning = true;
+        assert!(config.resume(&event, &pause));
+        assert!(!config.returning);
     }
 }
