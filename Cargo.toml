@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cmr-app", "crates/cmr-assets", "crates/cmr-core", "crates/cmr-formats", "crates/cmr-gpu-conformance", "crates/cmr-gpu-contract", "crates/cmr-gpu-stage", "crates/cmr-platform-sdl3", "crates/cmr-test-support", "crates/cmr-video", "crates/cmr-video-sdl-gpu", "crates/cmr-video-wgpu"]
+members = ["crates/cmr-app", "crates/cmr-assets", "crates/cmr-core", "crates/cmr-formats", "crates/cmr-gpu-conformance", "crates/cmr-gpu-contract", "crates/cmr-gpu-stage", "crates/cmr-hdpack", "crates/cmr-platform-sdl3", "crates/cmr-test-support", "crates/cmr-video", "crates/cmr-video-sdl-gpu", "crates/cmr-video-wgpu"]
 resolver = "3"
 
 [workspace.package]

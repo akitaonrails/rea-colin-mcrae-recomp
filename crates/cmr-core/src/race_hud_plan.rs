@@ -96,6 +96,20 @@ pub enum RaceHudBitmap {
     WhitePixel,
     CountdownDigits,
     CountdownGo,
+    CarAudi,
+    CarSkoda,
+    CarSeat,
+    CarRs200,
+    CarMitsubishi,
+    CarFord,
+    CarLancia,
+    CarMk2,
+    CarMegane,
+    CarSubaru,
+    CarGolf,
+    CarToyota,
+    CarCelica,
+    CarM4r,
 }
 
 impl RaceHudBitmap {
@@ -114,6 +128,41 @@ impl RaceHudBitmap {
             Self::WhitePixel => "images/osdnew/High/common/white.bmp",
             Self::CountdownDigits => "images/cntdown2.bmp",
             Self::CountdownGo => "images/go!.bmp",
+            Self::CarAudi => "images/osdnew/High/common/audi.bmp",
+            Self::CarSkoda => "images/osdnew/High/common/skoda.bmp",
+            Self::CarSeat => "images/osdnew/High/common/seat.bmp",
+            Self::CarRs200 => "images/osdnew/High/common/rs200.bmp",
+            Self::CarMitsubishi => "images/osdnew/High/common/mitsbshi.bmp",
+            Self::CarFord => "images/osdnew/High/common/ford.bmp",
+            Self::CarLancia => "images/osdnew/High/common/lancia.bmp",
+            Self::CarMk2 => "images/osdnew/High/common/mk2.bmp",
+            Self::CarMegane => "images/osdnew/High/common/megane.bmp",
+            Self::CarSubaru => "images/osdnew/High/common/subaru.bmp",
+            Self::CarGolf => "images/osdnew/High/common/golf.bmp",
+            Self::CarToyota => "images/osdnew/High/common/toyota.bmp",
+            Self::CarCelica => "images/osdnew/High/common/celica.bmp",
+            Self::CarM4r => "images/osdnew/High/common/mr4.bmp",
+        }
+    }
+
+    /// `FUN_00464930`'s selector switch at `0x465653..0x465a26`.
+    #[must_use]
+    pub const fn classification_car(selector: u8) -> Self {
+        match selector {
+            1 => Self::CarSkoda,
+            2 => Self::CarSeat,
+            3 => Self::CarRs200,
+            4 => Self::CarMitsubishi,
+            5 => Self::CarFord,
+            6 => Self::CarLancia,
+            7 => Self::CarMk2,
+            8 => Self::CarMegane,
+            9 => Self::CarSubaru,
+            10 => Self::CarGolf,
+            11 => Self::CarToyota,
+            12 => Self::CarCelica,
+            13 => Self::CarM4r,
+            _ => Self::CarAudi,
         }
     }
 }
@@ -138,6 +187,8 @@ pub struct RaceHudClassificationRow {
     pub code: String,
     /// Whether this row belongs to the active player (`0x57afd4`).
     pub is_player: bool,
+    /// Car/make selector used by the 14-way bitmap switch.
+    pub car_selector: u8,
 }
 
 /// Inputs for the in-race checkpoint HUD layers (`FUN_00464130`, `FUN_00464930`,
@@ -643,8 +694,8 @@ pub fn plan_race_countdown_overlay(
 /// Plans the in-race checkpoint HUD elements (`FUN_00464930`, `FUN_00463080`,
 /// `FUN_0047fe50`):
 /// 1. Top-left 4-row classification table background bars (`0x465446..0x465b23`)
-///    and, once Split 1+ has been crossed, the 4 rank numbers (`placenum.fon`)
-///    and 3-letter driver codes (`result.fon`).
+///    and, once Split 1+ has been crossed, the 4 rank numbers (`placenum.fon`),
+///    3-letter driver codes (`result.fon`), and 64x16 car thumbnails.
 /// 2. Right-side progress-rail completed sector color bars (`white.bmp`) and
 ///    white split tick marks (`hbar.bmp`, `FUN_00463080`).
 /// 3. Bottom-left latched split time (`timenum.fon` at `(28, 404)` in cyan) and
@@ -700,6 +751,13 @@ pub fn plan_race_checkpoint_hud(
                 color: TIMER_COLOR,
                 flags: 0x13,
             });
+            push_bitmap(
+                &mut commands,
+                viewport,
+                RaceHudBitmap::classification_car(row.car_selector),
+                HudRect::new(0, 0, 64, 16),
+                HudRect::new(50, 17 + 19 * (row_idx as i32), 64, 16),
+            );
         }
     }
 
@@ -1192,11 +1250,13 @@ mod tests {
                         rank: 1,
                         code: "MCR".to_owned(),
                         is_player: false,
+                        car_selector: 9,
                     },
                     RaceHudClassificationRow {
                         rank: 2,
                         code: "PLR".to_owned(),
                         is_player: true,
+                        car_selector: 0,
                     },
                 ],
                 player_rank_gained_or_held: true,
@@ -1205,8 +1265,26 @@ mod tests {
                 reference_split_centiseconds: Some(2500),
             },
         );
-        // 4 top-left bars + 2*2 text labels + 1 completed sector bar + 2 split ticks + 2 split texts = 13
-        assert_eq!(cmds.len(), 13);
+        // 4 bars + 2*(rank + code + car) + 1 sector bar + 2 split ticks + 2 split texts.
+        assert_eq!(cmds.len(), 15);
+        assert!(cmds.iter().any(|cmd| matches!(
+            cmd,
+            RaceHudCommand::Bitmap {
+                bitmap: RaceHudBitmap::CarSubaru,
+                source: HudRect {
+                    width: 64,
+                    height: 16,
+                    ..
+                },
+                destination: HudRect {
+                    x: 50,
+                    y: 17,
+                    width: 64,
+                    height: 16
+                },
+                ..
+            }
+        )));
         assert!(cmds.iter().any(|cmd| matches!(
             cmd,
             RaceHudCommand::Text {

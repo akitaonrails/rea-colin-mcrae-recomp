@@ -8,7 +8,7 @@ use cmr_formats::stored_asset::{DecodeError, DecodeLimits, StoredAsset, decode_s
 
 use crate::verify::{join_portable, require_real_directory, sha256};
 use crate::{
-    AssetFile, AssetIndex, AssetProfile, ImportSummary, ResolveError, ReviewedProfile,
+    AssetFile, AssetIndex, AssetProfile, HdPack, ImportSummary, ResolveError, ReviewedProfile,
     SchemaStatus, StorageEncoding, VerificationError, import_state_schema_status,
 };
 
@@ -21,6 +21,7 @@ pub struct AssetStore {
     index: AssetIndex,
     files: BTreeMap<String, AssetFile>,
     limits: DecodeLimits,
+    hd_pack: Option<HdPack>,
 }
 
 #[derive(Debug)]
@@ -166,7 +167,16 @@ impl AssetStore {
             index,
             files,
             limits,
+            hd_pack: None,
         })
+    }
+
+    /// Opt this store into content-addressed HD replacements. The original
+    /// import remains the authenticated fallback for every missing/bad entry.
+    #[must_use]
+    pub fn with_hd_pack(mut self, hd_pack: Option<HdPack>) -> Self {
+        self.hd_pack = hd_pack;
+        self
     }
 
     /// Resolves, re-verifies, and decodes one imported asset. The returned
@@ -201,7 +211,12 @@ impl AssetStore {
                 actual,
             });
         }
-        Ok(payload.unwrap_or(stored))
+        let original = payload.unwrap_or(stored);
+        Ok(self
+            .hd_pack
+            .as_ref()
+            .and_then(|pack| pack.replacement(&original))
+            .unwrap_or(original))
     }
 }
 

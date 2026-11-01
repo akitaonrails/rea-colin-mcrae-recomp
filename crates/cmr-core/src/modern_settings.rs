@@ -487,6 +487,8 @@ pub struct ModernSettings {
     pub texture_filter: TextureFilterMode,
     pub msaa: AntiAliasingMode,
     pub upscaling: UpscalingMode,
+    /// Use the optional content-addressed HD art pack when it is installed.
+    pub hd_art: bool,
     pub modern_gamepad: bool,
     pub rumble: bool,
 }
@@ -511,6 +513,7 @@ impl ModernSettings {
                 texture_filter: TextureFilterMode::Anisotropic16x,
                 msaa: AntiAliasingMode::Msaa4x,
                 upscaling: UpscalingMode::CasSharpening,
+                hd_art: false,
                 modern_gamepad: true,
                 rumble: true,
             },
@@ -524,6 +527,7 @@ impl ModernSettings {
                 texture_filter: TextureFilterMode::Anisotropic8x,
                 msaa: AntiAliasingMode::Msaa2x,
                 upscaling: UpscalingMode::CasSharpening,
+                hd_art: false,
                 modern_gamepad: true,
                 rumble: true,
             },
@@ -537,6 +541,7 @@ impl ModernSettings {
                 texture_filter: TextureFilterMode::Anisotropic16x,
                 msaa: AntiAliasingMode::Msaa4x,
                 upscaling: UpscalingMode::CasSharpening,
+                hd_art: false,
                 modern_gamepad: true,
                 rumble: true,
             },
@@ -550,6 +555,7 @@ impl ModernSettings {
                 texture_filter: TextureFilterMode::Nearest1998,
                 msaa: AntiAliasingMode::Off,
                 upscaling: UpscalingMode::Native,
+                hd_art: false,
                 modern_gamepad: true,
                 rumble: false,
             },
@@ -563,8 +569,10 @@ impl ModernSettings {
             return;
         }
         let modern_gamepad = self.modern_gamepad;
+        let hd_art = self.hd_art;
         *self = Self::from_preset(preset);
         self.modern_gamepad = modern_gamepad;
+        self.hd_art = hd_art;
     }
 
     /// Recompute whether the current fields match a known preset or `Custom`.
@@ -578,6 +586,7 @@ impl ModernSettings {
             let mut reference = Self::from_preset(candidate);
             reference.modern_gamepad = self.modern_gamepad;
             reference.rumble = self.rumble;
+            reference.hd_art = self.hd_art;
             let mut current = *self;
             current.preset = candidate;
             if current == reference {
@@ -673,6 +682,7 @@ impl ModernSettings {
              texture_filter={}\n\
              msaa={}\n\
              upscaling={}\n\
+             hd_art={}\n\
              modern_gamepad={}\n\
              rumble={}\n",
             self.preset.index(),
@@ -684,6 +694,7 @@ impl ModernSettings {
             self.texture_filter.index(),
             self.msaa.index(),
             self.upscaling.index(),
+            u8::from(self.hd_art),
             u8::from(self.modern_gamepad),
             u8::from(self.rumble),
         )
@@ -715,6 +726,7 @@ impl ModernSettings {
                 "texture_filter" => settings.texture_filter = TextureFilterMode::from_index(num),
                 "msaa" => settings.msaa = AntiAliasingMode::from_index(num),
                 "upscaling" => settings.upscaling = UpscalingMode::from_index(num),
+                "hd_art" => settings.hd_art = num != 0,
                 "modern_gamepad" => settings.modern_gamepad = num != 0,
                 "rumble" => settings.rumble = num != 0,
                 _ => {}
@@ -732,6 +744,7 @@ mod tests {
     fn round_trip_serialization_preserves_every_field() {
         let mut s = ModernSettings::from_preset(ModernPreset::Ultra4K);
         s.fps_limit = FpsLimit::Fps120;
+        s.hd_art = true;
         s.refresh_preset_tag();
         assert_eq!(s.preset, ModernPreset::Custom);
         let text = s.to_config_string();

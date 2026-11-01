@@ -2138,8 +2138,9 @@ reconstructed `FUN_004620f0`/`FUN_00462230`/`FUN_00462b70` `.cat` checkpoint
 gate progression (`StageProgress` ignoring the `CAT[0]` start-line split bit,
 testing forward crossing before regression, and finishing only at `cursor >=
 nodes.len()`, eliminating premature stage finishes at Split 7), `FUN_00464930`
-top-left 4-row driver classification bars/ranks/3-letter codes (`white.bmp`,
-`placenum.fon`, `result.fon`), `FUN_00463080` right progress-rail sector bars
+top-left 4-row driver classification bars/ranks/3-letter codes and 14 exact
+64x16 car/make thumbnails (`white.bmp`, `placenum.fon`, `result.fon`, and the
+`osdnew/High/common` car bitmaps), `FUN_00463080` right progress-rail sector bars
 and split tick marks, `FUN_0047fe50` bottom-left latched split time and
 top-center split delta (`plan_race_checkpoint_hud`), `FUN_004088c0` forward-axis
 `driven_smoothing.scalars.longitudinal` (`dot(velocity, basis[0])` instead of

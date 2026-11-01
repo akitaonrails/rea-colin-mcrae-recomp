@@ -1,0 +1,10 @@
+[package]
+name = "cmr-hdpack"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+png = "0.18"
+image = { version = "0.25", default-features = false, features = ["png", "webp"] }

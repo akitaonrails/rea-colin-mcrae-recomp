@@ -13,6 +13,7 @@ mod compiled_initializer_store;
 mod engine_audio_tables_import;
 mod engine_audio_tables_profile;
 mod engine_audio_tables_store;
+mod hd_pack;
 mod import;
 mod path;
 mod profile;
@@ -87,6 +88,7 @@ pub use engine_audio_tables_profile::{
     ReviewedEngineAudioTablesProfileError,
 };
 pub use engine_audio_tables_store::{EngineAudioTablesStore, EngineAudioTablesStoreError};
+pub use hd_pack::{HdPack, HdPackError, HdScale};
 pub use import::{ImportError, ImportSummary, import_source};
 pub use path::normalize_relative_path;
 pub use profile::{

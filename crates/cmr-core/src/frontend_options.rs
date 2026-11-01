@@ -131,6 +131,7 @@ pub mod modern_text {
     pub const LABEL_UPSCALING: i32 = 0x307;
     pub const LABEL_RUMBLE: i32 = 0x308;
     pub const LABEL_VSYNC: i32 = 0x309;
+    pub const LABEL_HD_ART: i32 = 0x30a;
 
     pub const fn lookup(text_id: i32) -> Option<&'static [u8]> {
         match text_id {
@@ -143,6 +144,7 @@ pub mod modern_text {
             LABEL_UPSCALING => Some(b"UPSCALING"),
             LABEL_RUMBLE => Some(b"RUMBLE"),
             LABEL_VSYNC => Some(b"VSYNC"),
+            LABEL_HD_ART => Some(b"HD ART PACK"),
             _ => None,
         }
     }
@@ -191,6 +193,7 @@ pub mod key {
     pub const MODERN_DRAW_DISTANCE: i32 = 0x34;
     pub const MODERN_MSAA: i32 = 0x35;
     pub const MODERN_UPSCALING: i32 = 0x36;
+    pub const MODERN_HD_ART: i32 = 0x37;
 }
 
 /// The display hardware the advanced graphics rules ask about.
@@ -783,6 +786,11 @@ impl OptionsScreens {
                 true,
                 0,
             ),
+            toggle(
+                modern_text::LABEL_HD_ART,
+                key::MODERN_HD_ART,
+                settings.hd_art,
+            ),
             back(0xdf, 0),
         ];
         advanced.selected = 0;
@@ -805,6 +813,7 @@ impl OptionsScreens {
             key::MODERN_DRAW_DISTANCE,
             settings.draw_distance.index(),
         );
+        set_value(menu, key::MODERN_HD_ART, i32::from(settings.hd_art));
     }
 
     /// The row screens' templates.
@@ -1098,6 +1107,7 @@ impl OptionsScreens {
             self.modern.texture_filter = TextureFilterMode::from_index(value(menu, key::TEXTURES));
             self.modern.draw_distance =
                 DrawDistanceScale::from_index(value(menu, key::MODERN_DRAW_DISTANCE));
+            self.modern.hd_art = value(menu, key::MODERN_HD_ART) != 0;
             self.modern.refresh_preset_tag();
             self.modern.apply_to_legacy_record(img, false);
             if self.modern != old {
@@ -1444,8 +1454,8 @@ mod tests {
         let adv_id = options.id(OptionScreen::Advanced);
         let adv = set.menu_mut(adv_id);
         assert!(adv.find(key::DEVICE).is_none());
-        assert_eq!(adv.items.len(), 6);
-        assert_eq!(adv.items[5].kind, ItemKind::Back);
+        assert_eq!(adv.items.len(), 7);
+        assert_eq!(adv.items[6].kind, ItemKind::Back);
         options.enter(OptionScreen::Advanced, 0, adv, &img, &caps());
         set_value(adv, key::SMOOTHNESS, 0);
         set_value(adv, key::MODERN_MSAA, AntiAliasingMode::Msaa8x.index());
@@ -1464,6 +1474,7 @@ mod tests {
             key::MODERN_DRAW_DISTANCE,
             DrawDistanceScale::Ultra3x.index(),
         );
+        set_value(adv, key::MODERN_HD_ART, 1);
         effects.clear();
         options.commit(OptionScreen::Advanced, adv, &mut img, &caps(), &mut effects);
         assert_eq!(options.modern.preset, ModernPreset::Custom);
@@ -1475,6 +1486,7 @@ mod tests {
             TextureFilterMode::Anisotropic16x
         );
         assert_eq!(options.modern.draw_distance, DrawDistanceScale::Ultra3x);
+        assert!(options.modern.hd_art);
         assert!(effects.contains(&OptionsEffect::ModernChanged(options.modern)));
 
         // Returning to Graphics shows PRESET as Custom.

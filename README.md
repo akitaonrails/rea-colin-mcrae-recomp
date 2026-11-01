@@ -132,6 +132,10 @@ cargo run --release -p cmr-app -- \
 and car, while selecting a country/stage/car in the in-game menus dynamically
 loads the chosen stage and vehicle from your runtime-data store.)*
 
+The optional sibling-project HD texture pack is documented in
+[`docs/HD_ART.md`](docs/HD_ART.md). After installing it under the selected
+runtime-data root, opt in at **Settings → Graphics → Advanced → HD ART PACK**.
+
 ---
 
 ## Controls

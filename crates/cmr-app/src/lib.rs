@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 
 use cmr_assets::{
     AssetStore, AssetStoreError, CarSelectorStore, CarSelectorStoreError, CompiledInitializerStore,
-    CompiledInitializerStoreError, EngineAudioTablesStore, EngineAudioTablesStoreError,
-    ReviewedCarSelectorProfile, ReviewedCarSelectorProfileError,
+    CompiledInitializerStoreError, EngineAudioTablesStore, EngineAudioTablesStoreError, HdPack,
+    HdScale, ReviewedCarSelectorProfile, ReviewedCarSelectorProfileError,
     ReviewedCompiledInitializerProfile, ReviewedCompiledInitializerProfileError,
     ReviewedEngineAudioTablesProfile, ReviewedEngineAudioTablesProfileError, ReviewedProfile,
     ReviewedProfileError, ReviewedSurfaceAudioTablesProfile, ReviewedSurfaceCapabilityProfile,
@@ -2228,6 +2228,7 @@ pub struct RaceHudAssets {
     time_numbers: BitmapFont,
     place_numbers: BitmapFont,
     result_font: BitmapFont,
+    classification_cars: [IndexedBitmap; 14],
 }
 
 impl RaceHudAssets {
@@ -2266,6 +2267,22 @@ impl RaceHudAssets {
             time_numbers,
             place_numbers,
             result_font,
+            classification_cars: [
+                load_race_hud_bitmap(store, RaceHudBitmap::CarAudi)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarSkoda)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarSeat)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarRs200)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarMitsubishi)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarFord)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarLancia)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarMk2)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarMegane)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarSubaru)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarGolf)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarToyota)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarCelica)?,
+                load_race_hud_bitmap(store, RaceHudBitmap::CarM4r)?,
+            ],
         })
     }
 
@@ -2285,6 +2302,20 @@ impl RaceHudAssets {
             RaceHudBitmap::WhitePixel => &self.white_pixel,
             RaceHudBitmap::CountdownDigits => &self.countdown_digits,
             RaceHudBitmap::CountdownGo => &self.countdown_go,
+            RaceHudBitmap::CarAudi => &self.classification_cars[0],
+            RaceHudBitmap::CarSkoda => &self.classification_cars[1],
+            RaceHudBitmap::CarSeat => &self.classification_cars[2],
+            RaceHudBitmap::CarRs200 => &self.classification_cars[3],
+            RaceHudBitmap::CarMitsubishi => &self.classification_cars[4],
+            RaceHudBitmap::CarFord => &self.classification_cars[5],
+            RaceHudBitmap::CarLancia => &self.classification_cars[6],
+            RaceHudBitmap::CarMk2 => &self.classification_cars[7],
+            RaceHudBitmap::CarMegane => &self.classification_cars[8],
+            RaceHudBitmap::CarSubaru => &self.classification_cars[9],
+            RaceHudBitmap::CarGolf => &self.classification_cars[10],
+            RaceHudBitmap::CarToyota => &self.classification_cars[11],
+            RaceHudBitmap::CarCelica => &self.classification_cars[12],
+            RaceHudBitmap::CarM4r => &self.classification_cars[13],
         }
     }
 
@@ -2383,6 +2414,8 @@ pub struct StageRenderResources {
     palette: [PaletteEntry; 256],
     projection: (f32, f32, f32, f32),
     modern_settings: Option<cmr_core::modern_settings::ModernSettings>,
+    hd_pack: Option<HdPack>,
+    hd_selection: Option<(bool, HdScale)>,
     node_count: usize,
     draw_ops: usize,
     choice: StageRendererChoice,
@@ -2496,6 +2529,8 @@ impl StageRenderResources {
                 ROOT_EXTENT.height,
             ),
             modern_settings: None,
+            hd_pack: None,
+            hd_selection: None,
             node_count,
             draw_ops,
             choice,
@@ -2587,6 +2622,111 @@ impl StageRenderResources {
         ));
         if let Some(gpu) = self.gpu.as_mut() {
             gpu.configure_modern(modern);
+        }
+    }
+
+    /// Apply the optional compact HD pack to every retained `BM` texture in
+    /// the stage/object/scenery/horizon/car C3D resources. A missing or bad
+    /// pack is an intentional fail-open path back to authenticated originals.
+    pub fn sync_hd_art(
+        &mut self,
+        runtime_data: &Path,
+        modern: cmr_core::modern_settings::ModernSettings,
+    ) {
+        let (width, height) = modern.resolution.dimensions();
+        let scale = HdScale::for_output(width, height);
+        let selection = (modern.hd_art, scale);
+        if self.hd_selection == Some(selection) {
+            return;
+        }
+        self.hd_selection = Some(selection);
+        let requested = if modern.hd_art {
+            match HdPack::open(&runtime_data.join("hd-pack"), scale) {
+                Ok(pack) => Some(pack),
+                Err(error) => {
+                    eprintln!("cmr-app: HD art pack unavailable; using originals ({error})");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let prepare = |scene: &C3dFile, pack: Option<&HdPack>| {
+            StageC3dTextures::prepare_with_hd_pack(scene, BitmapLimits::default(), pack)
+        };
+        let rebuild = || -> Result<_, StageC3dTextureError> {
+            Ok((
+                prepare(self.bundle.scene(), requested.as_ref())?,
+                self.bundle
+                    .objects()
+                    .map(|scene| prepare(scene, requested.as_ref()))
+                    .transpose()?,
+                self.bundle
+                    .scenery()
+                    .map(|scene| prepare(scene, requested.as_ref()))
+                    .transpose()?,
+                self.bundle
+                    .horizon()
+                    .map(|scene| prepare(scene, requested.as_ref()))
+                    .transpose()?,
+                self.car_scene
+                    .as_ref()
+                    .map(|scene| prepare(scene, requested.as_ref()))
+                    .transpose()?,
+            ))
+        };
+        match rebuild() {
+            Ok((stage, objects, scenery, horizon, car)) => {
+                if let Some(pack) = requested.as_ref() {
+                    eprintln!(
+                        "cmr-app: HD art enabled ({scale:?}, {} replacements)",
+                        pack.replacement_count()
+                    );
+                }
+                self.textures = stage;
+                self.object_textures = objects;
+                self.scenery_textures = scenery;
+                self.horizon_textures = horizon;
+                self.car_textures = car;
+                self.hd_pack = requested;
+                if let Err(error) = self.rebuild_gpu_foreground() {
+                    eprintln!("cmr-app: cannot rebuild renderer for HD art ({error})");
+                }
+            }
+            Err(error) => {
+                eprintln!("cmr-app: HD art decode failed; restoring original textures ({error})");
+                self.hd_pack = None;
+                if let Ok((stage, objects, scenery, horizon, car)) = (|| {
+                    Ok::<_, StageC3dTextureError>((
+                        prepare(self.bundle.scene(), None)?,
+                        self.bundle
+                            .objects()
+                            .map(|scene| prepare(scene, None))
+                            .transpose()?,
+                        self.bundle
+                            .scenery()
+                            .map(|scene| prepare(scene, None))
+                            .transpose()?,
+                        self.bundle
+                            .horizon()
+                            .map(|scene| prepare(scene, None))
+                            .transpose()?,
+                        self.car_scene
+                            .as_ref()
+                            .map(|scene| prepare(scene, None))
+                            .transpose()?,
+                    ))
+                })() {
+                    self.textures = stage;
+                    self.object_textures = objects;
+                    self.scenery_textures = scenery;
+                    self.horizon_textures = horizon;
+                    self.car_textures = car;
+                    if let Err(error) = self.rebuild_gpu_foreground() {
+                        eprintln!("cmr-app: cannot rebuild original renderer ({error})");
+                    }
+                }
+            }
         }
     }
 
@@ -2749,8 +2889,12 @@ impl StageRenderResources {
         let path = format!("Game/{relative}");
         let bytes = store.load(&path).map_err(StageFrameError::CarAsset)?;
         let scene = parse_c3d(&bytes, C3dLimits::default()).map_err(StageFrameError::CarScene)?;
-        let textures = StageC3dTextures::prepare(&scene, BitmapLimits::default())
-            .map_err(StageFrameError::Texture)?;
+        let textures = StageC3dTextures::prepare_with_hd_pack(
+            &scene,
+            BitmapLimits::default(),
+            self.hd_pack.as_ref(),
+        )
+        .map_err(StageFrameError::Texture)?;
         self.car_scene_pristine = Some(scene.clone());
         self.car_scene = Some(scene);
         self.car_textures = Some(textures);
@@ -4308,6 +4452,15 @@ fn build_race_checkpoint_hud_inputs(
                 rank,
                 code,
                 is_player,
+                car_selector: if is_player {
+                    live.get(0xb6).copied().unwrap_or_default() & 0x0f
+                } else {
+                    results
+                        .logos
+                        .get(usize::from(slot))
+                        .copied()
+                        .unwrap_or_default()
+                },
             });
         }
     }
@@ -6244,6 +6397,7 @@ fn advance_game_frame<C: HostClock>(
             true,
         );
         resources.set_object_locals(session.moving_object_node_locals_interpolated(alpha_q16));
+        resources.sync_hd_art(&results.runtime_data, config.modern);
         resources.sync_modern_settings(config.modern);
         let world = resources
             .compose_with_posed_car(&camera_world, Some(&car_world), &wheels)
@@ -9472,6 +9626,7 @@ fn reload_stage_for_event<'a>(
     reload_changed_stage(
         session, resources, progress, audio, camera, loaded, context, setup,
     )?;
+    resources.sync_hd_art(context.runtime_data, config.modern);
     resources.sync_modern_settings(config.modern);
     // The car load reloads the model and sets its parts up afresh
     // (`FUN_00480e60`, `FUN_0041efe0`); the model index is `cfg[0xb6]`'s.
@@ -10360,6 +10515,7 @@ pub fn run_windowed_game_session(
     // keyboard device records (`FUN_0049d6e0`); player 1 drives from record 0.
     root_interaction.install_keyboard_record(&config.image);
     root_interaction.enable_modern_mode(config.modern);
+    resources.sync_hd_art(runtime_data, config.modern);
     resources.sync_modern_settings(config.modern);
     let mut keyboard = KeyboardDriver::new(
         root_interaction.screens().controls().keyboards[0],

@@ -1143,7 +1143,16 @@ impl StageC3dTextures {
         scene: &C3dFile,
         bitmap_limits: BitmapLimits,
     ) -> Result<Self, StageC3dTextureError> {
-        Self::prepare_with_animation_frames(scene, bitmap_limits, &[])
+        Self::prepare_with_hd_pack(scene, bitmap_limits, None)
+    }
+
+    /// Prepare textures with optional content-addressed HD bitmap replacements.
+    pub fn prepare_with_hd_pack(
+        scene: &C3dFile,
+        bitmap_limits: BitmapLimits,
+        hd_pack: Option<&cmr_assets::HdPack>,
+    ) -> Result<Self, StageC3dTextureError> {
+        Self::prepare_with_animation_frames_and_hd_pack(scene, bitmap_limits, &[], hd_pack)
     }
 
     /// Prepare materials with a caller-selected frame per `ANIM` ordinal.
@@ -1152,6 +1161,20 @@ impl StageC3dTextures {
         scene: &C3dFile,
         bitmap_limits: BitmapLimits,
         animation_frames: &[usize],
+    ) -> Result<Self, StageC3dTextureError> {
+        Self::prepare_with_animation_frames_and_hd_pack(
+            scene,
+            bitmap_limits,
+            animation_frames,
+            None,
+        )
+    }
+
+    fn prepare_with_animation_frames_and_hd_pack(
+        scene: &C3dFile,
+        bitmap_limits: BitmapLimits,
+        animation_frames: &[usize],
+        hd_pack: Option<&cmr_assets::HdPack>,
     ) -> Result<Self, StageC3dTextureError> {
         let mut by_ordinal = Vec::with_capacity(scene.blob_records().len());
         for (ordinal, record) in scene.blob_records().enumerate() {
@@ -1177,9 +1200,19 @@ impl StageC3dTextures {
                         frame_count,
                     })?
                     .target();
-                by_ordinal.push(Self::sample_material(target, ordinal, bitmap_limits)?);
+                by_ordinal.push(Self::sample_material(
+                    target,
+                    ordinal,
+                    bitmap_limits,
+                    hd_pack,
+                )?);
             } else {
-                by_ordinal.push(Self::sample_material(record, ordinal, bitmap_limits)?);
+                by_ordinal.push(Self::sample_material(
+                    record,
+                    ordinal,
+                    bitmap_limits,
+                    hd_pack,
+                )?);
             }
         }
         Ok(StageC3dTextures { by_ordinal })
@@ -1189,19 +1222,23 @@ impl StageC3dTextures {
         record: cmr_formats::c3d::C3dBlobRecord<'_>,
         ordinal: usize,
         bitmap_limits: BitmapLimits,
+        hd_pack: Option<&cmr_assets::HdPack>,
     ) -> Result<Option<SoftwareC3dSampledTexture>, StageC3dTextureError> {
         match record
             .classify_resource()
             .map_err(|source| StageC3dTextureError::Classify { ordinal, source })?
         {
-            C3dResourceView::BitmapBytes(bytes) => Ok(Some(
-                SoftwareC3dSampledTexture::from_bm_blob(
-                    bytes,
-                    FrontendC3dOwner::Stage,
-                    bitmap_limits,
-                )
-                .map_err(|source| StageC3dTextureError::Bitmap { ordinal, source })?,
-            )),
+            C3dResourceView::BitmapBytes(bytes) => {
+                let replacement = hd_pack.and_then(|pack| pack.replacement(bytes));
+                Ok(Some(
+                    SoftwareC3dSampledTexture::from_bm_blob(
+                        replacement.as_deref().unwrap_or(bytes),
+                        FrontendC3dOwner::Stage,
+                        bitmap_limits,
+                    )
+                    .map_err(|source| StageC3dTextureError::Bitmap { ordinal, source })?,
+                ))
+            }
             C3dResourceView::Unknown(_) => Ok(record.engine_bitmap().ok().and_then(|bitmap| {
                 SoftwareC3dSampledTexture::from_engine_bitmap(&bitmap, FrontendC3dOwner::Stage).ok()
             })),
