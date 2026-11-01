@@ -37,6 +37,13 @@ for artifact in \
   target/release/cmr-app \
   target/release/cmr-app.exe \
   target/x86_64-pc-windows-gnu/release/cmr-app.exe; do
+  # MSYS2's filesystem predicates transparently try an .exe suffix. Without
+  # this guard, `-f target/release/cmr-app` succeeds on GitHub's Windows runner
+  # even though only cmr-app.exe exists, and objdump is then given a path that
+  # the native Windows executable cannot resolve.
+  if [[ "$artifact" != *.exe && -f "${artifact}.exe" ]]; then
+    continue
+  fi
   [[ -f "$artifact" ]] || continue
   checked=$((checked + 1))
   if [[ "$(head -c 2 "$artifact")" == "MZ" ]]; then
