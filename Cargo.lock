@@ -139,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cmr-assets",
  "cmr-core",
@@ -157,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-assets"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cmr-formats",
  "cmr-hdpack",
@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cmr-assets",
  "cmr-formats",
@@ -181,14 +181,14 @@ dependencies = [
 
 [[package]]
 name = "cmr-formats"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
 ]
 
 [[package]]
 name = "cmr-gpu-conformance"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cmr-core",
  "cmr-formats",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-gpu-contract"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cmr-core",
  "cmr-formats",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-gpu-stage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cmr-core",
  "cmr-formats",
@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-hdpack"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
  "png",
@@ -227,7 +227,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-platform-sdl3"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cmr-core",
  "cmr-video",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-test-support"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cmr-assets",
  "cmr-core",
@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-video"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cmr-assets",
  "cmr-core",
@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-video-sdl-gpu"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cmr-core",
  "cmr-formats",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-video-wgpu"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cmr-core",
  "cmr-formats",

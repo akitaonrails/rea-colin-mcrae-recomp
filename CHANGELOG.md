@@ -2,7 +2,15 @@
 
 All notable user-visible changes to this project are documented here.
 
-## [Unreleased]
+## [0.1.1] - 2026-11-07
+
+### Fixed
+
+- The Windows ZIP now bundles `vcruntime140.dll`, the Microsoft Visual C++
+  runtime that both programs and `SDL3.dll` import. A clean Windows 10 or 11
+  installation does not include it, so the previous ZIP could fail to start
+  with "VCRUNTIME140.dll was not found". Microsoft's redistributable licence
+  allows bundling it.
 
 ## [0.1.0] - 2026-11-01
 

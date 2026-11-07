@@ -67,7 +67,8 @@ Tagged modern releases publish two data-free x86-64 artifacts:
 - a Linux AppImage containing `cmr-app`, the `cmr-assets` importer, SDL3, and
   reviewed metadata profiles;
 - a Windows ZIP containing `cmr-app-modern.exe`, `cmr-assets.exe`, `SDL3.dll`,
-  and the same profiles.
+  `vcruntime140.dll` (Microsoft's Visual C++ runtime, which both programs and
+  SDL3 import), and the same profiles.
 
 Download them from [GitHub Releases](https://github.com/akitaonrails/rea-colin-mcrae-recomp/releases)
 and verify `SHA256SUMS.txt`. Release archives never contain the original game,

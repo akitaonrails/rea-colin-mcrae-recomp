@@ -9,7 +9,7 @@ not mixed into a modern release artifact.
 | Platform | Artifact | Included |
 | --- | --- | --- |
 | Linux | `Colin-McRae-Rally-Modern-vX.Y.Z-x86_64.AppImage` | `cmr-app`, `cmr-assets`, bundled SDL3, reviewed JSON profiles, release documentation |
-| Windows | `Colin-McRae-Rally-Modern-vX.Y.Z-windows-x86_64.zip` | `cmr-app-modern.exe`, `cmr-assets.exe`, `SDL3.dll`, reviewed JSON profiles, release documentation |
+| Windows | `Colin-McRae-Rally-Modern-vX.Y.Z-windows-x86_64.zip` | `cmr-app-modern.exe`, `cmr-assets.exe`, `SDL3.dll`, `vcruntime140.dll` (Microsoft's Visual C++ runtime), reviewed JSON profiles, release documentation |
 
 Original executables, media, imported `runtime-data/`, save files, REA output,
 and the optional HD pack are forbidden from release artifacts. The workflow

@@ -33,10 +33,10 @@ the README, using absolute paths.
 
 ## Windows ZIP
 
-Extract the complete ZIP before running it; keep `SDL3.dll` beside the two
-executables. Run `cmr-assets.exe` from PowerShell or Command Prompt for the
-one-time import, then launch `cmr-app-modern.exe` with the documented game
-session arguments.
+Extract the complete ZIP before running it; keep `SDL3.dll` and
+`vcruntime140.dll` beside the two executables. Run `cmr-assets.exe` from
+PowerShell or Command Prompt for the one-time import, then launch
+`cmr-app-modern.exe` with the documented game session arguments.
 
 `--renderer auto` is the recommended default on both platforms. It discovers
 available native graphics APIs and compatible adapters at runtime, including

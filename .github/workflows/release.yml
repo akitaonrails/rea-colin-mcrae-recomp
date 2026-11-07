@@ -104,6 +104,14 @@ jobs:
           SDL_DLL=$(find target/release/build -type f -iname SDL3.dll -print -quit)
           test -n "$SDL_DLL"
           cp "$SDL_DLL" "$STAGE/SDL3.dll"
+          # The Rust MSVC build and SDL3.dll import VCRUNTIME140.dll, which a
+          # clean Windows 10/11 does not ship (it comes with the VC++
+          # redistributable). Bundle it so the ZIP runs out of the box;
+          # Microsoft's redistributable licence allows this.
+          VCRT=$(find "/c/Program Files/Microsoft Visual Studio" "/c/Program Files (x86)/Microsoft Visual Studio" -type f -iname 'vcruntime140.dll' -path '*/x64/*' 2>/dev/null | head -n 1)
+          [ -n "$VCRT" ] || VCRT="/c/Windows/System32/vcruntime140.dll"
+          test -f "$VCRT"
+          cp "$VCRT" "$STAGE/vcruntime140.dll"
           cp profiles/*.json "$STAGE/profiles/"
           cp README.md CONTRIBUTING.md CHANGELOG.md packaging/RELEASE.md "$STAGE/docs/"
           python scripts/collect-third-party-licenses.py "$STAGE/docs/third-party-licenses"
