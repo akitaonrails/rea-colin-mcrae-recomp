@@ -3265,6 +3265,10 @@ impl StageRenderResources {
             precipitation,
             sky_overlay,
             sparks: cmr_core::car_particles::CollisionSparkSystem::new(),
+            lightning: cmr_core::weather::LightningFlashState::new(
+                weather.weather_type,
+                weather.detail,
+            ),
         });
     }
 
@@ -3481,11 +3485,12 @@ impl StageRenderResources {
         particles
             .precipitation
             .tick(camera_pos, camera_fwd, rng, trig);
+        particles.lightning.tick(rng);
     }
 
-    /// Composite clear-day sun/halo/lens-flare (`FUN_00483300..FUN_00483f60`) or
-    /// clear-night moon/stars (`FUN_00484eb0`) additively over the world frame
-    /// and under the race HUD (`0x47aa35..0x47aa7f`).
+    /// Composite clear-day sun/halo/lens-flare (`FUN_00483300..FUN_00483f60`),
+    /// clear-night moon/stars (`FUN_00484eb0`), and storm lightning flashes
+    /// (`FUN_0048cf20`) additively over the world frame and under the race HUD.
     fn composite_sky_overlay(
         &self,
         frame: SoftwarePresentedFrame,
@@ -3504,7 +3509,8 @@ impl StageRenderResources {
             enabled,
             twinkle_phase,
         );
-        if sprites.is_empty() {
+        let flash_alpha = particles.lightning.current_alpha();
+        if sprites.is_empty() && flash_alpha == 0 {
             return frame;
         }
         let w = usize::from(extent.width);
@@ -3561,6 +3567,14 @@ impl StageRenderResources {
                     rgba8[off + 2] =
                         rgba8[off + 2].saturating_add(((u32::from(c.blue) * alpha) >> 8) as u8);
                 }
+            }
+        }
+        if flash_alpha > 0 {
+            let boost = (u32::from(flash_alpha) * 3 / 4).min(255) as u8;
+            for px in rgba8.as_chunks_mut::<4>().0 {
+                px[0] = px[0].saturating_add(boost);
+                px[1] = px[1].saturating_add(boost);
+                px[2] = px[2].saturating_add(boost);
             }
         }
         let Ok(out) =
@@ -6031,6 +6045,8 @@ struct StageParticles {
     /// Barrier/scenery impact collision sparks (`FUN_0041a900` / `FUN_0041a960` /
     /// `FUN_0041ab00`).
     sparks: cmr_core::car_particles::CollisionSparkSystem,
+    /// Heavy-storm lightning flash (`FUN_0048cec0` / `FUN_0048cf20`).
+    lightning: cmr_core::weather::LightningFlashState,
 }
 
 struct SkyOverlayAssets {

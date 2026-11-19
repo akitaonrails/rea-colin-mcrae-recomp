@@ -846,6 +846,78 @@ impl SkyOverlayState {
     }
 }
 
+/// Two 6-tick storm lightning flash alpha envelopes initialized by
+/// `FUN_0048cec0` (`0x48cec0..0x48cf1a` -> `0x82a334..0x82a33f`):
+/// - Pattern 0: double-flash `[60, 100, 140, 180, 0, 180]`
+/// - Pattern 1: single-flash `[60, 100, 140, 180, 0, 0]`
+pub const LIGHTNING_FLASH_PATTERNS: [[u8; 6]; 2] = [
+    [0x3c, 0x64, 0x8c, 0xb4, 0x00, 0xb4],
+    [0x3c, 0x64, 0x8c, 0xb4, 0x00, 0x00],
+];
+
+/// Heavy-storm lightning flash controller reconstructing `FUN_0048cec0` and
+/// `FUN_0048cf20` (`weather_detail == 3` in rain/snow).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LightningFlashState {
+    enabled: bool,
+    flashing: bool,
+    pattern: usize,
+    timer: i16,
+    current_alpha: u8,
+}
+
+impl LightningFlashState {
+    /// Initialize storm lightning (`FUN_0048b960` at `0x48b9f8` -> `FUN_0048cec0`).
+    #[must_use]
+    pub const fn new(weather_type: u32, detail: u32) -> Self {
+        let enabled = (weather_type == 3 || weather_type == 4) && detail >= 3;
+        Self {
+            enabled,
+            flashing: false,
+            pattern: 0,
+            // Start with an initial wait (~120 ticks = ~5 s) before the first strike.
+            timer: 120,
+            current_alpha: 0,
+        }
+    }
+
+    /// Current white additive flash alpha (`0..=0xb4`).
+    #[must_use]
+    pub const fn current_alpha(&self) -> u8 {
+        self.current_alpha
+    }
+
+    /// Advance one 25 Hz tick (`FUN_0048cf20`) and return the active flash alpha.
+    pub fn tick(&mut self, rng: &mut crate::game_rng::GameLcg) -> u8 {
+        if !self.enabled {
+            self.current_alpha = 0;
+            return 0;
+        }
+        if self.flashing {
+            let idx = (self.timer.clamp(0, 5)) as usize;
+            self.current_alpha = LIGHTNING_FLASH_PATTERNS[self.pattern][idx];
+            self.timer -= 1;
+            if self.timer < 0 {
+                self.flashing = false;
+                // `0x48cf77..0x48cf9c`: wait `500..=625` ticks (`0x1f4 + rand * 0x7d`).
+                let extra = ((i64::from(rng.next_raw() & 0x7fff) * 0x7d) / 0x7fff) as i16;
+                self.timer = 0x1f4 + extra;
+            }
+        } else {
+            self.current_alpha = 0;
+            self.timer -= 1;
+            if self.timer < 0 {
+                self.flashing = true;
+                // `0x48d00a..0x48d019`: select single- or double-flash pattern.
+                self.pattern = usize::from((rng.next_raw() & 0x7fff) >= 0x4000);
+                // `0x48d02f`: 6-tick envelope (`5..=0`).
+                self.timer = 5;
+            }
+        }
+        self.current_alpha
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1044,5 +1116,29 @@ mod tests {
         // Rainy weather (weather_type == 3) -> no sun/moon/stars.
         let rainy = SkyOverlayState::new(3, 2, Some([0, 0x6000, 0x1_0000]), &mut rng, &trig);
         assert!(rainy.plan(&identity_cam, 640, 480, true, 0).is_empty());
+    }
+
+    #[test]
+    fn lightning_flash_fires_6_tick_envelope_only_in_heavy_storms() {
+        let mut rng = crate::game_rng::GameLcg::new(11);
+        let mut dry = LightningFlashState::new(1, 3);
+        for _ in 0..300 {
+            assert_eq!(dry.tick(&mut rng), 0);
+        }
+        let mut light_rain = LightningFlashState::new(3, 2);
+        for _ in 0..300 {
+            assert_eq!(light_rain.tick(&mut rng), 0);
+        }
+        let mut storm = LightningFlashState::new(3, 3);
+        let mut saw_peak = false;
+        for _ in 0..200 {
+            if storm.tick(&mut rng) == 0xb4 {
+                saw_peak = true;
+            }
+        }
+        assert!(
+            saw_peak,
+            "heavy storm must trigger 0xb4 lightning flash peak"
+        );
     }
 }

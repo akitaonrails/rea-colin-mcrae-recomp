@@ -19875,13 +19875,18 @@
       "size": 96,
       "name": "FUN_0048cec0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [],
       "callers": [
         "0x0048b960"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Initializes 6-tick single/double storm lightning flash envelopes (LIGHTNING_FLASH_PATTERNS / LightningFlashState::new).",
+      "manual_override": true
     },
     {
       "address": "0x0048cf20",
@@ -19889,7 +19894,7 @@
       "size": 336,
       "name": "FUN_0048cf20",
       "category": "core_game",
-      "status": "wired_live",
+      "status": "verified_1to1",
       "callees": [
         "0x0048dfd0"
       ],
@@ -19897,9 +19902,12 @@
         "0x0047a900"
       ],
       "live_files": [
-        "crates/cmr-app/src/lib.rs"
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/weather.rs"
       ],
-      "test_files": []
+      "test_files": [],
+      "notes": "Heavy-storm lightning flash timer and additive flash emission (LightningFlashState::tick + composite_sky_overlay).",
+      "manual_override": true
     },
     {
       "address": "0x0048d070",

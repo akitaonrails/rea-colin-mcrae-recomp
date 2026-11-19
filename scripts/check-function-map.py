@@ -144,6 +144,14 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "status": "verified_1to1",
         "notes": "Rain streak & SNOW.BMP snowflake advection, box wrapping, night attenuation, and quad emission (PrecipitationSystem::billboards + StageRenderResources::plan_particles).",
     },
+    "0x0048cec0": {
+        "status": "verified_1to1",
+        "notes": "Initializes 6-tick single/double storm lightning flash envelopes (LIGHTNING_FLASH_PATTERNS / LightningFlashState::new).",
+    },
+    "0x0048cf20": {
+        "status": "verified_1to1",
+        "notes": "Heavy-storm lightning flash timer and additive flash emission (LightningFlashState::tick + composite_sky_overlay).",
+    },
     # Sky sun, halo, 7 lens-flare rings, moon, and twinkling stars (IMAGES\LENSFLR\*)
     "0x00482d10": {
         "status": "verified_1to1",
