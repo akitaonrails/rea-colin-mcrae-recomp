@@ -1749,6 +1749,7 @@ pub fn contact_count_scale(mass_48: Fixed16, count: u8) -> Fixed16 {
 
 /// Apply `FUN_00415d20`'s four timestep-scaled response words in source order.
 #[must_use]
+/// Scales 4 response words by timestep `dt_q16` (`FUN_00415cc0` / `FUN_00415d20`).
 pub fn scale_contact_response_words(words: [Fixed16; 4], time_step: Fixed16) -> [Fixed16; 4] {
     words.map(|word| word.mul(time_step))
 }

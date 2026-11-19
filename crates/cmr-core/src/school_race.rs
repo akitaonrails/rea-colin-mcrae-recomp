@@ -3,7 +3,8 @@
 //! captured and compared with the instructor's reference run (`.rsf`), the
 //! task's timer and fail conditions (`FUN_0046e230`), the finish settle
 //! (`FUN_004718d0`), the task end (`FUN_00471810`) and the scorer
-//! (`FUN_004725e0`) that writes the results marks into `cfg[0x6bc..0x6bf]`.
+//! (`FUN_004725e0`) that writes the results marks into `cfg[0x6bc..0x6bf]`,
+//! and the results screen loader/pass-fail overlay (`FUN_00470050`).
 //!
 //! The level `L` and task `T` select the row `row(L, T)` of the scorer's
 //! offset and scale tables (`0x4f4f80`, `0x4f50a0`, static data). The loop

@@ -1,4 +1,4 @@
-//! The crowd ambience feeder of `FUN_0041cfe0`.
+//! The crowd ambience feeder of `FUN_0041cfe0` (3D emitter attenuation `FUN_004866b0`).
 //!
 //! At stage load `FUN_00481990` walks the stage's scene nodes and keeps, in
 //! node order and at most 49, the positions (local matrix translation,

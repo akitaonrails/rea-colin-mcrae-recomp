@@ -3,7 +3,7 @@
 //! brakes, steering, gear ratio) and repair damaged parts before the next
 //! stage.
 //!
-//! - [`service_pending`] is `FUN_0047a190`, re-evaluated every frame: the
+//! - [`service_pending`] is `FUN_0047a190` (screen renderer `FUN_00479040`), re-evaluated every frame: the
 //!   rally school at level 2 from task 3, never the armed special event or
 //!   the attract demo, always a time trial or difficulty 0, otherwise the
 //!   country's service-point bit for the upcoming stage (`0x4f6004`).

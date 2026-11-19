@@ -1,5 +1,5 @@
 //! The unified in-race **camera view controller** (`rea.official-eu.camera-modes`):
-//! the per-frame camera driver / slot evaluator (`FUN_004343a0`/`FUN_00436490`)
+//! the per-frame camera driver / slot evaluator (`FUN_004343a0`/`FUN_00434d40`/`FUN_00436490`)
 //! that holds the active [`CameraMode`], advances it on the player's "next view"
 //! input ([`camera_mode::cycle_next_view`]), and dispatches each frame to the
 //! matching reconstructed placement to produce the camera world matrix.

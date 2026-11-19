@@ -1434,13 +1434,17 @@
       "size": 96,
       "name": "FUN_00415cc0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [],
       "callers": [
         "0x00437200"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/vehicle_dynamics.rs"
+      ],
+      "test_files": [],
+      "notes": "Computes 25 Hz fixed timestep dt_q16 (DAT_004eac70) and inv_dt_q16 (DAT_004eac6c = 1.0); reconstructed in cmr-core::vehicle_dynamics.",
+      "manual_override": true
     },
     {
       "address": "0x00415d20",
@@ -2604,13 +2608,17 @@
       "size": 560,
       "name": "FUN_0041de40",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [],
       "callers": [
         "0x0044bbc0"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/car_crash_damage.rs"
+      ],
+      "test_files": [],
+      "notes": "Car mesh vertex crash-dent deformation helper (car_setup[+0x2d0]); reconstructed in cmr-core::car_crash_damage.",
+      "manual_override": true
     },
     {
       "address": "0x0041e070",
@@ -4614,7 +4622,7 @@
       "size": 1584,
       "name": "FUN_0042aba0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x0042b1d0",
         "0x0042b960",
@@ -4651,8 +4659,12 @@
       "callers": [
         "0x00439ee0"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs"
+      ],
+      "test_files": [],
+      "notes": "HUD and Stage Results screen compositor called from FUN_00439ee0; reconstructed in cmr-app.",
+      "manual_override": true
     },
     {
       "address": "0x0042b1d0",
@@ -5460,7 +5472,7 @@
       "size": 1424,
       "name": "FUN_0042efb0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x0042e5c0",
         "0x00485bb0",
@@ -5475,8 +5487,12 @@
       "callers": [
         "0x0042aba0"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs"
+      ],
+      "test_files": [],
+      "notes": "Stage FINAL RESULTS table renderer (%.2d:%.2d.%.2d); reconstructed in cmr-core::stage_results and cmr-app.",
+      "manual_override": true
     },
     {
       "address": "0x0042f540",
@@ -7367,7 +7383,7 @@
       "size": 1728,
       "name": "FUN_00434d40",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x004199d0",
         "0x0041a740",
@@ -7388,8 +7404,12 @@
         "0x00439ee0",
         "0x00468a40"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/camera_view.rs"
+      ],
+      "test_files": [],
+      "notes": "Camera pose interpolation and projection helper (0x550490/0x550578); reconstructed in cmr-core::camera_view and gameplay_camera.",
+      "manual_override": true
     },
     {
       "address": "0x00435400",
@@ -10494,7 +10514,7 @@
       "size": 5856,
       "name": "FUN_00447e60",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x0041a820",
         "0x0041a840",
@@ -10513,7 +10533,9 @@
         "0x00447cf0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "2-player / network car-vs-car collision solver (called by FUN_00447cf0).",
+      "manual_override": true
     },
     {
       "address": "0x00449540",
@@ -11502,14 +11524,18 @@
       "size": 4160,
       "name": "FUN_0044f870",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [],
       "callers": [
         "0x00450d40",
         "0x0045a190"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/fixed_point.rs"
+      ],
+      "test_files": [],
+      "notes": "Q16.16 axis-angle matrix rotation helper (sine table 0x82d380); reconstructed in cmr-core::fixed_point / vehicle_dynamics.",
+      "manual_override": true
     },
     {
       "address": "0x004508b0",
@@ -12254,7 +12280,7 @@
       "size": 384,
       "name": "FUN_00459c30",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x0044d9a0",
         "0x0045bb70",
@@ -12269,7 +12295,8 @@
         "0x00459be0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x00459db0",
@@ -12297,13 +12324,14 @@
       "size": 32,
       "name": "FUN_0045a030",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045abf0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045a050",
@@ -12311,13 +12339,14 @@
       "size": 64,
       "name": "FUN_0045a050",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045a7f0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045a090",
@@ -12325,7 +12354,7 @@
       "size": 48,
       "name": "FUN_0045a090",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x004ab540"
       ],
@@ -12333,7 +12362,8 @@
         "0x0045abf0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045a0c0",
@@ -12341,7 +12371,7 @@
       "size": 64,
       "name": "FUN_0045a0c0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x004ab540"
       ],
@@ -12349,7 +12379,8 @@
         "0x0045a7f0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045a100",
@@ -12357,13 +12388,14 @@
       "size": 48,
       "name": "FUN_0045a100",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045a7f0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045a130",
@@ -12371,13 +12403,14 @@
       "size": 32,
       "name": "FUN_0045a130",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045a7f0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045a150",
@@ -12385,13 +12418,14 @@
       "size": 64,
       "name": "FUN_0045a150",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045a7f0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045a190",
@@ -12399,7 +12433,7 @@
       "size": 256,
       "name": "FUN_0045a190",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x0044f870"
       ],
@@ -12407,7 +12441,8 @@
         "0x0045a7f0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045a290",
@@ -12415,13 +12450,14 @@
       "size": 1296,
       "name": "FUN_0045a290",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045a7f0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045a7a0",
@@ -12429,7 +12465,7 @@
       "size": 80,
       "name": "FUN_0045a7a0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x004ab540"
       ],
@@ -12437,7 +12473,8 @@
         "0x0045a7f0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045a7f0",
@@ -12478,7 +12515,7 @@
       "size": 544,
       "name": "FUN_0045a920",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x00459870",
         "0x0045b1b0",
@@ -12492,7 +12529,8 @@
         "0x0045a7f0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045ab40",
@@ -12500,13 +12538,14 @@
       "size": 176,
       "name": "FUN_0045ab40",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045abf0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045abf0",
@@ -12542,13 +12581,14 @@
       "size": 128,
       "name": "FUN_0045b130",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045abf0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045b1b0",
@@ -12556,13 +12596,14 @@
       "size": 144,
       "name": "FUN_0045b1b0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045a920"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045b240",
@@ -12570,13 +12611,14 @@
       "size": 256,
       "name": "FUN_0045b240",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045a7f0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045b340",
@@ -12584,7 +12626,7 @@
       "size": 1088,
       "name": "FUN_0045b340",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x00491d70"
       ],
@@ -12592,7 +12634,8 @@
         "0x0045abf0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045b780",
@@ -12600,13 +12643,14 @@
       "size": 48,
       "name": "FUN_0045b780",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045b7b0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045b7b0",
@@ -12614,7 +12658,7 @@
       "size": 752,
       "name": "FUN_0045b7b0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x004440e0",
         "0x0045b780",
@@ -12629,7 +12673,8 @@
         "0x00422c30"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045baa0",
@@ -12637,13 +12682,14 @@
       "size": 96,
       "name": "FUN_0045baa0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0045a920"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045bb00",
@@ -12651,7 +12697,7 @@
       "size": 112,
       "name": "FUN_0045bb00",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x0045bb70"
       ],
@@ -12659,7 +12705,8 @@
         "0x0045b7b0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045bb70",
@@ -12687,14 +12734,15 @@
       "size": 48,
       "name": "FUN_0045bbb0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x00459c30",
         "0x0045b7b0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045bbe0",
@@ -12702,7 +12750,7 @@
       "size": 176,
       "name": "FUN_0045bbe0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x00434060",
         "0x00435ba0",
@@ -12713,7 +12761,8 @@
         "0x00430770"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045bc90",
@@ -12721,7 +12770,7 @@
       "size": 304,
       "name": "FUN_0045bc90",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x004976a0",
         "0x004aabb0"
@@ -12730,7 +12779,8 @@
         "0x0045bbe0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045bdc0",
@@ -12738,13 +12788,14 @@
       "size": 32,
       "name": "FUN_0045bdc0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [],
       "callers": [
         "0x0040a4a0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
     },
     {
       "address": "0x0045bde0",
@@ -12983,7 +13034,7 @@
       "size": 4144,
       "name": "FUN_0045ca90",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x00421c90",
         "0x00495ed0",
@@ -12994,7 +13045,9 @@
         "0x00462230"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "2-player / network place-number font loader & badge renderer (placenum.fon).",
+      "manual_override": true
     },
     {
       "address": "0x0045dac0",
@@ -13435,7 +13488,7 @@
       "size": 1216,
       "name": "FUN_00463c70",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x00443c80",
         "0x004619e0",
@@ -13449,7 +13502,9 @@
         "0x0043afd0"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "2-player / network position counter HUD ('%s %d/%d').",
+      "manual_override": true
     },
     {
       "address": "0x00464130",
@@ -15906,7 +15961,7 @@
       "size": 3296,
       "name": "FUN_00470050",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x0043bc00",
         "0x00470d30",
@@ -15945,8 +16000,12 @@
       "callers": [
         "0x0046f630"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/school_race.rs"
+      ],
+      "test_files": [],
+      "notes": "Rally School results screen asset loader and PASS/FAIL overlay (ini\\schlpal.pal, PASS.BMP); reconstructed in cmr-core::school_race and cmr-app.",
+      "manual_override": true
     },
     {
       "address": "0x00470d30",
@@ -17415,7 +17474,7 @@
       "size": 6016,
       "name": "FUN_00479040",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00401000",
         "0x00401030",
@@ -17449,8 +17508,12 @@
       "callers": [
         "0x00478d50"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/service_screen.rs"
+      ],
+      "test_files": [],
+      "notes": "Car Setup / Service screen renderer (ini\\setrpal.pal, diggreen/diggrey/digwg.fon); reconstructed in cmr-core::service_screen and cmr-app.",
+      "manual_override": true
     },
     {
       "address": "0x0047a7c0",
@@ -18634,15 +18697,19 @@
       "size": 1568,
       "name": "FUN_00483420",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00483060"
       ],
       "callers": [
         "0x00483060"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Sun/lens-flare screen projection helper called by FUN_00483060; reconstructed in cmr-core::weather::SkyOverlayState.",
+      "manual_override": true
     },
     {
       "address": "0x00483a40",
@@ -19253,7 +19320,7 @@
       "size": 1696,
       "name": "FUN_004866b0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x0041a800",
         "0x0041a880",
@@ -19270,8 +19337,12 @@
         "0x004864f0",
         "0x00486680"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/crowd_sound.rs"
+      ],
+      "test_files": [],
+      "notes": "Crowd/ambient 3D sound emitter distance attenuation (0x8294e4); reconstructed in cmr-core::crowd_sound.",
+      "manual_override": true
     },
     {
       "address": "0x00486d50",
@@ -26069,8 +26140,8 @@
       "end_address": "0x004a8010",
       "size": 256,
       "name": "FUN_004a7f10",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x00492290",
         "0x00492470",
@@ -26092,8 +26163,8 @@
       "end_address": "0x004a8450",
       "size": 1088,
       "name": "FUN_004a8010",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x00492290",
         "0x00492470",
@@ -26115,8 +26186,8 @@
       "end_address": "0x004a8630",
       "size": 480,
       "name": "FUN_004a8450",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004cfb9c"
       ],
@@ -26133,8 +26204,8 @@
       "end_address": "0x004a86f0",
       "size": 192,
       "name": "FUN_004a8630",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00449ba0",
@@ -26150,8 +26221,8 @@
       "end_address": "0x004a8750",
       "size": 96,
       "name": "FUN_004a86f0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004a2b70"
@@ -26164,8 +26235,8 @@
       "end_address": "0x004a88c0",
       "size": 368,
       "name": "FUN_004a8750",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004a8a60",
@@ -26183,8 +26254,8 @@
       "end_address": "0x004a8a60",
       "size": 416,
       "name": "FUN_004a88c0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004cfb9c"
       ],
@@ -26197,8 +26268,8 @@
       "end_address": "0x004a9320",
       "size": 2240,
       "name": "FUN_004a8a60",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004a8750",
         "0x004a9320",
@@ -26219,8 +26290,8 @@
       "end_address": "0x004a9440",
       "size": 288,
       "name": "FUN_004a9320",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004a8750",
         "0x004cfb9c"
@@ -26238,8 +26309,8 @@
       "end_address": "0x004a9490",
       "size": 80,
       "name": "FUN_004a9440",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004a8a60"
@@ -26254,8 +26325,8 @@
       "end_address": "0x004a9540",
       "size": 176,
       "name": "FUN_004a9490",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x00492770",
         "0x004a8010"
@@ -26275,8 +26346,8 @@
       "end_address": "0x004a96e0",
       "size": 416,
       "name": "FUN_004a9540",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004a07d0"
@@ -26289,8 +26360,8 @@
       "end_address": "0x004a96f0",
       "size": 16,
       "name": "FUN_004a96e0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00424f40",
@@ -26308,8 +26379,8 @@
       "end_address": "0x004a9790",
       "size": 160,
       "name": "FUN_004a96f0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004956e0",
         "0x004b01d0"
@@ -26325,8 +26396,8 @@
       "end_address": "0x004a9920",
       "size": 400,
       "name": "FUN_004a9790",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00429980",
@@ -26341,8 +26412,8 @@
       "end_address": "0x004a9ad0",
       "size": 432,
       "name": "FUN_004a9920",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x0044c8c0"
@@ -26357,8 +26428,8 @@
       "end_address": "0x004a9cd0",
       "size": 512,
       "name": "FUN_004a9ad0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x0048fa60",
         "0x004a2380",
@@ -26380,8 +26451,8 @@
       "end_address": "0x004a9d40",
       "size": 112,
       "name": "FUN_004a9cd0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004a2380",
         "0x004a23b0"
@@ -26400,8 +26471,8 @@
       "end_address": "0x004a9fe0",
       "size": 672,
       "name": "FUN_004a9d40",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004a6950"
@@ -26414,8 +26485,8 @@
       "end_address": "0x004aa000",
       "size": 32,
       "name": "FUN_004a9fe0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004a23e0"
@@ -26428,8 +26499,8 @@
       "end_address": "0x004aa030",
       "size": 48,
       "name": "FUN_004aa000",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00499ef0"
@@ -26442,8 +26513,8 @@
       "end_address": "0x004aa040",
       "size": 16,
       "name": "FUN_004aa030",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00499320",
@@ -26457,8 +26528,8 @@
       "end_address": "0x004aa0c0",
       "size": 128,
       "name": "FUN_004aa040",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x00498af0"
       ],
@@ -26490,8 +26561,8 @@
       "end_address": "0x004aa0d0",
       "size": 16,
       "name": "FUN_004aa0c0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00458580",
@@ -26516,8 +26587,8 @@
       "end_address": "0x004aa100",
       "size": 48,
       "name": "FUN_004aa0d0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004a9ad0"
@@ -26530,8 +26601,8 @@
       "end_address": "0x004aa120",
       "size": 32,
       "name": "FUN_004aa100",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004afe60"
@@ -26544,8 +26615,8 @@
       "end_address": "0x004aa130",
       "size": 16,
       "name": "FUN_004aa120",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004a2540"
@@ -26558,8 +26629,8 @@
       "end_address": "0x004aa1d0",
       "size": 160,
       "name": "FUN_004aa130",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x0047a7c0",
@@ -26573,8 +26644,8 @@
       "end_address": "0x004aabb0",
       "size": 2528,
       "name": "FUN_004aa1d0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004a6950"
@@ -26587,8 +26658,8 @@
       "end_address": "0x004aabd0",
       "size": 32,
       "name": "FUN_004aabb0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x0042c690",
@@ -26626,8 +26697,8 @@
       "end_address": "0x004aacb0",
       "size": 224,
       "name": "FUN_004aabd0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x00498af0",
         "0x004ae5f0",
@@ -26653,8 +26724,8 @@
       "end_address": "0x004aade0",
       "size": 304,
       "name": "FUN_004aacb0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x00497b40"
       ],
@@ -26669,8 +26740,8 @@
       "end_address": "0x004aadf0",
       "size": 16,
       "name": "FUN_004aade0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004323e0",
@@ -26685,8 +26756,8 @@
       "end_address": "0x004aae00",
       "size": 16,
       "name": "FUN_004aadf0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004aee00"
       ],
@@ -26704,8 +26775,8 @@
       "end_address": "0x004aae30",
       "size": 48,
       "name": "FUN_004aae00",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x0049cb20",
         "0x004aee60"
@@ -26725,8 +26796,8 @@
       "end_address": "0x004aaf80",
       "size": 336,
       "name": "FUN_004aae30",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004990d0",
         "0x004d1040"
@@ -26745,8 +26816,8 @@
       "end_address": "0x004aaff0",
       "size": 112,
       "name": "FUN_004aaf80",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004d1040"
       ],
@@ -26759,8 +26830,8 @@
       "end_address": "0x004ab020",
       "size": 48,
       "name": "FUN_004aaff0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004956e0"
       ],
@@ -26776,8 +26847,8 @@
       "end_address": "0x004ab080",
       "size": 96,
       "name": "FUN_004ab020",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004b8760"
       ],
@@ -26792,8 +26863,8 @@
       "end_address": "0x004ab090",
       "size": 16,
       "name": "FUN_004ab080",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004be390"
@@ -26806,8 +26877,8 @@
       "end_address": "0x004ab0c0",
       "size": 48,
       "name": "FUN_004ab090",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004bdb70"
@@ -26820,8 +26891,8 @@
       "end_address": "0x004ab0f0",
       "size": 48,
       "name": "FUN_004ab0c0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004bb1d0"
@@ -26834,8 +26905,8 @@
       "end_address": "0x004ab150",
       "size": 96,
       "name": "FUN_004ab0f0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004bbbf0"
@@ -26848,8 +26919,8 @@
       "end_address": "0x004ab1f0",
       "size": 160,
       "name": "FUN_004ab150",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004ab1f0",
@@ -26863,8 +26934,8 @@
       "end_address": "0x004ab290",
       "size": 160,
       "name": "FUN_004ab1f0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ab150"
       ],
@@ -26879,8 +26950,8 @@
       "end_address": "0x004ab390",
       "size": 256,
       "name": "FUN_004ab290",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ab150"
       ],
@@ -26895,8 +26966,8 @@
       "end_address": "0x004ab3d0",
       "size": 64,
       "name": "FUN_004ab390",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00431e20",
@@ -26916,8 +26987,8 @@
       "end_address": "0x004ab410",
       "size": 64,
       "name": "FUN_004ab3d0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004599b0",
@@ -26931,8 +27002,8 @@
       "end_address": "0x004ab490",
       "size": 128,
       "name": "FUN_004ab410",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ab6c0"
       ],
@@ -26948,8 +27019,8 @@
       "end_address": "0x004ab540",
       "size": 176,
       "name": "FUN_004ab490",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ab6c0"
       ],
@@ -26966,8 +27037,8 @@
       "end_address": "0x004ab5e0",
       "size": 160,
       "name": "FUN_004ab540",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00431de0",
@@ -26999,8 +27070,8 @@
       "end_address": "0x004ab640",
       "size": 96,
       "name": "FUN_004ab5e0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x0045a7f0",
@@ -27015,8 +27086,8 @@
       "end_address": "0x004ab6c0",
       "size": 128,
       "name": "FUN_004ab640",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004bb1d0",
@@ -27030,8 +27101,8 @@
       "end_address": "0x004ab6f0",
       "size": 48,
       "name": "FUN_004ab6c0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004ab410",
@@ -27050,8 +27121,8 @@
       "end_address": "0x004ab720",
       "size": 48,
       "name": "FUN_004ab6f0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004b8766"
       ],
@@ -27066,8 +27137,8 @@
       "end_address": "0x004ab740",
       "size": 32,
       "name": "FUN_004ab720",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004bdb70"
@@ -27080,8 +27151,8 @@
       "end_address": "0x004ab760",
       "size": 32,
       "name": "FUN_004ab740",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004bb1d0",
@@ -27095,8 +27166,8 @@
       "end_address": "0x004ab7e0",
       "size": 128,
       "name": "FUN_004ab760",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004ba900",
@@ -27113,8 +27184,8 @@
       "end_address": "0x004ab810",
       "size": 48,
       "name": "FUN_004ab7e0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x0045a920",
@@ -27129,8 +27200,8 @@
       "end_address": "0x004ab890",
       "size": 128,
       "name": "FUN_004ab810",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ab020"
       ],
@@ -27145,8 +27216,8 @@
       "end_address": "0x004ab920",
       "size": 144,
       "name": "FUN_004ab890",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004baa30",
@@ -27165,8 +27236,8 @@
       "end_address": "0x004aba40",
       "size": 288,
       "name": "FUN_004ab920",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004956e0",
         "0x004aba70"
@@ -27184,8 +27255,8 @@
       "end_address": "0x004aba70",
       "size": 48,
       "name": "FUN_004aba40",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00432ce0"
@@ -27198,8 +27269,8 @@
       "end_address": "0x004abc40",
       "size": 464,
       "name": "FUN_004aba70",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004b880e"
       ],
@@ -27216,8 +27287,8 @@
       "end_address": "0x004abc90",
       "size": 80,
       "name": "FUN_004abc40",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00433500"
@@ -27230,8 +27301,8 @@
       "end_address": "0x004abd30",
       "size": 160,
       "name": "FUN_004abc90",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00433550"
@@ -27244,8 +27315,8 @@
       "end_address": "0x004abd90",
       "size": 96,
       "name": "FUN_004abd30",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00432ce0",
@@ -27259,8 +27330,8 @@
       "end_address": "0x004abe70",
       "size": 224,
       "name": "FUN_004abd90",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00433620"
@@ -27273,8 +27344,8 @@
       "end_address": "0x004abed0",
       "size": 96,
       "name": "FUN_004abe70",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00432ce0",
@@ -27290,8 +27361,8 @@
       "end_address": "0x004abf50",
       "size": 128,
       "name": "FUN_004abed0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00433620"
@@ -27306,8 +27377,8 @@
       "end_address": "0x004abfb0",
       "size": 96,
       "name": "FUN_004abf50",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00433620"
@@ -27322,8 +27393,8 @@
       "end_address": "0x004ac730",
       "size": 1920,
       "name": "FUN_004abfb0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00432ce0"
@@ -27336,8 +27407,8 @@
       "end_address": "0x004ac840",
       "size": 272,
       "name": "FUN_004ac730",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00432ce0"
@@ -27350,8 +27421,8 @@
       "end_address": "0x004ac8e0",
       "size": 160,
       "name": "FUN_004ac840",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00433620"
@@ -27366,8 +27437,8 @@
       "end_address": "0x004acac0",
       "size": 480,
       "name": "FUN_004ac8e0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004acac0",
@@ -27383,8 +27454,8 @@
       "end_address": "0x004acb00",
       "size": 64,
       "name": "FUN_004acac0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ac8e0"
       ],
@@ -27399,8 +27470,8 @@
       "end_address": "0x004acb40",
       "size": 64,
       "name": "FUN_004acb00",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ac8e0"
       ],
@@ -27415,8 +27486,8 @@
       "end_address": "0x004acd30",
       "size": 496,
       "name": "FUN_004acb40",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00437690",
@@ -27433,8 +27504,8 @@
       "end_address": "0x004aced0",
       "size": 416,
       "name": "FUN_004acd30",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00482cc0"
@@ -27449,8 +27520,8 @@
       "end_address": "0x004acf10",
       "size": 64,
       "name": "FUN_004aced0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004a2b70"
@@ -27463,8 +27534,8 @@
       "end_address": "0x004acf30",
       "size": 32,
       "name": "FUN_004acf10",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004a2b70"
@@ -27477,8 +27548,8 @@
       "end_address": "0x004ad020",
       "size": 240,
       "name": "FUN_004acf30",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004956e0",
         "0x004ad240",
@@ -27495,8 +27566,8 @@
       "end_address": "0x004ad0d0",
       "size": 176,
       "name": "FUN_004ad020",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004d1040",
         "0x004d1e80"
@@ -27512,8 +27583,8 @@
       "end_address": "0x004ad240",
       "size": 368,
       "name": "FUN_004ad0d0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004d1e80"
       ],
@@ -27528,8 +27599,8 @@
       "end_address": "0x004ad560",
       "size": 800,
       "name": "FUN_004ad240",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x0049db00",
@@ -27546,8 +27617,8 @@
       "end_address": "0x004ad5b0",
       "size": 80,
       "name": "FUN_004ad560",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x0044f600",
@@ -27578,8 +27649,8 @@
       "end_address": "0x004ad710",
       "size": 352,
       "name": "FUN_004ad5b0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x0044f600",
@@ -27608,8 +27679,8 @@
       "end_address": "0x004ad720",
       "size": 16,
       "name": "FUN_004ad710",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004c1e00",
@@ -27627,8 +27698,8 @@
       "end_address": "0x004ad870",
       "size": 336,
       "name": "FUN_004ad720",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ad870",
         "0x004ad8a0"
@@ -27669,8 +27740,8 @@
       "end_address": "0x004ad8a0",
       "size": 48,
       "name": "FUN_004ad870",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004ad720"
@@ -27683,8 +27754,8 @@
       "end_address": "0x004ad8d0",
       "size": 48,
       "name": "FUN_004ad8a0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004ad720"
@@ -27697,8 +27768,8 @@
       "end_address": "0x004ad8f0",
       "size": 32,
       "name": "FUN_004ad8d0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004c1e00"
@@ -27711,8 +27782,8 @@
       "end_address": "0x004ad960",
       "size": 112,
       "name": "FUN_004ad8f0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004bc5b0",
@@ -27734,8 +27805,8 @@
       "end_address": "0x004add50",
       "size": 1008,
       "name": "FUN_004ad960",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [],
       "live_files": [],
@@ -27746,8 +27817,8 @@
       "end_address": "0x004ae0d0",
       "size": 896,
       "name": "FUN_004add50",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004b08c0",
         "0x004cfb9c"
@@ -27761,8 +27832,8 @@
       "end_address": "0x004ae190",
       "size": 192,
       "name": "FUN_004ae0d0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x00499230"
       ],
@@ -27778,8 +27849,8 @@
       "end_address": "0x004ae1d0",
       "size": 64,
       "name": "FUN_004ae190",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00495100"
@@ -27792,8 +27863,8 @@
       "end_address": "0x004ae220",
       "size": 80,
       "name": "FUN_004ae1d0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004990d0"
       ],
@@ -27813,8 +27884,8 @@
       "end_address": "0x004ae280",
       "size": 96,
       "name": "FUN_004ae220",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004990d0"
       ],
@@ -27829,8 +27900,8 @@
       "end_address": "0x004ae2f0",
       "size": 112,
       "name": "FUN_004ae280",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x0045bb70"
@@ -27843,8 +27914,8 @@
       "end_address": "0x004ae540",
       "size": 592,
       "name": "FUN_004ae2f0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00467c20",
@@ -27861,8 +27932,8 @@
       "end_address": "0x004ae590",
       "size": 80,
       "name": "FUN_004ae540",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [],
       "live_files": [],
@@ -27873,8 +27944,8 @@
       "end_address": "0x004ae5c0",
       "size": 48,
       "name": "FUN_004ae590",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x0049db00"
@@ -27887,8 +27958,8 @@
       "end_address": "0x004ae5f0",
       "size": 48,
       "name": "FUN_004ae5c0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [],
       "live_files": [],
@@ -27899,8 +27970,8 @@
       "end_address": "0x004ae6d0",
       "size": 224,
       "name": "FUN_004ae5f0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00468260",
@@ -27920,8 +27991,8 @@
       "end_address": "0x004ae720",
       "size": 80,
       "name": "FUN_004ae6d0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004ae720",
@@ -27940,8 +28011,8 @@
       "end_address": "0x004ae840",
       "size": 288,
       "name": "FUN_004ae720",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ae6d0"
       ],
@@ -27960,8 +28031,8 @@
       "end_address": "0x004ae8e0",
       "size": 160,
       "name": "FUN_004ae840",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ae6d0"
       ],
@@ -27979,8 +28050,8 @@
       "end_address": "0x004ae950",
       "size": 112,
       "name": "FUN_004ae8e0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ae6d0"
       ],
@@ -27998,8 +28069,8 @@
       "end_address": "0x004ae9a0",
       "size": 80,
       "name": "FUN_004ae950",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ae6d0"
       ],
@@ -28018,8 +28089,8 @@
       "end_address": "0x004aea00",
       "size": 96,
       "name": "FUN_004ae9a0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004ae6d0"
       ],
@@ -28040,8 +28111,8 @@
       "end_address": "0x004aea40",
       "size": 64,
       "name": "FUN_004aea00",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00468260",
@@ -28059,8 +28130,8 @@
       "end_address": "0x004aea60",
       "size": 32,
       "name": "FUN_004aea40",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004be540"
@@ -28076,8 +28147,8 @@
       "end_address": "0x004aea70",
       "size": 16,
       "name": "FUN_004aea60",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00468260",
@@ -28092,8 +28163,8 @@
       "end_address": "0x004aea80",
       "size": 16,
       "name": "FUN_004aea70",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004bb970",
@@ -28108,8 +28179,8 @@
       "end_address": "0x004aeab0",
       "size": 48,
       "name": "FUN_004aea80",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00467ef0",
@@ -28144,8 +28215,8 @@
       "end_address": "0x004aeae0",
       "size": 48,
       "name": "FUN_004aeab0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004aea80"
       ],
@@ -28176,8 +28247,8 @@
       "end_address": "0x004aeb10",
       "size": 48,
       "name": "FUN_004aeae0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004aeab0"
       ],
@@ -28195,8 +28266,8 @@
       "end_address": "0x004aeb30",
       "size": 32,
       "name": "FUN_004aeb10",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004aeab0"
       ],
@@ -28220,8 +28291,8 @@
       "end_address": "0x004aeb50",
       "size": 32,
       "name": "FUN_004aeb30",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004aeab0"
       ],
@@ -28241,8 +28312,8 @@
       "end_address": "0x004aeba0",
       "size": 80,
       "name": "FUN_004aeb50",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004aeab0"
       ],
@@ -28262,8 +28333,8 @@
       "end_address": "0x004aebb0",
       "size": 16,
       "name": "FUN_004aeba0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00470d30",
@@ -28278,8 +28349,8 @@
       "end_address": "0x004aebf0",
       "size": 64,
       "name": "FUN_004aebb0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00468260",
@@ -28296,8 +28367,8 @@
       "end_address": "0x004aec20",
       "size": 48,
       "name": "FUN_004aebf0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00468260",
@@ -28314,8 +28385,8 @@
       "end_address": "0x004aec50",
       "size": 48,
       "name": "FUN_004aec20",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00476e30",
@@ -28330,8 +28401,8 @@
       "end_address": "0x004aec80",
       "size": 48,
       "name": "FUN_004aec50",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004bb1d0",
@@ -28379,8 +28450,8 @@
       "end_address": "0x004aec90",
       "size": 16,
       "name": "FUN_004aec80",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00468260",
@@ -28396,8 +28467,8 @@
       "end_address": "0x004aeca0",
       "size": 16,
       "name": "FUN_004aec90",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00468260"
@@ -28410,8 +28481,8 @@
       "end_address": "0x004aecf0",
       "size": 80,
       "name": "FUN_004aeca0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00476e30",
@@ -28425,8 +28496,8 @@
       "end_address": "0x004aed40",
       "size": 80,
       "name": "FUN_004aecf0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x0049b010"
       ],
@@ -28442,8 +28513,8 @@
       "end_address": "0x004aed50",
       "size": 16,
       "name": "FUN_004aed40",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004aecf0"
       ],
@@ -28462,8 +28533,8 @@
       "end_address": "0x004aee00",
       "size": 176,
       "name": "FUN_004aed50",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00468260",
@@ -28486,8 +28557,8 @@
       "end_address": "0x004aee60",
       "size": 96,
       "name": "FUN_004aee00",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00468da0",
@@ -28510,8 +28581,8 @@
       "end_address": "0x004af3a0",
       "size": 1344,
       "name": "FUN_004aee60",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x004aea80"
       ],
@@ -28535,8 +28606,8 @@
       "end_address": "0x004af3b0",
       "size": 16,
       "name": "FUN_004af3a0",
-      "category": "core_game",
-      "status": "wired_live",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x00479040",
@@ -28563,8 +28634,8 @@
       "end_address": "0x004af3c0",
       "size": 16,
       "name": "FUN_004af3b0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [],
       "callers": [
         "0x004c20f0"
@@ -28577,8 +28648,8 @@
       "end_address": "0x004af8a0",
       "size": 1248,
       "name": "FUN_004af3c0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "platform_wrapper",
+      "status": "platform_replaced",
       "callees": [
         "0x00496720",
         "0x00496730",
@@ -29605,8 +29676,8 @@
       "end_address": "0x004b4730",
       "size": 368,
       "name": "FUN_004b45c0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b0ba0",
@@ -29622,8 +29693,8 @@
       "end_address": "0x004b4760",
       "size": 48,
       "name": "FUN_004b4730",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004d28f0",
         "0x004d2f30"
@@ -29637,8 +29708,8 @@
       "end_address": "0x004b47e0",
       "size": 128,
       "name": "FUN_004b4760",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b7b40"
       ],
@@ -29656,8 +29727,8 @@
       "end_address": "0x004b4880",
       "size": 160,
       "name": "FUN_004b47e0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b4760"
       ],
@@ -29672,8 +29743,8 @@
       "end_address": "0x004b5550",
       "size": 3280,
       "name": "FUN_004b4880",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b7360",
         "0x004b73a0",
@@ -29694,8 +29765,8 @@
       "end_address": "0x004b5590",
       "size": 64,
       "name": "FUN_004b5550",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b4760"
       ],
@@ -29710,8 +29781,8 @@
       "end_address": "0x004b55e0",
       "size": 80,
       "name": "FUN_004b5590",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b2d60"
@@ -29724,8 +29795,8 @@
       "end_address": "0x004b5720",
       "size": 320,
       "name": "FUN_004b55e0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b2d60",
@@ -29740,8 +29811,8 @@
       "end_address": "0x004b5790",
       "size": 112,
       "name": "FUN_004b5720",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b5790",
         "0x004b57a0"
@@ -29757,8 +29828,8 @@
       "end_address": "0x004b57a0",
       "size": 16,
       "name": "FUN_004b5790",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b5720"
@@ -29771,8 +29842,8 @@
       "end_address": "0x004b5810",
       "size": 112,
       "name": "FUN_004b57a0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b5720",
@@ -29786,8 +29857,8 @@
       "end_address": "0x004b58b0",
       "size": 160,
       "name": "FUN_004b5810",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b72c0"
       ],
@@ -29803,8 +29874,8 @@
       "end_address": "0x004b5b10",
       "size": 608,
       "name": "FUN_004b58b0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b71b0"
       ],
@@ -29819,8 +29890,8 @@
       "end_address": "0x004b5d00",
       "size": 496,
       "name": "FUN_004b5b10",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b57a0",
         "0x004b5810",
@@ -29843,8 +29914,8 @@
       "end_address": "0x004b5f30",
       "size": 560,
       "name": "FUN_004b5d00",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b5f30",
         "0x004b6010",
@@ -29862,8 +29933,8 @@
       "end_address": "0x004b6010",
       "size": 224,
       "name": "FUN_004b5f30",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b5d00"
@@ -29876,8 +29947,8 @@
       "end_address": "0x004b6240",
       "size": 560,
       "name": "FUN_004b6010",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b5d00"
@@ -29890,8 +29961,8 @@
       "end_address": "0x004b62c0",
       "size": 128,
       "name": "FUN_004b6240",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b7180"
       ],
@@ -29906,8 +29977,8 @@
       "end_address": "0x004b6330",
       "size": 112,
       "name": "FUN_004b62c0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b5d00",
         "0x004b6330"
@@ -29923,8 +29994,8 @@
       "end_address": "0x004b6420",
       "size": 240,
       "name": "FUN_004b6330",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b62c0"
@@ -29937,8 +30008,8 @@
       "end_address": "0x004b6690",
       "size": 624,
       "name": "FUN_004b6420",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b6690"
       ],
@@ -29953,8 +30024,8 @@
       "end_address": "0x004b6cc0",
       "size": 1584,
       "name": "FUN_004b6690",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b6420"
@@ -29967,8 +30038,8 @@
       "end_address": "0x004b7100",
       "size": 1088,
       "name": "FUN_004b6cc0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b5b10"
@@ -29981,8 +30052,8 @@
       "end_address": "0x004b7180",
       "size": 128,
       "name": "FUN_004b7100",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b5b10"
@@ -29995,8 +30066,8 @@
       "end_address": "0x004b71b0",
       "size": 48,
       "name": "FUN_004b7180",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b6240"
@@ -30009,8 +30080,8 @@
       "end_address": "0x004b7240",
       "size": 144,
       "name": "FUN_004b71b0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b58b0"
@@ -30023,8 +30094,8 @@
       "end_address": "0x004b72c0",
       "size": 128,
       "name": "FUN_004b7240",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b5b10",
@@ -30038,8 +30109,8 @@
       "end_address": "0x004b7360",
       "size": 160,
       "name": "FUN_004b72c0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b7240"
       ],
@@ -30054,8 +30125,8 @@
       "end_address": "0x004b73a0",
       "size": 64,
       "name": "FUN_004b7360",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b4880"
@@ -30068,8 +30139,8 @@
       "end_address": "0x004b7b40",
       "size": 1952,
       "name": "FUN_004b73a0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b8290",
         "0x004b83c0"
@@ -30085,8 +30156,8 @@
       "end_address": "0x004b7b60",
       "size": 32,
       "name": "FUN_004b7b40",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b4760",
@@ -30100,8 +30171,8 @@
       "end_address": "0x004b7c00",
       "size": 160,
       "name": "FUN_004b7b60",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b7c00"
       ],
@@ -30116,8 +30187,8 @@
       "end_address": "0x004b80e0",
       "size": 1248,
       "name": "FUN_004b7c00",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b7b60",
@@ -30131,8 +30202,8 @@
       "end_address": "0x004b8260",
       "size": 384,
       "name": "FUN_004b80e0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [
         "0x004b7c00"
       ],
@@ -30147,8 +30218,8 @@
       "end_address": "0x004b8290",
       "size": 48,
       "name": "FUN_004b8260",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b4880"
@@ -30161,8 +30232,8 @@
       "end_address": "0x004b83c0",
       "size": 304,
       "name": "FUN_004b8290",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b4880",
@@ -30176,8 +30247,8 @@
       "end_address": "0x004b8760",
       "size": 928,
       "name": "FUN_004b83c0",
-      "category": "core_game",
-      "status": "unmapped",
+      "category": "zlib",
+      "status": "excluded",
       "callees": [],
       "callers": [
         "0x004b73a0"

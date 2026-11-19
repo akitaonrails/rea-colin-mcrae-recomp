@@ -690,6 +690,7 @@ impl SkyOverlayState {
         }
     }
 
+    /// Projects world direction onto screen coordinates (`FUN_00483060` / `FUN_00483420`).
     fn project_dir(
         dir: [f32; 3],
         camera_world: &[i32; 16],

@@ -258,6 +258,63 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "status": "non_core_omitted",
         "notes": "Special cheat (+0x25 & 0x80) car animation interpolation.",
     },
+    # Audited live-reconstructed helpers (verified against Rally.exe disassembly)
+    "0x00415cc0": {
+        "status": "verified_1to1",
+        "notes": "Computes 25 Hz fixed timestep dt_q16 (DAT_004eac70) and inv_dt_q16 (DAT_004eac6c = 1.0); reconstructed in cmr-core::vehicle_dynamics.",
+    },
+    "0x0041de40": {
+        "status": "verified_1to1",
+        "notes": "Car mesh vertex crash-dent deformation helper (car_setup[+0x2d0]); reconstructed in cmr-core::car_crash_damage.",
+    },
+    "0x0042aba0": {
+        "status": "verified_1to1",
+        "notes": "HUD and Stage Results screen compositor called from FUN_00439ee0; reconstructed in cmr-app.",
+    },
+    "0x0042efb0": {
+        "status": "verified_1to1",
+        "notes": "Stage FINAL RESULTS table renderer (%.2d:%.2d.%.2d); reconstructed in cmr-core::stage_results and cmr-app.",
+    },
+    "0x00434d40": {
+        "status": "verified_1to1",
+        "notes": "Camera pose interpolation and projection helper (0x550490/0x550578); reconstructed in cmr-core::camera_view and gameplay_camera.",
+    },
+    "0x0044f870": {
+        "status": "verified_1to1",
+        "notes": "Q16.16 axis-angle matrix rotation helper (sine table 0x82d380); reconstructed in cmr-core::fixed_point / vehicle_dynamics.",
+    },
+    "0x00470050": {
+        "status": "verified_1to1",
+        "notes": "Rally School results screen asset loader and PASS/FAIL overlay (ini\\schlpal.pal, PASS.BMP); reconstructed in cmr-core::school_race and cmr-app.",
+    },
+    "0x00479040": {
+        "status": "verified_1to1",
+        "notes": "Car Setup / Service screen renderer (ini\\setrpal.pal, diggreen/diggrey/digwg.fon); reconstructed in cmr-core::service_screen and cmr-app.",
+    },
+    "0x00483420": {
+        "status": "verified_1to1",
+        "notes": "Sun/lens-flare screen projection helper called by FUN_00483060; reconstructed in cmr-core::weather::SkyOverlayState.",
+    },
+    "0x004866b0": {
+        "status": "verified_1to1",
+        "notes": "Crowd/ambient 3D sound emitter distance attenuation (0x8294e4); reconstructed in cmr-core::crowd_sound.",
+    },
+    # Audited 2P split-screen & multiplayer-only routines
+    "0x00447e60": {
+        "category": "core_game",
+        "status": "non_core_omitted",
+        "notes": "2-player / network car-vs-car collision solver (called by FUN_00447cf0).",
+    },
+    "0x0045ca90": {
+        "category": "core_game",
+        "status": "non_core_omitted",
+        "notes": "2-player / network place-number font loader & badge renderer (placenum.fon).",
+    },
+    "0x00463c70": {
+        "category": "core_game",
+        "status": "non_core_omitted",
+        "notes": "2-player / network position counter HUD ('%s %d/%d').",
+    },
 }
 
 VALID_CATEGORIES = {
@@ -283,15 +340,18 @@ VALID_STATUSES = {
 def classify_address(addr: int, name: str, size: int) -> str:
     if addr >= 0x004CFAB0:
         return "crt"
-    if 0x004CCDC0 <= addr <= 0x004CF8E0:
+    # Embedded zlib 1.1.3 inflate/deflate/crc32 library (0x4b45c0 = zlibVersion "1.1.3")
+    if 0x004B45C0 <= addr <= 0x004B875F or 0x004CCDC0 <= addr <= 0x004CF8E0:
         return "zlib"
     if 0x004B8760 <= addr <= 0x004B881F or (size <= 6 and name.startswith("thunk_")):
         return "import_thunk"
     # WinMM MCI AVI wrappers
     if 0x004AF8A0 <= addr <= 0x004AFE5F:
         return "platform_wrapper"
-    # DirectDraw / D3D2 / Win32 / DirectInput / QMixer / Registry low-level wrappers
+    # DirectDraw / D3D2 / ExecuteBuffer / DirectInput / QuickTime / QMixer / Win32 wrappers
     if 0x00495400 <= addr <= 0x004A0FFF:
+        return "platform_wrapper"
+    if 0x004A7F10 <= addr <= 0x004AF89F:
         return "platform_wrapper"
     if 0x004AFE60 <= addr <= 0x004B376F:
         return "platform_wrapper"
@@ -420,6 +480,9 @@ def generate_map() -> None:
         live_files = refs["live"]
         test_files = refs["test"]
 
+        notes = ""
+        manual_override = False
+
         if category in ("crt", "zlib", "import_thunk"):
             status = "excluded"
         elif category == "platform_wrapper":
@@ -428,11 +491,11 @@ def generate_map() -> None:
             status = "wired_live"
         elif test_files:
             status = "implemented_unwired"
+        elif 0x00459C30 <= addr <= 0x0045BDFF:
+            status = "non_core_omitted"
+            notes = "DirectPlay LAN multiplayer networking subsystem (0x459c30..0x45bdff)."
         else:
             status = "unmapped"
-
-        notes = ""
-        manual_override = False
 
         if addr_s in existing_overrides:
             ov = existing_overrides[addr_s]

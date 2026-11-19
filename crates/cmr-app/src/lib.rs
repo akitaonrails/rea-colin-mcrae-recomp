@@ -4989,6 +4989,7 @@ fn compose_live_race_hud(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Live race HUD and results overlay compositor (`FUN_0042aba0` / `FUN_0042efb0`).
 fn compose_live_race_hud_with_countdown(
     resources: &StageRenderResources,
     frame: SoftwarePresentedFrame,

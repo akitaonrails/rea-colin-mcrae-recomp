@@ -1,4 +1,5 @@
-//! The car's crash damage: the per-part dents (`FUN_0041f880`), the part
+//! The car's crash damage: the per-part dents (`FUN_0041f880`, vertex dent
+//! helper `FUN_0041de40`), the part
 //! detach with its breakage kind (`FUN_00420120`) and the per-player part
 //! setup the race load runs (`FUN_0041efe0`'s loop over the body node's
 //! children). The severity is [`crate::prang_sound::impact_severity`]

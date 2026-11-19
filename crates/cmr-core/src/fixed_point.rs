@@ -136,6 +136,7 @@ pub const BAM_QUARTER_TURN: u16 = 0x400;
 /// The indexing and startup values are recovered. The source-owned quarter-wave
 /// reconstruction in [`crate::legacy_math::sin_q16`] supplies the exact
 /// truncating values without copied game bytes.
+/// Builds the 4096-entry Q16.16 sine table (`0x82d380`, used by `FUN_0044f870` and physics/camera math).
 pub fn build_sine_table() -> [i32; TRIG_TABLE_LEN] {
     std::array::from_fn(|index| crate::legacy_math::sin_q16(index as u16).raw())
 }
