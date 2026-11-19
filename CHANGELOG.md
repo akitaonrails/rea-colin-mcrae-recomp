@@ -2,6 +2,34 @@
 
 All notable user-visible changes to this project are documented here.
 
+## [0.1.3] - 2026-11-19
+
+### Added
+
+- Periodic 50-tick mid-stage replay seek keyframes (`FUN_0046c7d0` /
+  `FUN_0046ca70`) and interactive State-8 post-stage replay controls (`P`
+  pause/resume, `[` / `]` ±2 s seek, `Home` restart).
+- Time-Trial ghost car recording, `.cmrg` persistence, and 4-tick interpolated
+  translucent `.c3d` car-mesh playback (`TimeTrialGhostRecording` /
+  `SnapshotCarLane` / `FUN_0046c7d0` / `FUN_0046c910` / `FUN_0046ca70`).
+- Classic analog dial HUD with rotated tachometer needle (`640x480a/b/c.bmp` +
+  `needle.bmp`, `FUN_0045feb0` / `FUN_00460c40`) for Classic and Group-B cars.
+- 3D barrier/scenery/tumble collision sparks (`FUN_0041a900` / `FUN_0041ab00`).
+- Heavy-storm lightning flashes (`FUN_0048cec0` / `FUN_0048cf20`) and
+  cockpit-vs-exterior `rain_in.wav` interior rain loop switching
+  (`FUN_0048d8e0` / `FUN_0048b680`).
+- Decaying force-feedback dual-motor rumble (`FfbRumbleMixer` / `FUN_00433750`
+  / `FUN_00433ac0` / `FUN_00433ec0`) wired into SDL3 gamepad rumble.
+- Progressive car-body mud/dust accumulation & glass-safe lower-body tinting
+  (`FUN_00458670` / `FUN_00459260`) and Jelly-Car vertex wobble cheat
+  (`FUN_0041d790`, `live_cfg[0x26] & 1`).
+
+### Fixed
+
+- Resolved Rust 1.88.0 `clippy::nonminimal_bool` CI warning in `cmr-app`.
+- Completed full State-5 disassembly audit and deterministic function-map
+  classification (`verified_1to1=54`, `wired_live=690`, `partial=0`).
+
 ## [0.1.2] - 2026-11-19
 
 ### Added
