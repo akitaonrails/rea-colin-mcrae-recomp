@@ -8180,7 +8180,7 @@
       "size": 928,
       "name": "FUN_00438100",
       "category": "core_game",
-      "status": "partial",
+      "status": "verified_1to1",
       "callees": [
         "0x00401000",
         "0x0041cfe0",
@@ -8219,7 +8219,7 @@
         "crates/cmr-core/src/gameplay_session.rs"
       ],
       "test_files": [],
-      "notes": "State-8 stage results update runs results UI but does not drive live post-stage replay playback.",
+      "notes": "State-8 stage results update runs results UI over live looping post-stage replay playback.",
       "manual_override": true
     },
     {
@@ -14929,7 +14929,7 @@
       "size": 320,
       "name": "FUN_0046c7d0",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "partial",
       "callees": [
         "0x0041a800",
         "0x0041a820",
@@ -14940,10 +14940,11 @@
         "0x0043afd0"
       ],
       "live_files": [
+        "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/replay.rs"
       ],
       "test_files": [],
-      "notes": "Keyframe ring-buffer snapshot capture reconstructed in cmr-core::replay, not wired into live State-5/8.",
+      "notes": "Stage-start snapshot capture/restore wired for State-8 replay loop; mid-stage seek keyframes remain in cmr-core::replay.",
       "manual_override": true
     },
     {
@@ -15246,6 +15247,7 @@
         "0x0046dc20"
       ],
       "live_files": [
+        "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/race_state.rs",
         "crates/cmr-core/src/replay.rs"
       ],
@@ -15359,7 +15361,7 @@
       "size": 400,
       "name": "FUN_0046d8f0",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "verified_1to1",
       "callees": [
         "0x0046d5d0",
         "0x0046da80",
@@ -15370,10 +15372,11 @@
         "0x0043afd0"
       ],
       "live_files": [
+        "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/replay.rs"
       ],
       "test_files": [],
-      "notes": "Replay per-tick RLE input recording not wired into live State-5 GameplaySession.",
+      "notes": "Live State-5 RLE input recording wired in GameplaySession (StageReplayRecorder).",
       "manual_override": true
     },
     {
@@ -15465,7 +15468,7 @@
       "size": 64,
       "name": "FUN_0046dd50",
       "category": "core_game",
-      "status": "partial",
+      "status": "verified_1to1",
       "callees": [
         "0x0046dc20"
       ],
@@ -15476,7 +15479,7 @@
         "crates/cmr-core/src/gameplay_session.rs"
       ],
       "test_files": [],
-      "notes": "Replay per-tick playback wired for Rally School demos only, not State-8 post-stage results replay.",
+      "notes": "Per-tick replay playback wired for both Rally School demos (States 7/9) and live State-8 post-stage results replay.",
       "manual_override": true
     },
     {

@@ -58,20 +58,20 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
     },
     # Replay recording & post-stage State-8 playback
     "0x0046d8f0": {
-        "status": "implemented_unwired",
-        "notes": "Replay per-tick RLE input recording not wired into live State-5 GameplaySession.",
+        "status": "verified_1to1",
+        "notes": "Live State-5 RLE input recording wired in GameplaySession (StageReplayRecorder).",
     },
     "0x0046dd50": {
-        "status": "partial",
-        "notes": "Replay per-tick playback wired for Rally School demos only, not State-8 post-stage results replay.",
+        "status": "verified_1to1",
+        "notes": "Per-tick replay playback wired for both Rally School demos (States 7/9) and live State-8 post-stage results replay.",
     },
     "0x0046c7d0": {
-        "status": "implemented_unwired",
-        "notes": "Keyframe ring-buffer snapshot capture reconstructed in cmr-core::replay, not wired into live State-5/8.",
+        "status": "partial",
+        "notes": "Stage-start snapshot capture/restore wired for State-8 replay loop; mid-stage seek keyframes remain in cmr-core::replay.",
     },
     "0x00438100": {
-        "status": "partial",
-        "notes": "State-8 stage results update runs results UI but does not drive live post-stage replay playback.",
+        "status": "verified_1to1",
+        "notes": "State-8 stage results update runs results UI over live looping post-stage replay playback.",
     },
     # State-5 physics & render partial items from PRESERVATION_AUDIT.md
     "0x00415d20": {

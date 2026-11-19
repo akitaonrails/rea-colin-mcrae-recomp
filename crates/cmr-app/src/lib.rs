@@ -6222,7 +6222,7 @@ fn advance_game_frame<C: HostClock>(
             .map_err(SessionFourWheelError::Producer)?
     };
     camera.rng = *session.rng_mut();
-    if session.last_reset().camera_reset {
+    if session.last_reset().camera_reset || session.take_replay_camera_snap() {
         camera.snap();
     }
     if let Some(event) = session.take_start_camera_event() {
@@ -6274,7 +6274,8 @@ fn advance_game_frame<C: HostClock>(
     let live_cfg = cmr_core::config_commit::live(&config.image);
     let particles_enabled = config.image[0x10] & 0x80 != 0 && live_cfg[0x26] & 2 == 0;
     let single_alpha = live_cfg[0xb] != 0;
-    if advanced.stepped {
+    let replay_tick = session.is_stage_replay_playing();
+    if advanced.stepped || replay_tick {
         resources.tick_particles(
             session,
             particles_enabled,
@@ -6290,7 +6291,7 @@ fn advance_game_frame<C: HostClock>(
     let quad_under_hud =
         matches!(advanced.route, Some(RenderRoute::StageWorld(_))) && session.results().is_none();
     let reset_fade = session.car().four_wheel.reset.fade_428;
-    if !advanced.stepped || session.state().id() != 5 {
+    if !(advanced.stepped && session.state().id() == 5) && !replay_tick {
         camera.prev_tick_pose = None;
         camera.subtick_snapshot = None;
     }
@@ -6351,7 +6352,7 @@ fn advance_game_frame<C: HostClock>(
             }
             _ => (curr_camera_world, curr_car_world, car),
         };
-        if advanced.stepped && session.state().id() == 5 {
+        if (advanced.stepped && session.state().id() == 5) || replay_tick {
             camera.prev_tick_pose = Some((curr_camera_world, curr_car_world, car));
         }
         let use_subtick = camera.subtick_enabled

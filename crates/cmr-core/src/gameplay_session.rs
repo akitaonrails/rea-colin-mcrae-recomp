@@ -300,6 +300,81 @@ pub struct GameplaySession<'a> {
     /// The game's `rand()` (`DAT_0050b690`) as the session draws on it; the
     /// host copies its generator in before an advance and back after.
     rng: crate::game_rng::GameLcg,
+    /// Live State-5 RLE input recorder (`FUN_0046d8f0`) and State-8 post-stage
+    /// replay playback driver (`FUN_0046dd50` / `FUN_0046c7d0` / `FUN_00438100`).
+    stage_replay: StageReplayRecorder,
+}
+
+/// Live per-tick RLE input recorder (`FUN_0046d8f0`) and State-8 post-stage
+/// replay playback controller (`FUN_0046dd50` / `FUN_0046c7d0` / `FUN_00438100`).
+#[derive(Clone, Default)]
+struct StageReplayRecorder {
+    start_race: Option<RaceState>,
+    runs: Vec<(Controls, u32)>,
+    total_ticks: usize,
+    playing: bool,
+    play_run: usize,
+    play_remaining: u32,
+    camera_snap_pending: bool,
+}
+
+impl StageReplayRecorder {
+    /// Maximum recorded ticks (~20 minutes at 25 Hz) to bound replay memory.
+    const MAX_TICKS: usize = 30_000;
+
+    fn clear(&mut self) {
+        self.start_race = None;
+        self.runs.clear();
+        self.total_ticks = 0;
+        self.playing = false;
+        self.play_run = 0;
+        self.play_remaining = 0;
+        self.camera_snap_pending = false;
+    }
+
+    fn record_tick(&mut self, race_before: &RaceState, controls: Controls) {
+        if self.total_ticks >= Self::MAX_TICKS {
+            return;
+        }
+        if self.start_race.is_none() {
+            self.start_race = Some(race_before.clone());
+        }
+        if let Some(last) = self.runs.last_mut()
+            && last.0 == controls
+            && last.1 < u32::MAX
+        {
+            last.1 += 1;
+        } else {
+            self.runs.push((controls, 1));
+        }
+        self.total_ticks += 1;
+    }
+
+    /// Returns `(controls, reset_to_start)` for the next State-8 replay tick.
+    fn next_playback_controls(&mut self) -> Option<(Controls, bool)> {
+        if self.runs.is_empty() || self.start_race.is_none() {
+            return None;
+        }
+        if !self.playing {
+            self.playing = true;
+            self.play_run = 0;
+            self.play_remaining = self.runs[0].1.saturating_sub(1);
+            self.camera_snap_pending = true;
+            return Some((self.runs[0].0, true));
+        }
+        if self.play_remaining == 0 {
+            self.play_run += 1;
+            if self.play_run >= self.runs.len() {
+                self.play_run = 0;
+                self.play_remaining = self.runs[0].1.saturating_sub(1);
+                self.camera_snap_pending = true;
+                return Some((self.runs[0].0, true));
+            }
+            self.play_remaining = self.runs[self.play_run].1;
+        }
+        self.play_remaining = self.play_remaining.saturating_sub(1);
+        Some((self.runs[self.play_run].0, false))
+    }
 }
 
 /// A loaded `.rsp` / `.ssr` replay track (`DAT_005ef444` intro or `DAT_005ef440` exit).
@@ -934,7 +1009,28 @@ impl<'a> GameplaySession<'a> {
             pending_start_camera_event: None,
             pending_countdown_cues: Vec::new(),
             rng: crate::game_rng::GameLcg::new(1),
+            stage_replay: StageReplayRecorder::default(),
         }
+    }
+
+    /// Whether State-8 post-stage replay playback (`FUN_00438100` /
+    /// `FUN_0046dd50`) is actively driving the car this frame.
+    #[must_use]
+    pub fn is_stage_replay_playing(&self) -> bool {
+        self.stage_replay.playing && self.session.current().id() == 8
+    }
+
+    /// Number of 25 Hz driving ticks recorded for the current stage replay
+    /// (`FUN_0046d8f0`).
+    #[must_use]
+    pub fn stage_replay_recorded_ticks(&self) -> usize {
+        self.stage_replay.total_ticks
+    }
+
+    /// Consume the one-shot camera snap emitted when State-8 post-stage replay
+    /// starts or wraps back to the beginning of the recorded run.
+    pub fn take_replay_camera_snap(&mut self) -> bool {
+        std::mem::take(&mut self.stage_replay.camera_snap_pending)
     }
 
     /// Whether this session steps the complete four-wheel producer, whose car
@@ -1404,6 +1500,7 @@ impl<'a> GameplaySession<'a> {
         self.last_trigger_events.clear();
         self.car_760 = false;
         self.stage_dirty = false;
+        self.stage_replay.clear();
         self.reset_start_sequence();
     }
 
@@ -1436,10 +1533,13 @@ impl<'a> GameplaySession<'a> {
             self.school_pre_drive(&mut controls);
         }
         let pause = std::mem::take(&mut self.pause_flow);
+        if pause.restart {
+            self.stage_replay.clear();
+        }
         let mut driving_sample = if self.session.current().id() == 5 && !pause.enter_pause {
             self.start_sequence_pre_drive(&mut controls);
-            Some(if self.wheel.is_some() {
-                let race_before = self.race.clone();
+            let race_before = self.race.clone();
+            let sample = if self.wheel.is_some() {
                 let mut sample = self.four_wheel_drive(&controls)?;
                 if let Err(error) = self.four_wheel_tail(&controls, progress, &mut sample) {
                     self.race = race_before;
@@ -1451,7 +1551,9 @@ impl<'a> GameplaySession<'a> {
                     crate::stage_moj_motion::step_moj_slot_45c1b0(slot);
                 }
                 self.race.step(&controls, &self.params)
-            })
+            };
+            self.stage_replay.record_tick(&race_before, controls);
+            Some(sample)
         } else {
             None
         };
@@ -1460,7 +1562,11 @@ impl<'a> GameplaySession<'a> {
             self.wet_tick(&controls);
             self.school_after_drive(&controls, progress);
         } else if !pause.enter_pause {
-            self.step_active_school_replay(progress)?;
+            if self.session.current().id() == 8 {
+                self.step_active_stage_replay(progress)?;
+            } else {
+                self.step_active_school_replay(progress)?;
+            }
         }
         let script = self.script;
         let results = &mut self.results;
@@ -1533,6 +1639,9 @@ impl<'a> GameplaySession<'a> {
             self.school_pre_drive(&mut controls);
         }
         let pause = std::mem::take(&mut self.pause_flow);
+        if pause.restart {
+            self.stage_replay.clear();
+        }
         let mut driving_sample = if self.session.current().id() == 5 && !pause.enter_pause {
             self.start_sequence_pre_drive(&mut controls);
             let race_before = self.race.clone();
@@ -1628,6 +1737,7 @@ impl<'a> GameplaySession<'a> {
                     crate::stage_moj_motion::step_moj_slot_45c1b0(slot);
                 }
             }
+            self.stage_replay.record_tick(&race_before, controls);
             Some(sample)
         } else {
             None
@@ -1637,8 +1747,16 @@ impl<'a> GameplaySession<'a> {
             self.wet_tick(&controls);
             self.school_after_drive(&controls, progress);
         } else if !pause.enter_pause {
-            self.step_active_school_replay(progress)
-                .map_err(StaticGameplayAdvanceError::Wheel)?;
+            if self.session.current().id() == 8 {
+                self.step_active_stage_replay_with_static_collision(
+                    progress,
+                    parsed,
+                    damage_owner,
+                )?;
+            } else {
+                self.step_active_school_replay(progress)
+                    .map_err(StaticGameplayAdvanceError::Wheel)?;
+            }
         }
         let script = self.script;
         let results = &mut self.results;
@@ -2156,6 +2274,142 @@ impl<'a> GameplaySession<'a> {
             self.race.step(&controls, &self.params);
         }
         self.sim_ticks += 1;
+        Ok(())
+    }
+
+    /// Restore the recorded stage-start world snapshot before starting or
+    /// looping State-8 post-stage replay playback (`FUN_0046d460` /
+    /// `FUN_00438100`).
+    fn restore_stage_replay_start(&mut self) {
+        if let Some(start_race) = self.stage_replay.start_race.clone() {
+            self.race = start_race;
+        }
+        if let Some(triggers) = self.stage_triggers.as_mut() {
+            triggers.runtime.clone_from(&triggers.initial);
+        }
+        if let Some(initial) = self.moving_objects_initial.as_ref() {
+            self.moving_objects = Some(initial.clone());
+        }
+        self.moj_slots.clone_from(&self.moj_slots_initial);
+        self.object_hit_cache.clear();
+        self.last_reset = ResetOutcome::default();
+        self.last_trigger_events.clear();
+    }
+
+    /// Advance one 25 Hz tick of State-8 post-stage replay playback
+    /// (`FUN_00438100` -> `FUN_0043afd0` -> `FUN_0046dd50` -> `FUN_0046dc20`).
+    fn step_active_stage_replay(
+        &mut self,
+        progress: &StageProgress,
+    ) -> Result<(), WheelPostprocessError> {
+        let Some((controls, reset_to_start)) = self.stage_replay.next_playback_controls() else {
+            return Ok(());
+        };
+        if reset_to_start {
+            self.restore_stage_replay_start();
+        }
+        let mut scratch_progress = StageProgress::new(progress.nodes(), 0);
+        if self.wheel.is_some() {
+            let race_before = self.race.clone();
+            let mut sample = self.four_wheel_drive(&controls)?;
+            if let Err(error) = self.four_wheel_tail(&controls, &mut scratch_progress, &mut sample)
+            {
+                self.race = race_before;
+                return Err(error);
+            }
+        } else {
+            for slot in &mut self.moj_slots {
+                crate::stage_moj_motion::step_moj_slot_45c1b0(slot);
+            }
+            self.race.step(&controls, &self.params);
+        }
+        Ok(())
+    }
+
+    /// Advance one 25 Hz tick of State-8 post-stage replay playback with static
+    /// and dynamic `.obj` scene collisions (`FUN_00438100` -> `FUN_0043afd0` ->
+    /// `FUN_0046dd50`). Leaves finished `progress` and saved car damage intact.
+    fn step_active_stage_replay_with_static_collision<D: StaticDamageOwner>(
+        &mut self,
+        progress: &StageProgress,
+        parsed: &ParsedStaticCollisionScene,
+        damage_owner: &mut D,
+    ) -> Result<(), StaticGameplayAdvanceError<D::Error>> {
+        let Some((controls, reset_to_start)) = self.stage_replay.next_playback_controls() else {
+            return Ok(());
+        };
+        if reset_to_start {
+            self.restore_stage_replay_start();
+        }
+        let race_before = self.race.clone();
+        let previous_center_xz = PreviousCarXz::capture(race_before.car().position);
+        let four_wheel = self.wheel.is_some();
+        let mut sample = if four_wheel {
+            self.four_wheel_drive(&controls)
+                .map_err(StaticGameplayAdvanceError::Wheel)?
+        } else {
+            self.race.step(&controls, &self.params)
+        };
+        if let Some(objects) = self.moving_objects.as_mut() {
+            objects.rebucket(&parsed.grid);
+        }
+        let mut owner = CrashDamageOwner {
+            inner: damage_owner,
+            school: false,
+            damage: None,
+            impacts: Vec::new(),
+        };
+        if let Err(error) =
+            self.race
+                .resolve_static_collision_after_step(previous_center_xz, parsed, &mut owner)
+        {
+            self.race = race_before;
+            return Err(StaticGameplayAdvanceError::Collision(error));
+        }
+        if let Some(mut objects) = self.moving_objects.take() {
+            let mass_48 = self
+                .wheel
+                .as_ref()
+                .map_or(Fixed16::from_raw(1200 << 16), |w| {
+                    w.angular.momentum.moment_scale
+                });
+            let double_rate = self.fade.flag_551af0;
+            let mut hit_cache = std::mem::take(&mut self.object_hit_cache);
+            let mut obj_owner = CrashDamageOwner {
+                inner: damage_owner,
+                school: false,
+                damage: None,
+                impacts: Vec::new(),
+            };
+            let obj_result = self.race.resolve_moving_object_collision_after_step(
+                previous_center_xz,
+                parsed,
+                &mut objects,
+                &mut hit_cache,
+                double_rate,
+                mass_48,
+                &mut obj_owner,
+            );
+            self.moving_objects = Some(objects);
+            self.object_hit_cache = hit_cache;
+            if let Err(error) = obj_result {
+                self.race = race_before;
+                return Err(StaticGameplayAdvanceError::Collision(error));
+            }
+        }
+        sample.car = self.race.car();
+        let mut scratch_progress = StageProgress::new(progress.nodes(), 0);
+        if four_wheel {
+            if let Err(error) = self.four_wheel_tail(&controls, &mut scratch_progress, &mut sample)
+            {
+                self.race = race_before;
+                return Err(StaticGameplayAdvanceError::Wheel(error));
+            }
+        } else {
+            for slot in &mut self.moj_slots {
+                crate::stage_moj_motion::step_moj_slot_45c1b0(slot);
+            }
+        }
         Ok(())
     }
 
@@ -3601,6 +3855,63 @@ mod tests {
             session.car().position,
             CarState::at_rest().position,
             "car launches and moves forward after GO!"
+        );
+    }
+
+    #[test]
+    fn state_8_post_stage_replay_plays_back_and_loops_recorded_run() {
+        let nodes = line();
+        let mut progress = StageProgress::new(&nodes, 0);
+        let mut session = GameplaySession::new(params(), InRaceScript::gameplay_harness());
+
+        // Drive through boot -> State 5 -> finish -> State 8.
+        let mut reached_state_8 = false;
+        for _ in 0..400 {
+            let _ = session.advance(&StationaryClock, frontend_menu(), forward(), &mut progress);
+            if session.state().id() == 8 {
+                // Hold State 8 open (as the live ResultsDirector does while displaying results).
+                session.event_mut().globals.results_550024 = true;
+                reached_state_8 = true;
+                break;
+            }
+        }
+        assert!(reached_state_8, "session must reach State 8 on finish");
+        let recorded = session.stage_replay_recorded_ticks();
+        assert!(recorded > 0, "State 5 must record driving ticks for replay");
+        let finish_cs = progress.finish_centiseconds();
+        assert!(finish_cs.is_some());
+
+        // Advance State 8 frames: replay starts at start_race, moves the car, and loops.
+        let mut positions = Vec::new();
+        let mut snap_count = 0usize;
+        for _ in 0..(recorded + 5) {
+            let _ = session.advance(
+                &StationaryClock,
+                frontend_menu(),
+                Controls::default(),
+                &mut progress,
+            );
+            assert_eq!(session.state().id(), 8);
+            assert!(session.is_stage_replay_playing());
+            if session.take_replay_camera_snap() {
+                snap_count += 1;
+            }
+            positions.push(session.car().position.x.raw());
+        }
+        assert!(
+            snap_count >= 2,
+            "replay must emit camera snap on start and loop wrap (got {snap_count})"
+        );
+        let min_x = *positions.iter().min().unwrap();
+        let max_x = *positions.iter().max().unwrap();
+        assert!(
+            max_x > min_x,
+            "car must visibly move during State-8 post-stage replay (min={min_x}, max={max_x})"
+        );
+        assert_eq!(
+            progress.finish_centiseconds(),
+            finish_cs,
+            "State-8 replay playback must not mutate finished stage time"
         );
     }
 }
