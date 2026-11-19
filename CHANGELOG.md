@@ -2,6 +2,35 @@
 
 All notable user-visible changes to this project are documented here.
 
+## [0.1.2] - 2026-11-19
+
+### Added
+
+- In-race pacenote corner arrows (`images/osdnew/arrws.bmp`, `FUN_004625d0`) with
+  2-slot sliding animation, horizontal left/right mirroring, 12-waypoint TTL
+  dismissal, and `ARROWS` option gating.
+- Falling rain streaks and `IMAGES/SNOW.BMP` snow weather particles
+  (`FUN_0048b960..FUN_0048c620`) with wind slewing, periodic intensity
+  variation, camera-box wrapping, and night attenuation.
+- Clear-day sun, halo, and 7-ring lens flare plus clear-night moon and 60
+  twinkling stars (`IMAGES/LENSFLR/*`, `FUN_00482d10..FUN_00485100`).
+- `GAME DISPLAYS` OFF / MINIMAL / FULL race HUD modes (`FUN_0045f530` /
+  `FUN_00464930`).
+- Deterministic `Rally.exe` `.text` function completeness map
+  (`docs/function-map.json`) and call-graph verifier
+  (`scripts/check-function-map.py`).
+
+### Fixed
+
+- Post-stage State-8 replay now plays back and loops the recorded State-5 run
+  instead of showing a static frame (`FUN_0046d8f0`, `FUN_0046dd50`,
+  `FUN_00438100`).
+- State-4 stage loading screen now advances its `BAR.BMP` progress bar
+  monotonically over the target stage's `.LOA` background (`FUN_00421da0`).
+- Smooth sub-tick frame pacing (`alpha_q16 = 0` on sim-tick frames), wired
+  `ModernSettings::vsync` to `SDL_SetRenderVSync`, and sticky gamepad/keyboard
+  driving device mode so neutral sticks no longer flip back to keyboard mid-turn.
+
 ## [0.1.1] - 2026-11-07
 
 ### Fixed
