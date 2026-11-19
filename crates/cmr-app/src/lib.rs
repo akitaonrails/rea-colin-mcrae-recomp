@@ -2226,6 +2226,11 @@ pub struct RaceHudAssets {
     countdown_go: IndexedBitmap,
     pacenote_arrows: IndexedBitmap,
     pacenote_arrows_available: bool,
+    classic_dial_a: IndexedBitmap,
+    classic_dial_b: IndexedBitmap,
+    classic_dial_c: IndexedBitmap,
+    classic_needle: IndexedBitmap,
+    classic_dial_available: bool,
     numbers: BitmapFont,
     time_numbers: BitmapFont,
     place_numbers: BitmapFont,
@@ -2248,6 +2253,27 @@ impl RaceHudAssets {
                 Ok(bmp) => (bmp, true),
                 Err(_) => (common_gauge.clone(), false),
             };
+        let (
+            classic_dial_a,
+            classic_dial_b,
+            classic_dial_c,
+            classic_needle,
+            classic_dial_available,
+        ) = match (
+            load_race_hud_bitmap(store, RaceHudBitmap::ClassicDialA640),
+            load_race_hud_bitmap(store, RaceHudBitmap::ClassicDialB640),
+            load_race_hud_bitmap(store, RaceHudBitmap::ClassicDialC640),
+            load_race_hud_bitmap(store, RaceHudBitmap::ClassicNeedle),
+        ) {
+            (Ok(a), Ok(b), Ok(c), Ok(n)) => (a, b, c, n, true),
+            _ => (
+                common_gauge.clone(),
+                common_gauge.clone(),
+                common_gauge.clone(),
+                common_gauge.clone(),
+                false,
+            ),
+        };
         let numbers = load_race_hud_font(store, RaceHudFont::Numbers640)?;
         let time_numbers = load_race_hud_font(store, RaceHudFont::TimeNumbers640)?;
         let place_numbers = load_race_hud_font(store, RaceHudFont::PlaceNumbers640)
@@ -2272,6 +2298,11 @@ impl RaceHudAssets {
             countdown_go,
             pacenote_arrows,
             pacenote_arrows_available,
+            classic_dial_a,
+            classic_dial_b,
+            classic_dial_c,
+            classic_needle,
+            classic_dial_available,
             numbers,
             time_numbers,
             place_numbers,
@@ -2326,6 +2357,10 @@ impl RaceHudAssets {
             RaceHudBitmap::CarCelica => &self.classification_cars[12],
             RaceHudBitmap::CarM4r => &self.classification_cars[13],
             RaceHudBitmap::PacenoteArrows => &self.pacenote_arrows,
+            RaceHudBitmap::ClassicDialA640 => &self.classic_dial_a,
+            RaceHudBitmap::ClassicDialB640 => &self.classic_dial_b,
+            RaceHudBitmap::ClassicDialC640 => &self.classic_dial_c,
+            RaceHudBitmap::ClassicNeedle => &self.classic_needle,
         }
     }
 
@@ -4337,6 +4372,7 @@ struct SubtickRenderSnapshot {
     lens_flare_enabled: bool,
     twinkle_phase: u32,
     display_mode: cmr_core::race_hud_plan::GameDisplayMode,
+    use_classic_dial: bool,
     show_hud: bool,
 }
 
@@ -4717,9 +4753,11 @@ fn compose_live_race_hud(
         None,
         &[],
         cmr_core::race_hud_plan::GameDisplayMode::Full,
+        false,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compose_live_race_hud_with_countdown(
     resources: &StageRenderResources,
     frame: SoftwarePresentedFrame,
@@ -4728,19 +4766,26 @@ fn compose_live_race_hud_with_countdown(
     countdown: Option<cmr_core::race_hud_plan::RaceHudCountdown>,
     pacenote_arrows: &[cmr_core::pacenote_schedule::PacenoteArrowSprite],
     display_mode: cmr_core::race_hud_plan::GameDisplayMode,
+    use_classic_dial: bool,
 ) -> Result<SoftwarePresentedFrame, StageFrameError> {
     let assets = resources
         .race_hud()
         .ok_or(StageFrameError::MissingHudAssets)?;
+    let classic = use_classic_dial && assets.classic_dial_available;
     let mut commands = Vec::new();
-    if display_mode.shows_progress_and_splits() {
+    if display_mode.shows_progress_and_splits() && !classic {
         commands.extend(
             plan_common_gauge_border_fragments(input.viewport).map_err(StageFrameError::HudPlan)?,
         );
     }
     if display_mode.shows_gauges() {
-        let plan = cmr_core::race_hud_plan::plan_race_hud_for_display_mode(input, display_mode)
-            .map_err(StageFrameError::HudPlan)?;
+        let plan = if classic {
+            cmr_core::race_hud_plan::plan_classic_single_player_race_hud(input, display_mode)
+                .map_err(StageFrameError::HudPlan)?
+        } else {
+            cmr_core::race_hud_plan::plan_race_hud_for_display_mode(input, display_mode)
+                .map_err(StageFrameError::HudPlan)?
+        };
         commands.extend_from_slice(plan.commands());
     }
     if display_mode.shows_progress_and_splits()
@@ -4766,14 +4811,100 @@ fn compose_live_race_hud_with_countdown(
     if commands.is_empty() {
         return Ok(frame);
     }
-    compose_race_hud_commands(
+    let frame = compose_race_hud_commands(
         frame,
         &commands,
         |font| assets.font(font),
         |bitmap| assets.bitmap(bitmap),
     )
     .map(|(frame, _)| frame)
-    .map_err(StageFrameError::HudCompose)
+    .map_err(StageFrameError::HudCompose)?;
+    if classic && display_mode.shows_gauges() {
+        Ok(draw_classic_tachometer_needle(
+            frame,
+            &assets.classic_needle,
+            input.rev_q16,
+        ))
+    } else {
+        Ok(frame)
+    }
+}
+
+/// Draw the rotated classic tachometer needle (`images/osdnew/High/classic/needle.bmp`,
+/// `FUN_00460c40` at `0x460f40..0x460f8e`) around the classic dial pivot `(604, 333)`
+/// in 640x480 space, scaled to the current viewport.
+fn draw_classic_tachometer_needle(
+    frame: SoftwarePresentedFrame,
+    needle: &IndexedBitmap,
+    rev_q16: i32,
+) -> SoftwarePresentedFrame {
+    if needle.width == 0 || needle.height == 0 {
+        return frame;
+    }
+    let extent = frame.extent();
+    let w = usize::from(extent.width);
+    let h = usize::from(extent.height);
+    if w == 0 || h == 0 {
+        return frame;
+    }
+    let palette = Box::new(*frame.palette());
+    let pixels = frame.pixels().to_vec();
+    let mut rgba8 = frame.rgba8().map(<[u8]>::to_vec).unwrap_or_else(|| {
+        let mut out = vec![0u8; w * h * 4];
+        for (i, &idx) in pixels.iter().enumerate() {
+            let c = palette[usize::from(idx)];
+            out[i * 4] = c.red;
+            out[i * 4 + 1] = c.green;
+            out[i * 4 + 2] = c.blue;
+            out[i * 4 + 3] = 255;
+        }
+        out
+    });
+    let scale_x = f32::from(extent.width) / 640.0;
+    let scale_y = f32::from(extent.height) / 480.0;
+    let pivot_x = 604.0 * scale_x;
+    let pivot_y = 333.0 * scale_y;
+    let t = (f32::from(rev_q16.clamp(0, 0x1_0000) as u16) / 65536.0).clamp(0.0, 1.0);
+    let angle = (-130.0f32 + t * 240.0).to_radians();
+    let (sin_a, cos_a) = angle.sin_cos();
+    let half_w = (needle.width as f32 * 0.5) * scale_x;
+    let len_h = (needle.height as f32) * scale_y;
+    let radius = half_w.hypot(len_h).ceil() as i32;
+    let x0 = (pivot_x as i32 - radius).max(0);
+    let y0 = (pivot_y as i32 - radius).max(0);
+    let x1 = (pivot_x as i32 + radius).min(w as i32);
+    let y1 = (pivot_y as i32 + radius).min(h as i32);
+    let nw = needle.width as f32;
+    let nh = needle.height as f32;
+    for ty in y0..y1 {
+        let dy = (ty as f32 - pivot_y) / scale_y;
+        let drow = (ty as usize) * w;
+        for tx in x0..x1 {
+            let dx = (tx as f32 - pivot_x) / scale_x;
+            let lx = dx * cos_a + dy * sin_a + nw * 0.5;
+            let ly = -dx * sin_a + dy * cos_a + nh * 0.85;
+            if lx < 0.0 || lx >= nw || ly < 0.0 || ly >= nh {
+                continue;
+            }
+            let idx = needle.pixels[(ly as usize) * (needle.width as usize) + (lx as usize)];
+            if idx == 0 {
+                continue;
+            }
+            let Some(c) = needle.palette.get(usize::from(idx)) else {
+                continue;
+            };
+            let off = (drow + tx as usize) * 4;
+            rgba8[off] = c.red;
+            rgba8[off + 1] = c.green;
+            rgba8[off + 2] = c.blue;
+            rgba8[off + 3] = 255;
+        }
+    }
+    let Ok(out) = SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)
+    else {
+        return frame;
+    };
+    out.with_rgba8(rgba8.into_boxed_slice()).unwrap_or(frame)
 }
 
 fn compose_world_for_route<F>(
@@ -6693,6 +6824,10 @@ fn advance_game_frame<C: HostClock>(
                 display_mode: cmr_core::race_hud_plan::GameDisplayMode::from_config_byte(
                     config.image[0x10],
                 ),
+                use_classic_dial: !session.event().globals.school_d3ca88
+                    && cmr_core::race_hud_plan::uses_classic_analog_dial(
+                        session.event().cfg.car_0b6,
+                    ),
                 show_hud,
             }));
         } else {
@@ -6795,6 +6930,8 @@ fn advance_game_frame<C: HostClock>(
             session.hud_countdown(),
             &pacenote_arrows,
             cmr_core::race_hud_plan::GameDisplayMode::from_config_byte(config.image[0x10]),
+            !session.event().globals.school_d3ca88
+                && cmr_core::race_hud_plan::uses_classic_analog_dial(session.event().cfg.car_0b6),
         )
     })?;
     // The results director's cues: `FUN_00467ef0(0, 0, 1)` (FORWARD) on a
@@ -7115,6 +7252,7 @@ fn compose_subtick_frame(
             snap.hud_countdown,
             &snap.pacenote_arrows,
             snap.display_mode,
+            snap.use_classic_dial,
         )
         .ok()?;
     }

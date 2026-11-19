@@ -111,6 +111,14 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "status": "verified_1to1",
         "notes": "Normal single-player race HUD rev strip, speed, gear, timer, progress rail, and GAME DISPLAYS (OFF/MINIMAL/FULL) gates (race_hud_plan.rs + compose_live_race_hud_with_countdown).",
     },
+    "0x0045feb0": {
+        "status": "verified_1to1",
+        "notes": "Classic analog dial HUD bitmap loader & 640x480 rect descriptors (640x480a/b/c.bmp + needle.bmp in RaceHudAssets + plan_classic_single_player_race_hud).",
+    },
+    "0x00460c40": {
+        "status": "verified_1to1",
+        "notes": "Classic analog dial HUD renderer with rotated tachometer needle for Classic/Group-B cars 3/4/5/8 (plan_classic_single_player_race_hud + draw_classic_tachometer_needle).",
+    },
     # Falling rain streaks and snow billboards (IMAGES\SNOW.BMP)
     "0x0048b960": {
         "status": "verified_1to1",

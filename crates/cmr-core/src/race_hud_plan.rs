@@ -112,6 +112,10 @@ pub enum RaceHudBitmap {
     CarCelica,
     CarM4r,
     PacenoteArrows,
+    ClassicDialA640,
+    ClassicDialB640,
+    ClassicDialC640,
+    ClassicNeedle,
 }
 
 impl RaceHudBitmap {
@@ -145,6 +149,10 @@ impl RaceHudBitmap {
             Self::CarCelica => "images/osdnew/High/common/celica.bmp",
             Self::CarM4r => "images/osdnew/High/common/mr4.bmp",
             Self::PacenoteArrows => "images/osdnew/arrws.bmp",
+            Self::ClassicDialA640 => "images/osdnew/revs/classic/640x480a.bmp",
+            Self::ClassicDialB640 => "images/osdnew/revs/classic/640x480b.bmp",
+            Self::ClassicDialC640 => "images/osdnew/revs/classic/640x480c.bmp",
+            Self::ClassicNeedle => "images/osdnew/High/classic/needle.bmp",
         }
     }
 
@@ -500,6 +508,120 @@ pub fn plan_race_hud_for_display_mode(
         });
     }
     Ok(plan)
+}
+
+/// `FUN_00464930` (`0x464ad2..0x464af4`): Classic/Group-B cars (selectors 3, 4,
+/// 5, 8) use the classic analog dial HUD (`FUN_00460c40`) instead of the normal
+/// digital rev strip (`FUN_0045f530`).
+#[must_use]
+pub const fn uses_classic_analog_dial(car_selector: u8) -> bool {
+    matches!(car_selector & 0x0f, 3 | 4 | 5 | 8)
+}
+
+/// Plans the classic analog dial single-player race HUD (`FUN_0045feb0` +
+/// `FUN_00460c40`) using `640x480a.bmp`, `640x480b.bmp`, and `640x480c.bmp`.
+/// The rotated tachometer needle (`needle.bmp`, `0x460f40..0x460f8e`) is drawn
+/// over the dial face by the video/app compositor.
+pub fn plan_classic_single_player_race_hud(
+    input: RaceHudPreparedInputs,
+    mode: GameDisplayMode,
+) -> Result<RaceHudPlan, RaceHudPlanError> {
+    if input.viewport.width == 0 || input.viewport.height == 0 {
+        return Err(RaceHudPlanError::EmptyViewport);
+    }
+    if !mode.shows_gauges() {
+        return Ok(RaceHudPlan {
+            commands: Vec::new(),
+            incomplete: Vec::new(),
+        });
+    }
+    let mut commands = Vec::with_capacity(12);
+    // `FUN_0045feb0` (640x480 branch `0x46010c..0x4602aa`) & `FUN_00460c40` (`0x460e60..0x460f3b`):
+    // 1. Center dial cap (`640x480c.bmp`)
+    push_bitmap(
+        &mut commands,
+        input.viewport,
+        RaceHudBitmap::ClassicDialC640,
+        HudRect::new(0x24, 0xa4, 0x34, 0x2f),
+        HudRect::new(0x242, 0x136, 0x34, 0x2f),
+    );
+    // 2. Bottom speedometer strip (`640x480a.bmp`)
+    push_bitmap(
+        &mut commands,
+        input.viewport,
+        RaceHudBitmap::ClassicDialA640,
+        HudRect::new(1, 1, 256, 64),
+        HudRect::new(0x176, 0x19c, 256, 64),
+    );
+    // 3. Right vertical rim (`640x480b.bmp`)
+    push_bitmap(
+        &mut commands,
+        input.viewport,
+        RaceHudBitmap::ClassicDialB640,
+        HudRect::new(2, 5, 5, 0xd4),
+        HudRect::new(0x275, 0xfc, 5, 0xd4),
+    );
+    // 4. Analog tachometer body (`640x480c.bmp`)
+    push_bitmap(
+        &mut commands,
+        input.viewport,
+        RaceHudBitmap::ClassicDialC640,
+        HudRect::new(3, 1, 0x68, 0x94),
+        HudRect::new(0x20d, 0x108, 0x68, 0x94),
+    );
+    // 5. Progress rail marker when `GAME DISPLAYS == FULL` (`0x460fa0..0x4610b9`).
+    if mode.shows_progress_and_splits() {
+        let marker_y =
+            0x103 - ((i64::from(input.progress_q16.clamp(0, 0x1_0000)) * 0xf3) >> 16) as i32;
+        push_bitmap(
+            &mut commands,
+            input.viewport,
+            RaceHudBitmap::ProgressRedSpot,
+            HudRect::new(0, 0, 16, 16),
+            HudRect::new(0x26a, marker_y, 16, 16),
+        );
+    }
+    // 6. Gear readout (`0x4610b9..0x461143`, Q16 `(0xdbe7, 0xbba5)`).
+    let gear_text = match input.gear {
+        0 => "R".to_owned(),
+        7 => "N".to_owned(),
+        g => format!("{g}"),
+    };
+    commands.push(RaceHudCommand::Text {
+        font: RaceHudFont::Numbers640,
+        text: gear_text,
+        position: HudTextPosition::Q16(HudPoint::new(0xdbe7, 0xbba5)),
+        color: COMMON_GAUGE_COLOR,
+        flags: LEGACY_TEXT_FLAGS,
+    });
+    // 7. Speed readout on the classic bottom strip.
+    commands.push(RaceHudCommand::Text {
+        font: RaceHudFont::Numbers640,
+        text: format!("{}", input.speed.max(0)),
+        position: HudTextPosition::Q16(HudPoint::new(0xda9f, 0xd8d4)),
+        color: COMMON_GAUGE_COLOR,
+        flags: LEGACY_TEXT_FLAGS,
+    });
+    // 8. Stage timer readout (`timenum.fon` bottom-left).
+    let total_cs = input.elapsed_centiseconds;
+    let minutes = (total_cs / 6000) % 100;
+    let seconds = (total_cs / 100) % 60;
+    let hundredths = total_cs % 100;
+    let mut timer = String::with_capacity(8);
+    let _ = write!(timer, "{minutes:02}:{seconds:02}.{hundredths:02}");
+    let timer_x = (28 * i32::from(input.viewport.width)) / i32::from(REFERENCE_EXTENT.width);
+    let timer_y = (434 * i32::from(input.viewport.height)) / i32::from(REFERENCE_EXTENT.height);
+    commands.push(RaceHudCommand::Text {
+        font: RaceHudFont::TimeNumbers640,
+        text: timer,
+        position: HudTextPosition::Pixels(HudPoint::new(timer_x, timer_y)),
+        color: TIMER_COLOR,
+        flags: 0x10,
+    });
+    Ok(RaceHudPlan {
+        commands,
+        incomplete: Vec::new(),
+    })
 }
 
 /// Plans the exact recovered subset in native source order.
@@ -1465,6 +1587,44 @@ mod tests {
             cmd,
             RaceHudCommand::Bitmap {
                 bitmap: RaceHudBitmap::ProgressRedSpot,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn classic_analog_dial_selects_classic_cars_and_plans_dial_pieces() {
+        for sel in 0..14u8 {
+            let expected = matches!(sel, 3 | 4 | 5 | 8);
+            assert_eq!(uses_classic_analog_dial(sel), expected);
+        }
+        let input = RaceHudPreparedInputs {
+            viewport: REFERENCE_EXTENT,
+            gauge_inset: CommonGaugeInset::ConfigLowThreeBitsZero,
+            rev_q16: 0x8000,
+            speed: 92,
+            gear: 4,
+            progress_q16: 0x4000,
+            elapsed_centiseconds: 4567,
+        };
+        assert!(
+            plan_classic_single_player_race_hud(input, GameDisplayMode::Off)
+                .unwrap()
+                .commands()
+                .is_empty()
+        );
+        let full = plan_classic_single_player_race_hud(input, GameDisplayMode::Full).unwrap();
+        assert!(full.commands().iter().any(|c| matches!(
+            c,
+            RaceHudCommand::Bitmap {
+                bitmap: RaceHudBitmap::ClassicDialA640,
+                ..
+            }
+        )));
+        assert!(full.commands().iter().any(|c| matches!(
+            c,
+            RaceHudCommand::Bitmap {
+                bitmap: RaceHudBitmap::ClassicDialC640,
                 ..
             }
         )));

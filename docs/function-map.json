@@ -13060,7 +13060,7 @@
       "size": 3472,
       "name": "FUN_0045feb0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00421c90",
         "0x00495ed0",
@@ -13070,8 +13070,12 @@
       "callers": [
         "0x00462230"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/race_hud_plan.rs"
+      ],
+      "test_files": [],
+      "notes": "Classic analog dial HUD bitmap loader & 640x480 rect descriptors (640x480a/b/c.bmp + needle.bmp in RaceHudAssets + plan_classic_single_player_race_hud).",
+      "manual_override": true
     },
     {
       "address": "0x00460c40",
@@ -13079,7 +13083,7 @@
       "size": 3488,
       "name": "FUN_00460c40",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00401000",
         "0x00461a60",
@@ -13097,8 +13101,13 @@
       "callers": [
         "0x00464930"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/race_hud_plan.rs"
+      ],
+      "test_files": [],
+      "notes": "Classic analog dial HUD renderer with rotated tachometer needle for Classic/Group-B cars 3/4/5/8 (plan_classic_single_player_race_hud + draw_classic_tachometer_needle).",
+      "manual_override": true
     },
     {
       "address": "0x004619e0",
@@ -14886,6 +14895,7 @@
         "0x0043afd0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/replay.rs"
       ],
@@ -14932,6 +14942,7 @@
         "0x0043afd0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/replay.rs"
       ],
