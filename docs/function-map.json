@@ -3124,7 +3124,7 @@
       "size": 2864,
       "name": "FUN_00421da0",
       "category": "core_game",
-      "status": "partial",
+      "status": "verified_1to1",
       "callees": [
         "0x00401000",
         "0x00401030",
@@ -3226,7 +3226,7 @@
       "test_files": [
         "crates/cmr-app/src/lib.rs"
       ],
-      "notes": "LoadInterstitial draws BAR/LINE but cmr-app hardcodes STAGE_LOADING_PROGRESS_CAP instead of stepping LoadProgress across load phases.",
+      "notes": "LoadInterstitial steps LoadProgress (0..=0x1a) across State-4 frames via StageLoadPump and draws BAR/LINE over the target stage .LOA.",
       "manual_override": true
     },
     {
@@ -11072,7 +11072,9 @@
         "crates/cmr-core/src/load_interstitial.rs",
         "crates/cmr-core/src/render_route.rs"
       ],
-      "test_files": []
+      "test_files": [
+        "crates/cmr-app/src/lib.rs"
+      ]
     },
     {
       "address": "0x0044dea0",

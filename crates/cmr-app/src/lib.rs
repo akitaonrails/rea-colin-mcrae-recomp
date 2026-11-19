@@ -9635,6 +9635,119 @@ struct StageReloadContext<'a> {
     weather_tables: Option<&'a StageWeatherTables>,
 }
 
+/// Progressive State-4 loading-bar controller (`FUN_00421da0` -> `FUN_0044de20`
+/// / `DAT_0055c240` capped at `STAGE_LOADING_PROGRESS_CAP = 0x1a`).
+///
+/// Presents the target stage's `.LOA` loading screen immediately on entry into
+/// State 4 and steps [`cmr_core::load_interstitial::LoadProgress`] monotonically
+/// from `0` to `STAGE_LOADING_PROGRESS_CAP` (`0x1a`), running the blocking
+/// stage reload once the loading screen and bar are visibly on screen.
+struct StageLoadPump {
+    active: bool,
+    reloaded: bool,
+    progress: cmr_core::load_interstitial::LoadProgress,
+    preview_background: Option<SoftwarePresentedFrame>,
+}
+
+/// Action returned by [`StageLoadPump::step`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StageLoadPumpStep {
+    /// Not in State 4, or loading has already completed; advance the FSM normally.
+    PassThrough,
+    /// Present the State-4 loading interstitial at `progress_byte` (`0..=0x1a`).
+    Present(u8),
+    /// Run `reload_stage_for_event` now, then present the loading bar at `progress_byte`.
+    ReloadAndPresent(u8),
+}
+
+impl StageLoadPump {
+    const RELOAD_THRESHOLD: u8 = 18;
+    const STEP_INCREMENT: u8 = 3;
+
+    fn new() -> Self {
+        Self {
+            active: false,
+            reloaded: false,
+            progress: cmr_core::load_interstitial::LoadProgress::new(STAGE_LOADING_PROGRESS_CAP),
+            preview_background: None,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.active = false;
+        self.reloaded = false;
+        self.progress = cmr_core::load_interstitial::LoadProgress::new(STAGE_LOADING_PROGRESS_CAP);
+        self.preview_background = None;
+    }
+
+    /// Advance one 25 Hz tick of the State-4 loading bar.
+    fn step(&mut self, state_id: u8) -> StageLoadPumpStep {
+        if state_id != 4 {
+            if self.active {
+                self.reset();
+            }
+            return StageLoadPumpStep::PassThrough;
+        }
+        if !self.active {
+            self.active = true;
+            self.reloaded = false;
+            self.progress =
+                cmr_core::load_interstitial::LoadProgress::new(STAGE_LOADING_PROGRESS_CAP);
+            return StageLoadPumpStep::Present(self.progress.byte());
+        }
+        if !self.reloaded {
+            for _ in 0..Self::STEP_INCREMENT {
+                if self.progress.byte() >= Self::RELOAD_THRESHOLD {
+                    break;
+                }
+                self.progress.advance();
+            }
+            if self.progress.byte() >= Self::RELOAD_THRESHOLD {
+                self.reloaded = true;
+                self.progress
+                    .set(STAGE_LOADING_PROGRESS_CAP.saturating_sub(3));
+                return StageLoadPumpStep::ReloadAndPresent(self.progress.byte());
+            }
+            return StageLoadPumpStep::Present(self.progress.byte());
+        }
+        if !self.progress.is_complete() {
+            for _ in 0..Self::STEP_INCREMENT {
+                self.progress.advance();
+            }
+            return StageLoadPumpStep::Present(self.progress.byte());
+        }
+        self.reset();
+        StageLoadPumpStep::PassThrough
+    }
+
+    fn load_preview_background(
+        &mut self,
+        event: &EventState,
+        game_root: Option<&Path>,
+        fallback: Option<&SoftwarePresentedFrame>,
+    ) {
+        if self.preview_background.is_some() {
+            return;
+        }
+        let target_bg = cmr_core::stage_path::stage_base(event)
+            .and_then(|base| game_root.and_then(|root| resolve_stage_dir(root, &base)))
+            .and_then(|(dir, name)| {
+                read_loading_background(&dir, &name, DecodeLimits::default())
+                    .ok()
+                    .flatten()
+                    .and_then(|bytes| parse_loading_background(&bytes).ok())
+            });
+        self.preview_background = target_bg.or_else(|| fallback.cloned());
+    }
+
+    fn background<'a>(
+        &'a self,
+        fallback: Option<&'a SoftwarePresentedFrame>,
+    ) -> Option<&'a SoftwarePresentedFrame> {
+        self.preview_background.as_ref().or(fallback)
+    }
+}
+
 /// The stage load of state 4's render handler `FUN_00421da0`: just before
 /// the race is armed, load the stage the event points at (`FUN_0044d4c0`)
 /// when it is not the loaded one, carrying the FSM over to the new stage's
@@ -10571,6 +10684,7 @@ pub fn run_windowed_game_session(
     };
     let car_codes = open_car_codes(runtime_data);
     let mut results = RaceResults::open(runtime_data, language);
+    let mut load_pump = StageLoadPump::new();
     let reload = StageReloadContext {
         game_root: media_root
             .parent()
@@ -10649,36 +10763,106 @@ pub fn run_windowed_game_session(
                             f9: input.keys.is_down(0x78),
                             f10: input.keys.is_down(0x79),
                         };
-                        let frame = reload_stage_for_event(
+                        match load_pump.step(session.state().id()) {
+                            StageLoadPumpStep::Present(progress_byte) => {
+                                load_pump.load_preview_background(
+                                    session.event(),
+                                    reload.game_root.as_deref(),
+                                    resources.loading_background(),
+                                );
+                                let present = loading_interstitial_for_route(
+                                    Some(RenderRoute::LoadInterstitial),
+                                    load_pump.background(resources.loading_background()),
+                                    resources.loading_overlay.as_ref(),
+                                    progress_byte,
+                                )
+                                .ok()
+                                .flatten();
+                                return WindowedGameFrame {
+                                    present,
+                                    stopped: false,
+                                    music_active: false,
+                                    speech_active: false,
+                                    speech_reset: true,
+                                    speech_master: pause.options.speech_master_4f6538,
+                                    codriver_calls: Vec::new(),
+                                    music_config: Some(config.music_bytes()),
+                                    modern_settings: Some(config.modern),
+                                    rumble_low_high_q16: None,
+                                };
+                            }
+                            StageLoadPumpStep::ReloadAndPresent(progress_byte) => {
+                                if let Err(error) = reload_stage_for_event(
+                                    &mut session,
+                                    &mut resources,
+                                    &mut progress,
+                                    &mut audio,
+                                    &mut camera,
+                                    &mut loaded_stage,
+                                    &reload,
+                                    &mut results,
+                                    &mut config,
+                                ) {
+                                    eprintln!(
+                                        "cmr-app: recoverable stage reload error ({error}); returning to front-end"
+                                    );
+                                    load_pump.reset();
+                                    *session.event_mut() = EventState::default();
+                                    config.returning = true;
+                                    root_interaction.resume_to_root(clock.millis());
+                                    return WindowedGameFrame {
+                                        present: Some(initial.clone()),
+                                        stopped: false,
+                                        music_active: true,
+                                        speech_active: false,
+                                        speech_reset: true,
+                                        speech_master: pause.options.speech_master_4f6538,
+                                        codriver_calls: Vec::new(),
+                                        music_config: Some(config.music_bytes()),
+                                        modern_settings: Some(config.modern),
+                                        rumble_low_high_q16: None,
+                                    };
+                                }
+                                let present = loading_interstitial_for_route(
+                                    Some(RenderRoute::LoadInterstitial),
+                                    resources.loading_background(),
+                                    resources.loading_overlay.as_ref(),
+                                    progress_byte,
+                                )
+                                .ok()
+                                .flatten();
+                                return WindowedGameFrame {
+                                    present,
+                                    stopped: false,
+                                    music_active: false,
+                                    speech_active: false,
+                                    speech_reset: true,
+                                    speech_master: pause.options.speech_master_4f6538,
+                                    codriver_calls: Vec::new(),
+                                    music_config: Some(config.music_bytes()),
+                                    modern_settings: Some(config.modern),
+                                    rumble_low_high_q16: None,
+                                };
+                            }
+                            StageLoadPumpStep::PassThrough => {}
+                        }
+                        let frame = advance_game_frame(
                             &mut session,
-                            &mut resources,
+                            &mut keyboard,
+                            &mut analog,
+                            &response,
+                            &mut root_interaction,
                             &mut progress,
-                            &mut audio,
+                            &clock,
+                            &mut resources,
                             &mut camera,
-                            &mut loaded_stage,
-                            &reload,
-                            &mut results,
+                            &mut damage_owner,
+                            &mut audio,
+                            &mut pause,
                             &mut config,
-                        )
-                        .and_then(|()| {
-                            advance_game_frame(
-                                &mut session,
-                                &mut keyboard,
-                                &mut analog,
-                                &response,
-                                &mut root_interaction,
-                                &mut progress,
-                                &clock,
-                                &mut resources,
-                                &mut camera,
-                                &mut damage_owner,
-                                &mut audio,
-                                &mut pause,
-                                &mut config,
-                                &mut results,
-                                input,
-                            )
-                        });
+                            &mut results,
+                            input,
+                        );
                         results.frame(&mut session, &progress, &mut config, &mut camera.rng);
                         match frame {
                             Ok(outcome) => {
@@ -10794,36 +10978,105 @@ pub fn run_windowed_game_session(
                 }
             };
             session.set_results_input(results.poll_keys(input.keys));
-            let frame = reload_stage_for_event(
+            match load_pump.step(session.state().id()) {
+                StageLoadPumpStep::Present(progress_byte) => {
+                    load_pump.load_preview_background(
+                        session.event(),
+                        reload.game_root.as_deref(),
+                        resources.loading_background(),
+                    );
+                    let present = loading_interstitial_for_route(
+                        Some(RenderRoute::LoadInterstitial),
+                        load_pump.background(resources.loading_background()),
+                        resources.loading_overlay.as_ref(),
+                        progress_byte,
+                    )
+                    .ok()
+                    .flatten();
+                    return WindowedGameFrame {
+                        present,
+                        stopped: false,
+                        music_active: false,
+                        speech_active: false,
+                        speech_reset: true,
+                        speech_master: pause.options.speech_master_4f6538,
+                        codriver_calls: Vec::new(),
+                        music_config: Some(config.music_bytes()),
+                        modern_settings: Some(config.modern),
+                        rumble_low_high_q16: None,
+                    };
+                }
+                StageLoadPumpStep::ReloadAndPresent(progress_byte) => {
+                    if let Err(error) = reload_stage_for_event(
+                        &mut session,
+                        &mut resources,
+                        &mut progress,
+                        &mut audio,
+                        &mut camera,
+                        &mut loaded_stage,
+                        &reload,
+                        &mut results,
+                        &mut config,
+                    ) {
+                        eprintln!(
+                            "cmr-app: recoverable stage reload error ({error}); returning to front-end"
+                        );
+                        load_pump.reset();
+                        *session.event_mut() = EventState::default();
+                        config.returning = true;
+                        return WindowedGameFrame {
+                            present: Some(initial.clone()),
+                            stopped: false,
+                            music_active: true,
+                            speech_active: false,
+                            speech_reset: true,
+                            speech_master: pause.options.speech_master_4f6538,
+                            codriver_calls: Vec::new(),
+                            music_config: Some(config.music_bytes()),
+                            modern_settings: Some(config.modern),
+                            rumble_low_high_q16: None,
+                        };
+                    }
+                    let present = loading_interstitial_for_route(
+                        Some(RenderRoute::LoadInterstitial),
+                        resources.loading_background(),
+                        resources.loading_overlay.as_ref(),
+                        progress_byte,
+                    )
+                    .ok()
+                    .flatten();
+                    return WindowedGameFrame {
+                        present,
+                        stopped: false,
+                        music_active: false,
+                        speech_active: false,
+                        speech_reset: true,
+                        speech_master: pause.options.speech_master_4f6538,
+                        codriver_calls: Vec::new(),
+                        music_config: Some(config.music_bytes()),
+                        modern_settings: Some(config.modern),
+                        rumble_low_high_q16: None,
+                    };
+                }
+                StageLoadPumpStep::PassThrough => {}
+            }
+            let frame = advance_game_frame(
                 &mut session,
-                &mut resources,
+                &mut keyboard,
+                &mut analog,
+                &response,
+                &mut root_interaction,
                 &mut progress,
-                &mut audio,
+                &clock,
+                &mut resources,
                 &mut camera,
-                &mut loaded_stage,
-                &reload,
-                &mut results,
+                &mut damage_owner,
+                &mut audio,
+                &mut pause,
                 &mut config,
-            )
-            .and_then(|()| {
-                advance_game_frame(
-                    &mut session,
-                    &mut keyboard,
-                    &mut analog,
-                    &response,
-                    &mut root_interaction,
-                    &mut progress,
-                    &clock,
-                    &mut resources,
-                    &mut camera,
-                    &mut damage_owner,
-                    &mut audio,
-                    &mut pause,
-                    &mut config,
-                    &mut results,
-                    input,
-                )
-            });
+                &mut results,
+                input,
+            );
             results.frame(&mut session, &progress, &mut config, &mut camera.rng);
             match frame {
                 Ok(outcome) => WindowedGameFrame {
@@ -11471,6 +11724,31 @@ mod tests {
         assert!(!select_driving_input_mode(true, true, false, true));
         // Disconnecting the gamepad falls back to keyboard mode.
         assert!(!select_driving_input_mode(true, false, false, false));
+    }
+
+    #[test]
+    fn stage_load_pump_advances_progress_monotonically_from_zero_to_cap() {
+        let mut pump = StageLoadPump::new();
+        assert_eq!(pump.step(2), StageLoadPumpStep::PassThrough);
+        let mut seen = Vec::new();
+        let mut reloads = 0usize;
+        loop {
+            match pump.step(4) {
+                StageLoadPumpStep::Present(byte) => seen.push(byte),
+                StageLoadPumpStep::ReloadAndPresent(byte) => {
+                    reloads += 1;
+                    seen.push(byte);
+                }
+                StageLoadPumpStep::PassThrough => break,
+            }
+        }
+        assert_eq!(reloads, 1, "stage reload must fire exactly once mid-load");
+        assert_eq!(seen.first().copied(), Some(0));
+        assert_eq!(seen.last().copied(), Some(STAGE_LOADING_PROGRESS_CAP));
+        assert!(
+            seen.windows(2).all(|w| w[0] < w[1]),
+            "progress bar must advance strictly monotonically: {seen:?}"
+        );
     }
 
     #[test]

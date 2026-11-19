@@ -51,10 +51,10 @@ FSM_ROOTS = {
 # Curated overrides for known partial / implemented_unwired / non_core_omitted items
 # grounded in docs/PRESERVATION_AUDIT.md and live code inspection.
 CURATED_OVERRIDES: dict[str, dict[str, str]] = {
-    # State 4 loading progress bar: LoadProgress exists in cmr-core, hardcoded in cmr-app
+    # State 4 loading progress bar: LoadProgress wired end-to-end via StageLoadPump
     "0x00421da0": {
-        "status": "partial",
-        "notes": "LoadInterstitial draws BAR/LINE but cmr-app hardcodes STAGE_LOADING_PROGRESS_CAP instead of stepping LoadProgress across load phases.",
+        "status": "verified_1to1",
+        "notes": "LoadInterstitial steps LoadProgress (0..=0x1a) across State-4 frames via StageLoadPump and draws BAR/LINE over the target stage .LOA.",
     },
     # Replay recording & post-stage State-8 playback
     "0x0046d8f0": {
