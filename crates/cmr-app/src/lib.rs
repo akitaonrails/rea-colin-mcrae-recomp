@@ -4363,6 +4363,8 @@ struct ViewHarness {
     /// Prevents `steer_analog` (`ctl + 0x410`) from flipping to keyboard mode
     /// whenever the gamepad stick or triggers pass through neutral.
     active_input_is_gamepad: bool,
+    /// Edge-detection mask for State-8 interactive replay controls (P / [ / ] / Home).
+    prev_replay_keys: u8,
 }
 
 impl ViewHarness {
@@ -4395,6 +4397,7 @@ impl ViewHarness {
             prev_tick_pose: None,
             subtick_snapshot: None,
             active_input_is_gamepad: false,
+            prev_replay_keys: 0,
         }
     }
 
@@ -6501,6 +6504,9 @@ fn advance_game_frame<C: HostClock>(
     let controls = drive.controls;
     let change_view = drive.car.change_view_fired;
     let steer_analog = drive.car.steer_analog;
+    // Interactive State-8 replay controls (`FUN_0046c7d0` / `FUN_0046ca70`):
+    // P toggles pause, [ / ] seek ±2s via keyframes, Home restarts from tick 0.
+    apply_state_8_replay_keys(session, input.keys, &mut camera.prev_replay_keys);
     // The session draws on the game's one `rand()`.
     *session.rng_mut() = camera.rng;
     if let Some(mixer) = input.audio {
@@ -6949,6 +6955,46 @@ fn advance_game_frame<C: HostClock>(
             None
         },
     })
+}
+
+/// Edge-triggered State-8 replay controls (`FUN_0046c7d0` / `FUN_0046ca70`):
+/// - `P` (`0x50`): toggle replay pause
+/// - `[` (`0xdb`): rewind 2 seconds (`-50` ticks via nearest keyframe)
+/// - `]` (`0xdd`): fast-forward 2 seconds (`+50` ticks via nearest keyframe)
+/// - `Home` (`0x24`): restart replay from tick 0
+fn apply_state_8_replay_keys(
+    session: &mut GameplaySession,
+    keys: &cmr_platform_sdl3::KeyboardVkState,
+    prev_mask: &mut u8,
+) {
+    if session.state().id() != 8 || session.stage_replay_recorded_ticks() == 0 {
+        *prev_mask = 0;
+        return;
+    }
+    const VK_P: u8 = 0x50;
+    const VK_OEM_4: u8 = 0xdb; // '['
+    const VK_OEM_6: u8 = 0xdd; // ']'
+    const VK_HOME: u8 = 0x24;
+    let cur_mask = u8::from(keys.is_keyboard_down(VK_P))
+        | (u8::from(keys.is_keyboard_down(VK_OEM_4)) << 1)
+        | (u8::from(keys.is_keyboard_down(VK_OEM_6)) << 2)
+        | (u8::from(keys.is_keyboard_down(VK_HOME)) << 3);
+    let rising = cur_mask & !*prev_mask;
+    *prev_mask = cur_mask;
+    if rising & 1 != 0 {
+        session.set_stage_replay_paused(!session.is_stage_replay_paused());
+    }
+    if rising & 2 != 0 {
+        let target = session.stage_replay_tick().saturating_sub(50);
+        let _ = session.seek_stage_replay(target);
+    }
+    if rising & 4 != 0 {
+        let target = session.stage_replay_tick().saturating_add(50);
+        let _ = session.seek_stage_replay(target);
+    }
+    if rising & 8 != 0 {
+        let _ = session.seek_stage_replay(0);
+    }
 }
 
 fn compute_gamepad_rumble(session: &GameplaySession, enabled: bool) -> (u16, u16) {
