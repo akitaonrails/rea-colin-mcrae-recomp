@@ -303,6 +303,11 @@ pub struct GameplaySession<'a> {
     /// Live State-5 RLE input recorder (`FUN_0046d8f0`) and State-8 post-stage
     /// replay playback driver (`FUN_0046dd50` / `FUN_0046c7d0` / `FUN_00438100`).
     stage_replay: StageReplayRecorder,
+    /// On-screen pacenote corner arrows (`FUN_004442b0`, `FUN_00444320`,
+    /// `FUN_004619e0`, `FUN_004625d0`, `0x462e41..0x462e6c`).
+    pacenote_arrows: crate::pacenote_schedule::PacenoteArrowHud,
+    /// Last observed waypoint cursor for the 12-waypoint arrow TTL countdown.
+    pacenote_arrow_cursor: usize,
 }
 
 /// Live per-tick RLE input recorder (`FUN_0046d8f0`) and State-8 post-stage
@@ -1010,7 +1015,44 @@ impl<'a> GameplaySession<'a> {
             pending_countdown_cues: Vec::new(),
             rng: crate::game_rng::GameLcg::new(1),
             stage_replay: StageReplayRecorder::default(),
+            pacenote_arrows: crate::pacenote_schedule::PacenoteArrowHud::new(),
+            pacenote_arrow_cursor: 0,
         }
+    }
+
+    /// Currently visible on-screen pacenote corner arrow sprites in 640x480 HUD
+    /// space (`FUN_004625d0`). Callers gate display on the `ARROWS` option bit
+    /// (`config.image[0x10] & 0x04`, `0x464b71`).
+    #[must_use]
+    pub fn pacenote_arrow_sprites(&self) -> Vec<crate::pacenote_schedule::PacenoteArrowSprite> {
+        if self.session.current().id() != 5 {
+            return Vec::new();
+        }
+        self.pacenote_arrows.current_sprites()
+    }
+
+    fn reset_pacenote_arrows(&mut self, cursor: usize) {
+        self.pacenote_arrows.reset();
+        self.pacenote_arrow_cursor = cursor;
+    }
+
+    fn update_pacenote_arrows(&mut self, progress: &StageProgress) {
+        let mirrored = false;
+        for event in &self.last_trigger_events {
+            if let TriggerEvent::CodriverCall { payload, .. } = *event {
+                let word = payload as u32;
+                let into_link = self.pacenote_arrows.depth() > 0
+                    && (word & crate::pacenote_schedule::INTO_LINK_TRIGGER_MASK != 0);
+                self.pacenote_arrows.submit_word(word, mirrored, into_link);
+            }
+        }
+        let cursor = progress.cursor();
+        if cursor > self.pacenote_arrow_cursor {
+            let delta = (cursor - self.pacenote_arrow_cursor).min(u32::MAX as usize) as u32;
+            self.pacenote_arrows.on_waypoint_advanced(delta);
+        }
+        self.pacenote_arrow_cursor = cursor;
+        self.pacenote_arrows.step_animation();
     }
 
     /// Whether State-8 post-stage replay playback (`FUN_00438100` /
@@ -1501,6 +1543,7 @@ impl<'a> GameplaySession<'a> {
         self.car_760 = false;
         self.stage_dirty = false;
         self.stage_replay.clear();
+        self.reset_pacenote_arrows(progress.cursor());
         self.reset_start_sequence();
     }
 
@@ -1535,6 +1578,7 @@ impl<'a> GameplaySession<'a> {
         let pause = std::mem::take(&mut self.pause_flow);
         if pause.restart {
             self.stage_replay.clear();
+            self.reset_pacenote_arrows(progress.cursor());
         }
         let mut driving_sample = if self.session.current().id() == 5 && !pause.enter_pause {
             self.start_sequence_pre_drive(&mut controls);
@@ -1561,6 +1605,7 @@ impl<'a> GameplaySession<'a> {
             self.start_sequence_after_drive(sample);
             self.wet_tick(&controls);
             self.school_after_drive(&controls, progress);
+            self.update_pacenote_arrows(progress);
         } else if !pause.enter_pause {
             if self.session.current().id() == 8 {
                 self.step_active_stage_replay(progress)?;
@@ -1641,6 +1686,7 @@ impl<'a> GameplaySession<'a> {
         let pause = std::mem::take(&mut self.pause_flow);
         if pause.restart {
             self.stage_replay.clear();
+            self.reset_pacenote_arrows(progress.cursor());
         }
         let mut driving_sample = if self.session.current().id() == 5 && !pause.enter_pause {
             self.start_sequence_pre_drive(&mut controls);
@@ -1746,6 +1792,7 @@ impl<'a> GameplaySession<'a> {
             self.start_sequence_after_drive(sample);
             self.wet_tick(&controls);
             self.school_after_drive(&controls, progress);
+            self.update_pacenote_arrows(progress);
         } else if !pause.enter_pause {
             if self.session.current().id() == 8 {
                 self.step_active_stage_replay_with_static_collision(

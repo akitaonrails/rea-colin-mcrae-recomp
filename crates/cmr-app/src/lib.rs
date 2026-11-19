@@ -2224,6 +2224,8 @@ pub struct RaceHudAssets {
     white_pixel: IndexedBitmap,
     countdown_digits: IndexedBitmap,
     countdown_go: IndexedBitmap,
+    pacenote_arrows: IndexedBitmap,
+    pacenote_arrows_available: bool,
     numbers: BitmapFont,
     time_numbers: BitmapFont,
     place_numbers: BitmapFont,
@@ -2241,6 +2243,11 @@ impl RaceHudAssets {
             .unwrap_or_else(|_| common_gauge.clone());
         let countdown_go = load_race_hud_bitmap(store, RaceHudBitmap::CountdownGo)
             .unwrap_or_else(|_| common_gauge.clone());
+        let (pacenote_arrows, pacenote_arrows_available) =
+            match load_race_hud_bitmap(store, RaceHudBitmap::PacenoteArrows) {
+                Ok(bmp) => (bmp, true),
+                Err(_) => (common_gauge.clone(), false),
+            };
         let numbers = load_race_hud_font(store, RaceHudFont::Numbers640)?;
         let time_numbers = load_race_hud_font(store, RaceHudFont::TimeNumbers640)?;
         let place_numbers = load_race_hud_font(store, RaceHudFont::PlaceNumbers640)
@@ -2263,6 +2270,8 @@ impl RaceHudAssets {
             white_pixel,
             countdown_digits,
             countdown_go,
+            pacenote_arrows,
+            pacenote_arrows_available,
             numbers,
             time_numbers,
             place_numbers,
@@ -2316,6 +2325,7 @@ impl RaceHudAssets {
             RaceHudBitmap::CarToyota => &self.classification_cars[11],
             RaceHudBitmap::CarCelica => &self.classification_cars[12],
             RaceHudBitmap::CarM4r => &self.classification_cars[13],
+            RaceHudBitmap::PacenoteArrows => &self.pacenote_arrows,
         }
     }
 
@@ -4141,6 +4151,7 @@ struct SubtickRenderSnapshot {
     hud_input: RaceHudPreparedInputs,
     checkpoint_hud: cmr_core::race_hud_plan::RaceHudCheckpointInputs,
     hud_countdown: Option<cmr_core::race_hud_plan::RaceHudCountdown>,
+    pacenote_arrows: Vec<cmr_core::pacenote_schedule::PacenoteArrowSprite>,
     show_hud: bool,
 }
 
@@ -4510,7 +4521,7 @@ fn compose_live_race_hud(
     frame: SoftwarePresentedFrame,
     input: RaceHudPreparedInputs,
 ) -> Result<SoftwarePresentedFrame, StageFrameError> {
-    compose_live_race_hud_with_countdown(resources, frame, input, None, None)
+    compose_live_race_hud_with_countdown(resources, frame, input, None, None, &[])
 }
 
 fn compose_live_race_hud_with_countdown(
@@ -4519,6 +4530,7 @@ fn compose_live_race_hud_with_countdown(
     input: RaceHudPreparedInputs,
     checkpoint: Option<&cmr_core::race_hud_plan::RaceHudCheckpointInputs>,
     countdown: Option<cmr_core::race_hud_plan::RaceHudCountdown>,
+    pacenote_arrows: &[cmr_core::pacenote_schedule::PacenoteArrowSprite],
 ) -> Result<SoftwarePresentedFrame, StageFrameError> {
     let assets = resources
         .race_hud()
@@ -4531,6 +4543,12 @@ fn compose_live_race_hud_with_countdown(
         commands.extend(cmr_core::race_hud_plan::plan_race_checkpoint_hud(
             input.viewport,
             checkpoint,
+        ));
+    }
+    if assets.pacenote_arrows_available && !pacenote_arrows.is_empty() {
+        commands.extend(cmr_core::race_hud_plan::plan_pacenote_arrow_hud(
+            input.viewport,
+            pacenote_arrows,
         ));
     }
     if let Some(countdown) = countdown
@@ -6376,6 +6394,11 @@ fn advance_game_frame<C: HostClock>(
                 hud_input,
                 checkpoint_hud: checkpoint_hud.clone(),
                 hud_countdown: session.hud_countdown(),
+                pacenote_arrows: if (config.image[0x10] & 0x04) != 0 {
+                    session.pacenote_arrow_sprites()
+                } else {
+                    Vec::new()
+                },
                 show_hud,
             }));
         } else {
@@ -6456,12 +6479,18 @@ fn advance_game_frame<C: HostClock>(
         if !show_hud {
             return Ok(world);
         }
+        let pacenote_arrows = if (config.image[0x10] & 0x04) != 0 {
+            session.pacenote_arrow_sprites()
+        } else {
+            Vec::new()
+        };
         compose_live_race_hud_with_countdown(
             resources,
             world,
             hud_input,
             Some(&checkpoint_hud),
             session.hud_countdown(),
+            &pacenote_arrows,
         )
     })?;
     // The results director's cues: `FUN_00467ef0(0, 0, 1)` (FORWARD) on a
@@ -6734,6 +6763,7 @@ fn compose_subtick_frame(
             snap.hud_input,
             Some(&snap.checkpoint_hud),
             snap.hud_countdown,
+            &snap.pacenote_arrows,
         )
         .ok()?;
     }

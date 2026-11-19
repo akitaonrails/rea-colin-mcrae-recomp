@@ -115,7 +115,7 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
                 bitmap,
                 source,
                 destination,
-                ..
+                legacy,
             } => {
                 compose_bitmap(
                     command_index,
@@ -123,6 +123,7 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
                     resolve_bitmap(*bitmap),
                     *source,
                     *destination,
+                    legacy.flags,
                     BitmapDiffuse::Ordinary,
                     &mut pixels,
                     rgba8.as_deref_mut(),
@@ -137,7 +138,7 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
                 source,
                 destination,
                 color,
-                ..
+                legacy,
             } => {
                 compose_bitmap(
                     command_index,
@@ -145,6 +146,7 @@ pub fn compose_race_hud_commands<'font, 'bitmap>(
                     resolve_bitmap(*bitmap),
                     *source,
                     *destination,
+                    legacy.flags,
                     BitmapDiffuse::Tinted(*color),
                     &mut pixels,
                     rgba8.as_deref_mut(),
@@ -236,6 +238,7 @@ fn compose_bitmap(
     bitmap: &IndexedBitmap,
     source: HudRect,
     destination: HudRect,
+    flags: u8,
     diffuse: BitmapDiffuse,
     target: &mut [u8],
     mut target_rgba8: Option<&mut [u8]>,
@@ -245,6 +248,9 @@ fn compose_bitmap(
 ) -> Result<(), RaceHudComposeError> {
     let rectangle =
         validate_bitmap_rectangle(command_index, bitmap_id, bitmap, source, destination)?;
+    // `0x49be2f..0x49be55`: bit 0|2 swaps U (horizontal flip), bit 1|2 swaps V (vertical flip).
+    let flip_x = flags & 0x05 != 0;
+    let flip_y = flags & 0x06 != 0;
     let source_stride =
         usize::try_from(bitmap.width).map_err(|_| RaceHudComposeError::ArithmeticOverflow)?;
     let left = rectangle.destination_x.max(0);
@@ -264,11 +270,16 @@ fn compose_bitmap(
     for target_y in top..bottom {
         let destination_offset_y = u32::try_from(target_y - rectangle.destination_y)
             .map_err(|_| RaceHudComposeError::ArithmeticOverflow)?;
-        let sampled_y = center_nearest_offset(
+        let raw_sampled_y = center_nearest_offset(
             destination_offset_y,
             rectangle.source_height,
             rectangle.destination_height,
         );
+        let sampled_y = if flip_y {
+            rectangle.source_height - 1 - raw_sampled_y
+        } else {
+            raw_sampled_y
+        };
         let source_row = rectangle
             .source_y
             .checked_add(sampled_y as usize)
@@ -281,11 +292,16 @@ fn compose_bitmap(
         for target_x in left..right {
             let destination_offset_x = u32::try_from(target_x - rectangle.destination_x)
                 .map_err(|_| RaceHudComposeError::ArithmeticOverflow)?;
-            let sampled_x = center_nearest_offset(
+            let raw_sampled_x = center_nearest_offset(
                 destination_offset_x,
                 rectangle.source_width,
                 rectangle.destination_width,
             );
+            let sampled_x = if flip_x {
+                rectangle.source_width - 1 - raw_sampled_x
+            } else {
+                raw_sampled_x
+            };
             let source_offset = source_row
                 .checked_add(rectangle.source_x)
                 .and_then(|offset| offset.checked_add(sampled_x as usize))
@@ -1108,5 +1124,39 @@ mod tests {
         // font index 0 stays transparent (9).
         assert_eq!(frame.pixels()[1], 42);
         assert_eq!(frame.pixels()[2], 9);
+    }
+
+    #[test]
+    fn tinted_bitmap_honors_legacy_horizontal_flip_flag_0x01() {
+        let font = font(1, 1, &[1], glyph(b'A', 0, 0, 1, 1));
+        let bmp = bitmap(2, 1, &[1, 2], &[(1, [255, 0, 0]), (2, [0, 255, 0])]);
+        let palette = active_palette(&[(10, [255, 0, 0]), (20, [0, 255, 0])]);
+        let make_cmd = |flags| RaceHudCommand::TintedBitmap {
+            bitmap: RaceHudBitmap::PacenoteArrows,
+            source: HudRect::new(0, 0, 2, 1),
+            destination: HudRect::new(0, 0, 2, 1),
+            color: HudColor::new(255, 255, 255, 255),
+            legacy: LegacyBitmapArguments { mode: 2, flags },
+        };
+
+        let (normal, _) = compose_race_hud_commands(
+            frame_with_palette(2, 1, &[0, 0], palette),
+            &[make_cmd(cmr_core::race_hud_plan::LEGACY_BITMAP_FLAGS)],
+            |_| &font,
+            |_| &bmp,
+        )
+        .unwrap();
+        assert_eq!(normal.pixels(), &[10, 20]);
+
+        let (flipped, _) = compose_race_hud_commands(
+            frame_with_palette(2, 1, &[0, 0], palette),
+            &[make_cmd(
+                cmr_core::race_hud_plan::LEGACY_BITMAP_FLIP_X_FLAGS,
+            )],
+            |_| &font,
+            |_| &bmp,
+        )
+        .unwrap();
+        assert_eq!(flipped.pixels(), &[20, 10]);
     }
 }

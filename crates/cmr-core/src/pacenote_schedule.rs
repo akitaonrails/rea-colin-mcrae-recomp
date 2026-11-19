@@ -379,6 +379,266 @@ impl CodriverSequencer {
     }
 }
 
+/// 18 `64x64` tile source rectangles `(x, y, w, h)` in `images/osdnew/arrws.bmp`
+/// initialized by `FUN_00462230` (`0x462403..0x4625a5`, stride `0x14` at
+/// `0x57c17c`).
+///
+/// Indices `0..=8` are RIGHT corners (`dir == 1`, drawn with `flags = 0x08`
+/// unflipped); indices `9..=17` are LEFT corners (`dir == 2`, drawn with
+/// `flags = 0x01` horizontally flipped by `FUN_004625d0` / `0x49be2f`).
+pub const PACENOTE_ARROW_TILE_RECTS: [(i16, i16, i16, i16); DISPLAY_RECORDS_PER_TRACK] = [
+    (192, 64, 64, 64), // 0: right 0
+    (192, 64, 64, 64), // 1: right 1 (hairpin)
+    (128, 64, 64, 64), // 2: right 2
+    (64, 64, 64, 64),  // 3: right 3
+    (0, 64, 64, 64),   // 4: right 4
+    (192, 0, 64, 64),  // 5: right 5
+    (128, 0, 64, 64),  // 6: right 6
+    (64, 0, 64, 64),   // 7: right 7 (easy/fast)
+    (0, 0, 64, 64),    // 8: right 8 (kink/crest)
+    (192, 64, 64, 64), // 9: left 0
+    (192, 64, 64, 64), // 10: left 1 (hairpin)
+    (128, 64, 64, 64), // 11: left 2
+    (64, 64, 64, 64),  // 12: left 3
+    (0, 64, 64, 64),   // 13: left 4
+    (192, 0, 64, 64),  // 14: left 5
+    (128, 0, 64, 64),  // 15: left 6
+    (64, 0, 64, 64),   // 16: left 7
+    (0, 0, 64, 64),    // 17: left 8
+];
+
+/// Initial waypoint TTL written by `FUN_004625d0` (`0x4627d2`: `0x0c`).
+pub const PACENOTE_ARROW_INITIAL_TTL: i8 = 12;
+/// Base X coordinate in 640x480 HUD space (`0x4627dd`: `0x120` = 288).
+pub const PACENOTE_ARROW_X: i16 = 0x120;
+/// Starting Y coordinate before sliding down (`0x4627e6`: `0xffc0` = -64).
+pub const PACENOTE_ARROW_START_Y: i16 = -64;
+/// Vertical slide velocity per tick in 640x480 pixels (`0x462821`/`0x462828`).
+pub const PACENOTE_ARROW_SLIDE_STEP: i16 = 10;
+/// Translucent arrow alpha (`0x4625ec`: `0xaa`).
+pub const PACENOTE_ARROW_ALPHA: u8 = 0xaa;
+
+/// One visible pacenote corner arrow sprite in 640x480 HUD space.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PacenoteArrowSprite {
+    /// Tile index `0..=17` into [`PACENOTE_ARROW_TILE_RECTS`].
+    pub arrow_id: u8,
+    /// Source rectangle `(x, y, w, h)` in `images/osdnew/arrws.bmp`.
+    pub source: (i16, i16, i16, i16),
+    /// Destination X in 640x480 HUD space (`0x120` = 288).
+    pub dst_x: i16,
+    /// Destination Y in 640x480 HUD space (`record.y + 32`, `0x46286c..0x462875`).
+    pub dst_y: i16,
+    /// `true` for left arrows (`arrow_id >= 9`, `flags = 0x01` horizontal flip);
+    /// `false` for right arrows (`arrow_id <= 8`, `flags = 0x08` unflipped).
+    pub flip_x: bool,
+}
+
+/// Live on-screen pacenote corner arrow HUD state (`DAT_004f2120`,
+/// `DAT_00559100`, `DAT_0057c178[0x12]`), reconstructing `FUN_004442b0`,
+/// `FUN_00444320`, `FUN_004619e0`, `FUN_004625d0`, and the waypoint TTL
+/// countdown at `0x462e41..0x462e6c`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PacenoteArrowHud {
+    slots: [i32; 2],
+    depth: usize,
+    ttl: [i8; DISPLAY_RECORDS_PER_TRACK],
+    y: [i16; DISPLAY_RECORDS_PER_TRACK],
+}
+
+impl Default for PacenoteArrowHud {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PacenoteArrowHud {
+    /// Empty arrow queue with all 18 display records inactive.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            slots: [0xff; 2],
+            depth: 0,
+            ttl: [0; DISPLAY_RECORDS_PER_TRACK],
+            y: [PACENOTE_ARROW_START_Y; DISPLAY_RECORDS_PER_TRACK],
+        }
+    }
+
+    /// Clear all active arrows (e.g. on stage start or restart).
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Current FIFO depth (`0..=2`).
+    #[must_use]
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Active FIFO slots (`0xff` = empty).
+    #[must_use]
+    pub const fn slots(&self) -> [i32; 2] {
+        self.slots
+    }
+
+    /// Submit a packed co-driver call word (`FUN_00444380` / `FUN_00444450`
+    /// visual arrow path).
+    ///
+    /// When `into_link` is `false` and an arrow is already displayed, the older
+    /// slot is dismissed first (`0x4445c8..0x4445e3`); when `into_link` is
+    /// `true`, up to 2 arrows stack vertically.
+    pub fn submit_word(&mut self, word: u32, mirrored: bool, into_link: bool) {
+        let word = swap_modifier(word, mirrored);
+        let number = ((word >> 3) & 0xf) as i32;
+        let dir = (word >> MODIFIER_SHIFT) & MODIFIER_MASK;
+        if dir == 0 {
+            return;
+        }
+        if self.depth != 0 && !into_link {
+            self.dismiss(self.slots[0]);
+        }
+        self.push_number(number);
+        self.accumulate_direction(dir);
+    }
+
+    /// `FUN_004442b0`: place `number` into the current FIFO slot without
+    /// incrementing `depth` (unless already full at depth 2, in which case slot
+    /// 0 is dismissed and slot 1 is shifted down).
+    fn push_number(&mut self, number: i32) {
+        if self.depth < 2 {
+            self.slots[self.depth] = number;
+            return;
+        }
+        let oldest = self.slots[0];
+        let next = self.slots[1];
+        self.dismiss(oldest);
+        self.depth = self.depth.saturating_add(1).min(2);
+        self.slots[0] = next;
+        self.slots[1] = number;
+    }
+
+    /// `FUN_00444320`: apply `modifier_row_bump(dir)` (`0` for right, `+9` for
+    /// left) and commit the slot by incrementing `depth` when `< 2`.
+    fn accumulate_direction(&mut self, dir: u32) {
+        let bump = modifier_row_bump(dir);
+        if self.depth < 2 {
+            self.slots[self.depth] = self.slots[self.depth].wrapping_add(bump);
+            self.depth += 1;
+        } else {
+            self.slots[1] = self.slots[1].wrapping_add(bump);
+        }
+    }
+
+    /// `FUN_004619e0`: dismiss `arrow_id`, zeroing its TTL and shifting slot 1
+    /// down to slot 0 when `depth == 2`.
+    pub fn dismiss(&mut self, arrow_id: i32) {
+        if self.depth == 0 || !(0..DISPLAY_RECORDS_PER_TRACK as i32).contains(&arrow_id) {
+            return;
+        }
+        self.ttl[arrow_id as usize] = 0;
+        if self.depth == 2 {
+            self.slots[0] = self.slots[1];
+            self.slots[1] = 0xff;
+            self.depth = 1;
+        } else {
+            self.slots[0] = 0xff;
+            self.depth -= 1;
+        }
+    }
+
+    /// `0x462e41..0x462e6c`: decrement TTL on every active arrow each time the
+    /// car crosses a track waypoint, dismissing any arrow whose TTL reaches 0.
+    pub fn on_waypoint_advanced(&mut self, waypoints_crossed: u32) {
+        for _ in 0..waypoints_crossed {
+            for id in 0..DISPLAY_RECORDS_PER_TRACK {
+                if self.ttl[id] > 0 {
+                    self.ttl[id] -= 1;
+                    if self.ttl[id] <= 0 {
+                        self.dismiss(id as i32);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Advance the vertical slide animation by one simulation tick
+    /// (`FUN_004625d0`, `0x46270e..0x462924`) and return the active sprites.
+    pub fn step_animation(&mut self) -> Vec<PacenoteArrowSprite> {
+        let count = self.visible_slot_count();
+        if count == 0 {
+            return Vec::new();
+        }
+        let mut target_y = (count as i16) * 65 - 46;
+        let mut out = Vec::with_capacity(count);
+        for slot_idx in 0..count {
+            let id = self.slots[slot_idx];
+            if (0..DISPLAY_RECORDS_PER_TRACK as i32).contains(&id) {
+                let idx = id as usize;
+                if self.ttl[idx] <= 0 {
+                    self.ttl[idx] = PACENOTE_ARROW_INITIAL_TTL;
+                    self.y[idx] = PACENOTE_ARROW_START_Y;
+                }
+                let cur_y = self.y[idx];
+                if cur_y > target_y - PACENOTE_ARROW_SLIDE_STEP
+                    && cur_y < target_y + PACENOTE_ARROW_SLIDE_STEP
+                {
+                    self.y[idx] = target_y;
+                } else if cur_y < target_y {
+                    self.y[idx] = cur_y.saturating_add(PACENOTE_ARROW_SLIDE_STEP);
+                } else if cur_y > target_y {
+                    self.y[idx] = cur_y.saturating_sub(PACENOTE_ARROW_SLIDE_STEP);
+                }
+                out.push(Self::make_sprite(idx, self.y[idx]));
+            }
+            target_y -= 65;
+        }
+        out
+    }
+
+    /// Read-only snapshot of the currently visible sprites without stepping
+    /// animation (used for sub-tick interpolated frames).
+    #[must_use]
+    pub fn current_sprites(&self) -> Vec<PacenoteArrowSprite> {
+        let count = self.visible_slot_count();
+        let mut out = Vec::with_capacity(count);
+        for slot_idx in 0..count {
+            let id = self.slots[slot_idx];
+            if (0..DISPLAY_RECORDS_PER_TRACK as i32).contains(&id) {
+                let idx = id as usize;
+                if self.ttl[idx] > 0 {
+                    out.push(Self::make_sprite(idx, self.y[idx]));
+                }
+            }
+        }
+        out
+    }
+
+    fn visible_slot_count(&self) -> usize {
+        if self.depth == 0 {
+            0
+        } else if self.slots[0] == self.slots[1] {
+            1
+        } else {
+            self.depth.min(2)
+        }
+    }
+
+    fn make_sprite(idx: usize, y: i16) -> PacenoteArrowSprite {
+        let source = PACENOTE_ARROW_TILE_RECTS[idx];
+        // `0x462869..0x462878`: dst_y = record.y + (src_h / 2) = record.y + 32.
+        let dst_y = y.saturating_add(source.3 / 2);
+        // `0x462832..0x4628b9`: id <= 8 uses flags 0x08 (right, unflipped),
+        // id >= 9 uses flags 0x01 (left, horizontally flipped).
+        PacenoteArrowSprite {
+            arrow_id: idx as u8,
+            source,
+            dst_x: PACENOTE_ARROW_X,
+            dst_y,
+            flip_x: idx >= 9,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,5 +842,60 @@ mod tests {
         speech.submit(1 << 20, false);
         assert_eq!(speech.tick(false), None);
         assert_eq!(speech.tick(false), None);
+    }
+
+    #[test]
+    fn arrow_hud_maps_right_and_left_corners_and_slides_to_target() {
+        let mut hud = PacenoteArrowHud::new();
+        // 3 Right: number=3 (bits 3..6), dir=1 (RIGHT, bits 7..8).
+        let right3 = (3 << 3) | (1 << 7);
+        hud.submit_word(right3, false, false);
+        assert_eq!(hud.depth(), 1);
+        assert_eq!(hud.slots(), [3, 0xff]);
+
+        // First animation step initializes y=-64 and slides +10 -> -54 -> dst_y = -22.
+        let s0 = hud.step_animation();
+        assert_eq!(s0.len(), 1);
+        assert_eq!(s0[0].arrow_id, 3);
+        assert_eq!(s0[0].source, (64, 64, 64, 64));
+        assert_eq!(s0[0].dst_x, 288);
+        assert_eq!(s0[0].dst_y, -22);
+        assert!(!s0[0].flip_x, "right arrows use unflipped flags 0x08");
+
+        // After 10 ticks, settles at target_y = 1*65 - 46 = 19 -> dst_y = 19 + 32 = 51.
+        for _ in 0..10 {
+            hud.step_animation();
+        }
+        let settled = hud.current_sprites();
+        assert_eq!(settled[0].dst_y, 51);
+
+        // Linked "INTO 5 Left" stacks a second arrow above the first.
+        let left5 = (5 << 3) | (2 << 7);
+        hud.submit_word(left5, false, true);
+        assert_eq!(hud.depth(), 2);
+        assert_eq!(hud.slots(), [3, 14]);
+        for _ in 0..20 {
+            hud.step_animation();
+        }
+        let stacked = hud.current_sprites();
+        assert_eq!(stacked.len(), 2);
+        assert_eq!(stacked[0].arrow_id, 3);
+        assert_eq!(stacked[0].dst_y, 84 + 32);
+        assert!(!stacked[0].flip_x);
+        assert_eq!(stacked[1].arrow_id, 14);
+        assert_eq!(stacked[1].dst_y, 19 + 32);
+        assert!(stacked[1].flip_x, "left arrows use flipped flags 0x01");
+    }
+
+    #[test]
+    fn arrow_hud_dismisses_after_twelve_waypoints() {
+        let mut hud = PacenoteArrowHud::new();
+        hud.submit_word((4 << 3) | (2 << 7), false, false);
+        assert_eq!(hud.step_animation().len(), 1);
+        hud.on_waypoint_advanced(11);
+        assert_eq!(hud.depth(), 1);
+        hud.on_waypoint_advanced(1);
+        assert_eq!(hud.depth(), 0);
+        assert!(hud.current_sprites().is_empty());
     }
 }

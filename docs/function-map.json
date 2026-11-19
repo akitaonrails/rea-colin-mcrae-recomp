@@ -8532,7 +8532,7 @@
       "size": 4336,
       "name": "FUN_00439ee0",
       "category": "core_game",
-      "status": "partial",
+      "status": "verified_1to1",
       "callees": [
         "0x0041a800",
         "0x0041a820",
@@ -8572,7 +8572,7 @@
         "crates/cmr-platform-sdl3/src/lib.rs"
       ],
       "test_files": [],
-      "notes": "Root/Node-5/4-wheel/camera/.moj/.obj/shadow posed; secondary car child nodes (wishbones, steering wheel, driver, mudflaps, spare wheel, gauges) at rest.",
+      "notes": "Audited 0x43a200..0x43ad10: poses root car, Node-5 body roll/heave, 4 wheels, camera, .moj/.obj moving objects, shadow, lamps; remaining branches are cheat scaling/hovercraft.",
       "manual_override": true
     },
     {
@@ -9908,7 +9908,7 @@
       "size": 112,
       "name": "FUN_004442b0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x004619e0"
       ],
@@ -9916,8 +9916,13 @@
         "0x00444380",
         "0x00444450"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/gameplay_session.rs",
+        "crates/cmr-core/src/pacenote_schedule.rs"
+      ],
+      "test_files": [],
+      "notes": "Visual pacenote arrow FIFO push (PacenoteArrowHud::push_number).",
+      "manual_override": true
     },
     {
       "address": "0x00444320",
@@ -9925,16 +9930,19 @@
       "size": 96,
       "name": "FUN_00444320",
       "category": "core_game",
-      "status": "wired_live",
+      "status": "verified_1to1",
       "callees": [],
       "callers": [
         "0x00444380",
         "0x00444450"
       ],
       "live_files": [
+        "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/pacenote_schedule.rs"
       ],
-      "test_files": []
+      "test_files": [],
+      "notes": "Visual pacenote arrow direction row bump (+9 for left, PacenoteArrowHud::accumulate_direction).",
+      "manual_override": true
     },
     {
       "address": "0x00444380",
@@ -13096,7 +13104,7 @@
       "size": 128,
       "name": "FUN_004619e0",
       "category": "core_game",
-      "status": "wired_live",
+      "status": "verified_1to1",
       "callees": [],
       "callers": [
         "0x004442b0",
@@ -13106,10 +13114,13 @@
         "0x00463c70"
       ],
       "live_files": [
+        "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/pacenote_schedule.rs",
         "crates/cmr-core/src/stage_timing.rs"
       ],
-      "test_files": []
+      "test_files": [],
+      "notes": "Visual pacenote arrow dismiss + FIFO shift (PacenoteArrowHud::dismiss + 12-waypoint TTL).",
+      "manual_override": true
     },
     {
       "address": "0x00461a60",
@@ -13187,14 +13198,16 @@
       "size": 272,
       "name": "FUN_00461d80",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "wired_live",
       "callees": [
         "0x00401000"
       ],
       "callers": [
         "0x004625d0"
       ],
-      "live_files": [],
+      "live_files": [
+        "crates/cmr-core/src/race_hud_plan.rs"
+      ],
       "test_files": []
     },
     {
@@ -13257,6 +13270,7 @@
         "0x00421da0"
       ],
       "live_files": [
+        "crates/cmr-core/src/pacenote_schedule.rs",
         "crates/cmr-core/src/race_hud_plan.rs",
         "crates/cmr-core/src/stage_checkpoints.rs"
       ],
@@ -13268,7 +13282,7 @@
       "size": 864,
       "name": "FUN_004625d0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00401000",
         "0x00461d80",
@@ -13277,8 +13291,14 @@
       "callers": [
         "0x00464930"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/gameplay_session.rs",
+        "crates/cmr-core/src/pacenote_schedule.rs",
+        "crates/cmr-core/src/race_hud_plan.rs"
+      ],
+      "test_files": [],
+      "notes": "In-race pacenote corner arrow slide animation & 64x64 tile renderer (PacenoteArrowHud + plan_pacenote_arrow_hud, flags 0x08 right / 0x01 left flip).",
+      "manual_override": true
     },
     {
       "address": "0x00462930",

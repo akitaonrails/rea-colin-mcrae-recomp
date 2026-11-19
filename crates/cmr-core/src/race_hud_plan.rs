@@ -23,6 +23,7 @@ pub const REFERENCE_EXTENT: DisplayExtent = DisplayExtent {
     height: 480,
 };
 pub const LEGACY_BITMAP_FLAGS: u8 = 0x08;
+pub const LEGACY_BITMAP_FLIP_X_FLAGS: u8 = 0x01;
 pub const LEGACY_TEXT_FLAGS: u8 = 0x11;
 
 const COMMON_GAUGE_COLOR: HudColor = HudColor::new(0xff, 0xff, 0xff, 0xc0);
@@ -110,6 +111,7 @@ pub enum RaceHudBitmap {
     CarToyota,
     CarCelica,
     CarM4r,
+    PacenoteArrows,
 }
 
 impl RaceHudBitmap {
@@ -142,6 +144,7 @@ impl RaceHudBitmap {
             Self::CarToyota => "images/osdnew/High/common/toyota.bmp",
             Self::CarCelica => "images/osdnew/High/common/celica.bmp",
             Self::CarM4r => "images/osdnew/High/common/mr4.bmp",
+            Self::PacenoteArrows => "images/osdnew/arrws.bmp",
         }
     }
 
@@ -689,6 +692,55 @@ pub fn plan_race_countdown_overlay(
             })
         }
     }
+}
+
+/// Plans the in-race pacenote corner arrow icons (`FUN_004625d0` + `FUN_00461d80`)
+/// from `images/osdnew/arrws.bmp`.
+///
+/// Coordinates are scaled from 640x480 HUD space to `viewport` (`0x461df7..0x461e8b`),
+/// tinted `(255, 255, 255, 0xaa)`, with `flags = 0x08` for right arrows and
+/// `flags = 0x01` (horizontal flip) for left arrows.
+#[must_use]
+pub fn plan_pacenote_arrow_hud(
+    viewport: DisplayExtent,
+    sprites: &[crate::pacenote_schedule::PacenoteArrowSprite],
+) -> Vec<RaceHudCommand> {
+    if viewport.width == 0 || viewport.height == 0 || sprites.is_empty() {
+        return Vec::new();
+    }
+    let vw = i32::from(viewport.width);
+    let vh = i32::from(viewport.height);
+    let mut commands = Vec::with_capacity(sprites.len());
+    for sprite in sprites {
+        let (sx, sy, sw, sh) = sprite.source;
+        let dst_x = (i32::from(sprite.dst_x) * vw) / i32::from(REFERENCE_EXTENT.width);
+        let dst_y = (i32::from(sprite.dst_y) * vh) / i32::from(REFERENCE_EXTENT.height);
+        let dst_w = (i32::from(sw) * vw) / i32::from(REFERENCE_EXTENT.width);
+        let dst_h = (i32::from(sh) * vh) / i32::from(REFERENCE_EXTENT.height);
+        if dst_w <= 0 || dst_h <= 0 {
+            continue;
+        }
+        commands.push(RaceHudCommand::TintedBitmap {
+            bitmap: RaceHudBitmap::PacenoteArrows,
+            source: HudRect::new(i32::from(sx), i32::from(sy), i32::from(sw), i32::from(sh)),
+            destination: HudRect::new(dst_x, dst_y, dst_w, dst_h),
+            color: HudColor::new(
+                0xff,
+                0xff,
+                0xff,
+                crate::pacenote_schedule::PACENOTE_ARROW_ALPHA,
+            ),
+            legacy: LegacyBitmapArguments {
+                mode: 2,
+                flags: if sprite.flip_x {
+                    LEGACY_BITMAP_FLIP_X_FLAGS
+                } else {
+                    LEGACY_BITMAP_FLAGS
+                },
+            },
+        });
+    }
+    commands
 }
 
 /// Plans the in-race checkpoint HUD elements (`FUN_00464930`, `FUN_00463080`,

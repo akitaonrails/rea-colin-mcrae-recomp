@@ -87,8 +87,25 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "notes": "Builds 8 contact basis vectors (+0x4bc..+0x518) with modular-negation mirror and velocity add; reconstructed as vehicle_dynamics::build_contact_basis_vectors.",
     },
     "0x00439ee0": {
-        "status": "partial",
-        "notes": "Root/Node-5/4-wheel/camera/.moj/.obj/shadow posed; secondary car child nodes (wishbones, steering wheel, driver, mudflaps, spare wheel, gauges) at rest.",
+        "status": "verified_1to1",
+        "notes": "Audited 0x43a200..0x43ad10: poses root car, Node-5 body roll/heave, 4 wheels, camera, .moj/.obj moving objects, shadow, lamps; remaining branches are cheat scaling/hovercraft.",
+    },
+    # In-race pacenote corner arrows (images/osdnew/arrws.bmp)
+    "0x004442b0": {
+        "status": "verified_1to1",
+        "notes": "Visual pacenote arrow FIFO push (PacenoteArrowHud::push_number).",
+    },
+    "0x00444320": {
+        "status": "verified_1to1",
+        "notes": "Visual pacenote arrow direction row bump (+9 for left, PacenoteArrowHud::accumulate_direction).",
+    },
+    "0x004619e0": {
+        "status": "verified_1to1",
+        "notes": "Visual pacenote arrow dismiss + FIFO shift (PacenoteArrowHud::dismiss + 12-waypoint TTL).",
+    },
+    "0x004625d0": {
+        "status": "verified_1to1",
+        "notes": "In-race pacenote corner arrow slide animation & 64x64 tile renderer (PacenoteArrowHud + plan_pacenote_arrow_hud, flags 0x08 right / 0x01 left flip).",
     },
     "0x00433750": {
         "status": "implemented_unwired",
