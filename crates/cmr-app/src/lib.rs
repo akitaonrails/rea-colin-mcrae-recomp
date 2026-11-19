@@ -8523,13 +8523,22 @@ impl EffectsAudio {
                 None => return,
             },
         };
-        // FUN_0048b680 runs when the camera driver sets a mode.
+        // FUN_0048b680 followed by FUN_0048d8e0 (`0x4341df`..`0x4341e6`) run
+        // whenever the camera driver sets a mode.
         if self.camera_mode != Some(camera_mode) {
             self.camera_mode = Some(camera_mode);
             set_surface_class(
                 &mut self.surface,
                 &mut *mixer,
                 SURFACE_CHANNEL_BASE,
+                0,
+                camera_mode,
+            );
+            cmr_core::wet_sound::set_wet_camera_mode(
+                &self.wet,
+                &mut *mixer,
+                banks.wet,
+                WET_CHANNEL,
                 0,
                 camera_mode,
             );

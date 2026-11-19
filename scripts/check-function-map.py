@@ -152,6 +152,15 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "status": "verified_1to1",
         "notes": "Heavy-storm lightning flash timer and additive flash emission (LightningFlashState::tick + composite_sky_overlay).",
     },
+    # Camera-mode surface & interior rain/wiper audio switching
+    "0x0048b680": {
+        "status": "verified_1to1",
+        "notes": "Switches surface audio acoustic class on camera mode change (surface_sound::set_surface_class).",
+    },
+    "0x0048d8e0": {
+        "status": "verified_1to1",
+        "notes": "Starts/stops looping interior rain_in.wav channel on cockpit vs exterior camera switch (wet_sound::set_wet_camera_mode).",
+    },
     # Sky sun, halo, 7 lens-flare rings, moon, and twinkling stars (IMAGES\LENSFLR\*)
     "0x00482d10": {
         "status": "verified_1to1",

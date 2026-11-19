@@ -205,6 +205,40 @@ impl WetSoundState {
     }
 }
 
+/// `FUN_0048d8e0(player, camera_mode)` (`0x48d8e0..0x48d952`):
+/// Called immediately after `FUN_0048b680` whenever the active camera mode
+/// changes (`0x4341e6`). In cockpit views (`3 | 4`), restarts the looping
+/// `rain_in.wav` channel when rain is loaded; in exterior views (`1 | 2 | 5 | 6`),
+/// stops the channel so `wet_out.wav` can take over cleanly.
+pub fn set_wet_camera_mode<V: EngineVoices>(
+    state: &WetSoundState,
+    voices: &mut V,
+    slot_base: u32,
+    channel: u32,
+    player: u8,
+    camera_mode: i32,
+) {
+    if player == 1 {
+        return;
+    }
+    match camera_mode {
+        3 | 4 => {
+            if voices.playing(channel) {
+                voices.stop(channel);
+            }
+            if state.rain_loaded {
+                voices.play(slot_base, channel, u32::MAX);
+            }
+        }
+        1 | 2 | 5 | 6 => {
+            if voices.playing(channel) {
+                voices.stop(channel);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,5 +364,24 @@ mod tests {
             voices.frequencies,
             vec![((f * 0x5622) >> 16) as u32 + 0x5622]
         );
+    }
+
+    #[test]
+    fn camera_mode_switch_starts_and_stops_interior_rain_like_48d8e0() {
+        let state = WetSoundState {
+            level: 0,
+            rain_loaded: true,
+        };
+        let mut voices = Voices::default();
+        // Cockpit mode 3 starts looping `rain_in` on channel 19.
+        set_wet_camera_mode(&state, &mut voices, 50, 19, 0, 3);
+        assert!(voices.playing.contains(&19));
+        assert_eq!(voices.plays, vec![(50, 19)]);
+        // Exterior chase mode 5 stops it.
+        set_wet_camera_mode(&state, &mut voices, 50, 19, 0, 5);
+        assert!(!voices.playing.contains(&19));
+        // Player 1 is ignored (`0x48d8e0`).
+        set_wet_camera_mode(&state, &mut voices, 50, 19, 1, 3);
+        assert!(!voices.playing.contains(&19));
     }
 }

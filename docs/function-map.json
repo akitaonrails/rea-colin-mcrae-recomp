@@ -19663,7 +19663,7 @@
       "size": 144,
       "name": "FUN_0048b680",
       "category": "core_game",
-      "status": "wired_live",
+      "status": "verified_1to1",
       "callees": [
         "0x00489230",
         "0x00495d10"
@@ -19674,9 +19674,12 @@
       ],
       "live_files": [
         "crates/cmr-app/src/lib.rs",
-        "crates/cmr-core/src/surface_sound.rs"
+        "crates/cmr-core/src/surface_sound.rs",
+        "crates/cmr-core/src/wet_sound.rs"
       ],
-      "test_files": []
+      "test_files": [],
+      "notes": "Switches surface audio acoustic class on camera mode change (surface_sound::set_surface_class).",
+      "manual_override": true
     },
     {
       "address": "0x0048b710",
@@ -20088,7 +20091,7 @@
       "size": 1616,
       "name": "FUN_0048d8e0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x0043bc00",
         "0x0048dfc0",
@@ -20120,8 +20123,15 @@
         "0x00434060",
         "0x004343a0"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/wet_sound.rs"
+      ],
+      "test_files": [
+        "crates/cmr-core/src/wet_sound.rs"
+      ],
+      "notes": "Starts/stops looping interior rain_in.wav channel on cockpit vs exterior camera switch (wet_sound::set_wet_camera_mode).",
+      "manual_override": true
     },
     {
       "address": "0x0048df30",
