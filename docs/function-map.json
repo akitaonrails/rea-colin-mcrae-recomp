@@ -19649,7 +19649,7 @@
       "size": 672,
       "name": "FUN_0048b960",
       "category": "core_game",
-      "status": "wired_live",
+      "status": "verified_1to1",
       "callees": [
         "0x00401000",
         "0x00421c90",
@@ -19671,9 +19671,12 @@
         "0x0047a7f0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/weather.rs"
       ],
-      "test_files": []
+      "test_files": [],
+      "notes": "Stage weather/precipitation init (loads IMAGES\\SNOW.BMP, configures fog and PrecipitationSystem).",
+      "manual_override": true
     },
     {
       "address": "0x0048bc00",
@@ -19681,7 +19684,7 @@
       "size": 96,
       "name": "FUN_0048bc00",
       "category": "core_game",
-      "status": "wired_live",
+      "status": "verified_1to1",
       "callees": [
         "0x004cfac0",
         "0x004cfb9c"
@@ -19691,9 +19694,12 @@
       ],
       "live_files": [
         "crates/cmr-app/src/lib.rs",
-        "crates/cmr-core/src/car_headlights.rs"
+        "crates/cmr-core/src/car_headlights.rs",
+        "crates/cmr-core/src/weather.rs"
       ],
-      "test_files": []
+      "test_files": [],
+      "notes": "Precipitation random table init (GameLcg in PrecipitationSystem::tick).",
+      "manual_override": true
     },
     {
       "address": "0x0048bc60",
@@ -19701,7 +19707,7 @@
       "size": 1056,
       "name": "FUN_0048bc60",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00401000",
         "0x0041a800",
@@ -19712,8 +19718,12 @@
       "callers": [
         "0x0048b960"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Precipitation particle pool init (50/100/200 particles in 12m box 10m ahead of camera, PrecipitationSystem::new/tick).",
+      "manual_override": true
     },
     {
       "address": "0x0048c080",
@@ -19721,7 +19731,7 @@
       "size": 432,
       "name": "FUN_0048c080",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00401000",
         "0x004cfac0",
@@ -19730,8 +19740,13 @@
       "callers": [
         "0x0047a900"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Periodic precipitation intensity variation and light-weather lulls (PrecipitationSystem::tick).",
+      "manual_override": true
     },
     {
       "address": "0x0048c230",
@@ -19739,15 +19754,20 @@
       "size": 1008,
       "name": "FUN_0048c230",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x004cfb9c"
       ],
       "callers": [
         "0x0047a900"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Smooth wind speed/direction slewing plus gravity (PrecipitationSystem::tick).",
+      "manual_override": true
     },
     {
       "address": "0x0048c620",
@@ -19755,7 +19775,7 @@
       "size": 2208,
       "name": "FUN_0048c620",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x0041a800",
         "0x0041a860",
@@ -19766,8 +19786,13 @@
       "callers": [
         "0x0047a900"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Rain streak & SNOW.BMP snowflake advection, box wrapping, night attenuation, and quad emission (PrecipitationSystem::billboards + StageRenderResources::plan_particles).",
+      "manual_override": true
     },
     {
       "address": "0x0048cec0",

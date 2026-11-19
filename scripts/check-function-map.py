@@ -107,6 +107,31 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "status": "verified_1to1",
         "notes": "In-race pacenote corner arrow slide animation & 64x64 tile renderer (PacenoteArrowHud + plan_pacenote_arrow_hud, flags 0x08 right / 0x01 left flip).",
     },
+    # Falling rain streaks and snow billboards (IMAGES\SNOW.BMP)
+    "0x0048b960": {
+        "status": "verified_1to1",
+        "notes": "Stage weather/precipitation init (loads IMAGES\\SNOW.BMP, configures fog and PrecipitationSystem).",
+    },
+    "0x0048bc00": {
+        "status": "verified_1to1",
+        "notes": "Precipitation random table init (GameLcg in PrecipitationSystem::tick).",
+    },
+    "0x0048bc60": {
+        "status": "verified_1to1",
+        "notes": "Precipitation particle pool init (50/100/200 particles in 12m box 10m ahead of camera, PrecipitationSystem::new/tick).",
+    },
+    "0x0048c080": {
+        "status": "verified_1to1",
+        "notes": "Periodic precipitation intensity variation and light-weather lulls (PrecipitationSystem::tick).",
+    },
+    "0x0048c230": {
+        "status": "verified_1to1",
+        "notes": "Smooth wind speed/direction slewing plus gravity (PrecipitationSystem::tick).",
+    },
+    "0x0048c620": {
+        "status": "verified_1to1",
+        "notes": "Rain streak & SNOW.BMP snowflake advection, box wrapping, night attenuation, and quad emission (PrecipitationSystem::billboards + StageRenderResources::plan_particles).",
+    },
     "0x00433750": {
         "status": "implemented_unwired",
         "notes": "Force-feedback effect update reconstructed in cmr-core::force_feedback; SDL rumble approximates it.",

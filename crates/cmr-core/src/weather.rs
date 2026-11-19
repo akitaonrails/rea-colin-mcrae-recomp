@@ -227,6 +227,380 @@ pub mod sky {
     }
 }
 
+/// Precipitation particle pool capacity for single-player (`0x48bca9`: `0xc8`).
+pub const PRECIPITATION_POOL_SIZE: usize = 200;
+/// Spawn box half-extent around camera anchor in Q16.16 meters (`0x48bd9e`: `6.0`).
+pub const PRECIPITATION_HALF_EXTENT_Q16: i32 = 0x6_0000;
+/// Full wrap span of the precipitation box in Q16.16 meters (`12.0`).
+pub const PRECIPITATION_BOX_SPAN_Q16: i32 = PRECIPITATION_HALF_EXTENT_Q16 * 2;
+/// Forward offset of the precipitation box center from the camera (`0x48bd35`: `10.0`).
+pub const PRECIPITATION_FORWARD_OFFSET_Q16: i32 = 0xa_0000;
+/// Snowflake billboard half-size in Q16.16 meters (`0x48bee3`: `0x0ccc` ≈ 0.05 m).
+pub const SNOWFLAKE_HALF_SIZE_Q16: i32 = 0x0ccc;
+
+/// Active precipitation type (`DAT_0082a374`, `FUN_0048b960` / `FUN_0048c620`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrecipitationKind {
+    None,
+    /// `weather_type == 3`: falling rain streaks (`0x48cd68..0x48ce13`).
+    Rain,
+    /// `weather_type == 4`: falling `IMAGES\SNOW.BMP` billboards (`0x48ce16..0x48cea9`).
+    Snow,
+}
+
+impl PrecipitationKind {
+    #[must_use]
+    pub const fn from_weather_type(weather_type: u32) -> Self {
+        match weather_type {
+            3 => Self::Rain,
+            4 => Self::Snow,
+            _ => Self::None,
+        }
+    }
+}
+
+/// One camera-facing rain streak or snowflake world-space quad ready for the
+/// stage sprite renderer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PrecipitationQuad {
+    /// Four world-space corners in meters `[tl, tr, br, bl]`.
+    pub corners: [[f32; 3]; 4],
+    /// Opacity `0..=255`.
+    pub alpha: u8,
+    /// Uniform greyscale tint `0..=255` (`0x64` = 100 for rain, `0xff` for snow).
+    pub grey: u8,
+    /// `true` for `IMAGES\SNOW.BMP`, `false` for rain streak.
+    pub is_snow: bool,
+}
+
+/// Live 3D precipitation particle system reconstructing `FUN_0048b960`,
+/// `FUN_0048bc00`, `FUN_0048bc60`, `FUN_0048c080`, `FUN_0048c230`, and
+/// `FUN_0048c620`.
+#[derive(Clone, Debug)]
+pub struct PrecipitationSystem {
+    kind: PrecipitationKind,
+    detail: u32,
+    night: bool,
+    base_count: usize,
+    active_count: usize,
+    target_count: usize,
+    intensity_timer: i32,
+    wind_speed_q16: i32,
+    wind_target_speed_q16: i32,
+    wind_angle: i16,
+    wind_target_angle: i16,
+    wind_timer: i32,
+    gravity_y_q16: i32,
+    velocity_q16: [i32; 3],
+    streak_delta_q16: [i32; 3],
+    prev_camera_q16: [i32; 3],
+    initialized: bool,
+    positions_q16: [[i32; 3]; PRECIPITATION_POOL_SIZE],
+    alphas: [u8; PRECIPITATION_POOL_SIZE],
+}
+
+impl PrecipitationSystem {
+    /// Create a precipitation system for the stage's weather (`FUN_0048b960` +
+    /// `FUN_0048bc60`).
+    #[must_use]
+    pub fn new(weather_type: u32, detail: u32, night: bool) -> Self {
+        let kind = PrecipitationKind::from_weather_type(weather_type);
+        // `0x48bc6d..0x48bc87`: detail 3 -> 200, detail 2 -> 100, detail 1 -> 50.
+        let base_count = match kind {
+            PrecipitationKind::None => 0,
+            PrecipitationKind::Rain | PrecipitationKind::Snow => match detail {
+                3.. => 200,
+                2 => 100,
+                _ => 50,
+            },
+        };
+        // `0x48bf0c..0x48bf6b`: gravity fall speed per 25 Hz tick in Q16.16.
+        let gravity_y_q16 = match kind {
+            PrecipitationKind::Snow => -0x2800, // ~-0.16 m/tick (~4 m/s)
+            PrecipitationKind::Rain => -0xb000, // ~-0.69 m/tick (~17 m/s)
+            PrecipitationKind::None => 0,
+        };
+        Self {
+            kind,
+            detail,
+            night,
+            base_count,
+            active_count: base_count,
+            target_count: base_count,
+            intensity_timer: 200,
+            wind_speed_q16: 0,
+            wind_target_speed_q16: 0,
+            wind_angle: 0,
+            wind_target_angle: 0,
+            wind_timer: 0,
+            gravity_y_q16,
+            velocity_q16: [0, gravity_y_q16, 0],
+            streak_delta_q16: [0, gravity_y_q16, 0],
+            prev_camera_q16: [0; 3],
+            initialized: false,
+            positions_q16: [[0; 3]; PRECIPITATION_POOL_SIZE],
+            alphas: [0xfe; PRECIPITATION_POOL_SIZE],
+        }
+    }
+
+    /// Active precipitation kind.
+    #[must_use]
+    pub const fn kind(&self) -> PrecipitationKind {
+        self.kind
+    }
+
+    /// Current active particle count (`0..=200`).
+    #[must_use]
+    pub const fn active_count(&self) -> usize {
+        self.active_count
+    }
+
+    fn box_center(camera_pos: [i32; 3], camera_fwd: [i32; 3]) -> [i32; 3] {
+        let mut center = [0i32; 3];
+        for axis in 0..3 {
+            let offset = ((i64::from(camera_fwd[axis])
+                * i64::from(PRECIPITATION_FORWARD_OFFSET_Q16))
+                >> 16) as i32;
+            center[axis] = camera_pos[axis].wrapping_add(offset);
+        }
+        center
+    }
+
+    /// Advance one 25 Hz tick (`FUN_0048c080` + `FUN_0048c230` + `FUN_0048c620`).
+    pub fn tick(
+        &mut self,
+        camera_pos: [i32; 3],
+        camera_fwd: [i32; 3],
+        rng: &mut crate::game_rng::GameLcg,
+        trig: &[i32; crate::fixed_point::TRIG_TABLE_LEN],
+    ) {
+        if self.kind == PrecipitationKind::None {
+            return;
+        }
+        let center = Self::box_center(camera_pos, camera_fwd);
+        if !self.initialized {
+            // `FUN_0048bc60`: scatter all 200 particles uniformly in the 12m box.
+            for pos in &mut self.positions_q16 {
+                for axis in 0..3 {
+                    let r = i64::from(rng.next_raw() & 0x7fff);
+                    let span = ((r * i64::from(PRECIPITATION_BOX_SPAN_Q16)) / 0x7fff) as i32;
+                    pos[axis] = center[axis]
+                        .wrapping_sub(PRECIPITATION_HALF_EXTENT_Q16)
+                        .wrapping_add(span);
+                }
+            }
+            self.prev_camera_q16 = camera_pos;
+            self.initialized = true;
+        }
+
+        // `FUN_0048c080`: periodic intensity variation (every 200..1000 ticks).
+        if self.intensity_timer <= 0 {
+            let r = i64::from(rng.next_raw() & 0x7fff);
+            let next_timer = ((r * 1000) / 0x7fff).max(200) as i32;
+            self.intensity_timer = next_timer;
+            if self.detail <= 1 && (rng.next_raw() & 0x7fff) < 0x1999 {
+                // Light weather 20% lull (`0x48c0f9`: `< 0x3333` in Q16.16).
+                self.target_count = 0;
+                self.intensity_timer = (next_timer * 2).max(1000);
+            } else {
+                let delta = (((i64::from(rng.next_raw() & 0x7fff)) * 25) / 0x7fff) as i32;
+                let signed = if (rng.next_raw() & 0x7fff) > 0x4000 {
+                    delta
+                } else {
+                    -delta
+                };
+                self.target_count = (self.base_count as i32 + signed)
+                    .clamp(5, PRECIPITATION_POOL_SIZE as i32)
+                    as usize;
+            }
+        } else {
+            self.intensity_timer -= 1;
+        }
+        if self.active_count < self.target_count {
+            self.active_count += 1;
+        } else if self.active_count > self.target_count {
+            self.active_count -= 1;
+        }
+
+        // `FUN_0048c230`: wind speed/angle slew (`0x147` speed step, `±11` angle step).
+        if self.wind_timer <= 0 {
+            self.wind_timer = 150 + ((rng.next_raw() & 0x7fff) as i32 % 250);
+            let max_wind = match self.kind {
+                PrecipitationKind::Snow => 0x1800,
+                PrecipitationKind::Rain => 0x2000,
+                PrecipitationKind::None => 0,
+            };
+            self.wind_target_speed_q16 =
+                ((i64::from(rng.next_raw() & 0x7fff) * i64::from(max_wind)) / 0x7fff) as i32;
+            self.wind_target_angle = (rng.next_raw() & 0x0fff) as i16;
+        } else {
+            self.wind_timer -= 1;
+        }
+        let speed_diff = self.wind_target_speed_q16 - self.wind_speed_q16;
+        if speed_diff.abs() < 0x147 {
+            self.wind_speed_q16 = self.wind_target_speed_q16;
+        } else if speed_diff > 0 {
+            self.wind_speed_q16 += 0x147;
+        } else {
+            self.wind_speed_q16 -= 0x147;
+        }
+        let angle_diff = self.wind_target_angle.wrapping_sub(self.wind_angle);
+        if angle_diff.abs() < 11 {
+            self.wind_angle = self.wind_target_angle;
+        } else if angle_diff > 0 {
+            self.wind_angle = self.wind_angle.wrapping_add(11) & 0x0fff;
+        } else {
+            self.wind_angle = self.wind_angle.wrapping_sub(11) & 0x0fff;
+        }
+        let sin_a = trig[(self.wind_angle as usize) & 0x0fff];
+        let cos_a = trig[((self.wind_angle as usize) + 0x400) & 0x0fff];
+        let wx = ((i64::from(cos_a) * i64::from(self.wind_speed_q16)) >> 16) as i32;
+        let wz = ((i64::from(sin_a) * i64::from(self.wind_speed_q16)) >> 16) as i32;
+        self.velocity_q16 = [wx, self.gravity_y_q16, wz];
+
+        // Rain streak vector (`0x48c7e3..0x48c7f4`): particle velocity minus camera motion.
+        let cam_dx = camera_pos[0].wrapping_sub(self.prev_camera_q16[0]);
+        let cam_dy = camera_pos[1].wrapping_sub(self.prev_camera_q16[1]);
+        let cam_dz = camera_pos[2].wrapping_sub(self.prev_camera_q16[2]);
+        self.prev_camera_q16 = camera_pos;
+        // Clamp camera jump (e.g. reset/replay wrap) so streaks don't span the whole stage.
+        let cam_delta = if cam_dx.abs() < 0x8_0000 && cam_dz.abs() < 0x8_0000 {
+            [cam_dx, cam_dy, cam_dz]
+        } else {
+            [0, 0, 0]
+        };
+        self.streak_delta_q16 = [
+            self.velocity_q16[0].wrapping_sub(cam_delta[0] / 2),
+            self.velocity_q16[1].wrapping_sub(cam_delta[1] / 2),
+            self.velocity_q16[2].wrapping_sub(cam_delta[2] / 2),
+        ];
+
+        // `FUN_0048c620`: advect particles and wrap within `±6.0` m of `center`.
+        for i in 0..self.active_count {
+            let pos = &mut self.positions_q16[i];
+            for axis in 0..3 {
+                pos[axis] = pos[axis].wrapping_add(self.velocity_q16[axis]);
+                let mut rel = pos[axis].wrapping_sub(center[axis]);
+                while rel > PRECIPITATION_HALF_EXTENT_Q16 {
+                    rel -= PRECIPITATION_BOX_SPAN_Q16;
+                }
+                while rel < -PRECIPITATION_HALF_EXTENT_Q16 {
+                    rel += PRECIPITATION_BOX_SPAN_Q16;
+                }
+                pos[axis] = center[axis].wrapping_add(rel);
+            }
+            // Night attenuation (`0x48cc42..0x48cc55`): dimmer outside headlight cone.
+            self.alphas[i] = if self.night {
+                match self.kind {
+                    PrecipitationKind::Snow => 0x80,
+                    PrecipitationKind::Rain => 0x70,
+                    PrecipitationKind::None => 0,
+                }
+            } else {
+                match self.kind {
+                    PrecipitationKind::Snow => 0xfe,
+                    PrecipitationKind::Rain => 0xb0,
+                    PrecipitationKind::None => 0,
+                }
+            };
+        }
+    }
+
+    /// Build world-space quads for all active rain/snow particles
+    /// (`0x48cd60..0x48ceb0`).
+    #[must_use]
+    pub fn billboards(
+        &self,
+        right: [i32; 3],
+        up: [i32; 3],
+        forward: [i32; 3],
+    ) -> Vec<PrecipitationQuad> {
+        if self.kind == PrecipitationKind::None || !self.initialized || self.active_count == 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::with_capacity(self.active_count);
+        let to_m = |v: i32| (f64::from(v) / 65536.0) as f32;
+        let rx = to_m(right[0]);
+        let ry = to_m(right[1]);
+        let rz = to_m(right[2]);
+        let ux = to_m(up[0]);
+        let uy = to_m(up[1]);
+        let uz = to_m(up[2]);
+
+        match self.kind {
+            PrecipitationKind::Snow => {
+                let s = to_m(SNOWFLAKE_HALF_SIZE_Q16);
+                let hr = [rx * s, ry * s, rz * s];
+                let hu = [ux * s, uy * s, uz * s];
+                for i in 0..self.active_count {
+                    let p = self.positions_q16[i].map(to_m);
+                    let tl = [
+                        p[0] - hr[0] + hu[0],
+                        p[1] - hr[1] + hu[1],
+                        p[2] - hr[2] + hu[2],
+                    ];
+                    let tr = [
+                        p[0] + hr[0] + hu[0],
+                        p[1] + hr[1] + hu[1],
+                        p[2] + hr[2] + hu[2],
+                    ];
+                    let br = [
+                        p[0] + hr[0] - hu[0],
+                        p[1] + hr[1] - hu[1],
+                        p[2] + hr[2] - hu[2],
+                    ];
+                    let bl = [
+                        p[0] - hr[0] - hu[0],
+                        p[1] - hr[1] - hu[1],
+                        p[2] - hr[2] - hu[2],
+                    ];
+                    out.push(PrecipitationQuad {
+                        corners: [tl, tr, br, bl],
+                        alpha: self.alphas[i],
+                        grey: 0xff,
+                        is_snow: true,
+                    });
+                }
+            }
+            PrecipitationKind::Rain => {
+                let dx = to_m(self.streak_delta_q16[0]);
+                let dy = to_m(self.streak_delta_q16[1]);
+                let dz = to_m(self.streak_delta_q16[2]);
+                let fx = to_m(forward[0]);
+                let fy = to_m(forward[1]);
+                let fz = to_m(forward[2]);
+                // Side vector perpendicular to rain streak and camera forward.
+                let sx = dy * fz - dz * fy;
+                let sy = dz * fx - dx * fz;
+                let sz = dx * fy - dy * fx;
+                let slen = (sx * sx + sy * sy + sz * sz).sqrt();
+                let half_w = 0.012f32;
+                let side = if slen > 1e-4 {
+                    [sx / slen * half_w, sy / slen * half_w, sz / slen * half_w]
+                } else {
+                    [rx * half_w, ry * half_w, rz * half_w]
+                };
+                for i in 0..self.active_count {
+                    let p0 = self.positions_q16[i].map(to_m);
+                    let p1 = [p0[0] + dx, p0[1] + dy, p0[2] + dz];
+                    let tl = [p0[0] - side[0], p0[1] - side[1], p0[2] - side[2]];
+                    let tr = [p0[0] + side[0], p0[1] + side[1], p0[2] + side[2]];
+                    let br = [p1[0] + side[0], p1[1] + side[1], p1[2] + side[2]];
+                    let bl = [p1[0] - side[0], p1[1] - side[1], p1[2] - side[2]];
+                    out.push(PrecipitationQuad {
+                        corners: [tl, tr, br, bl],
+                        alpha: self.alphas[i],
+                        grey: 0x64,
+                        is_snow: false,
+                    });
+                }
+            }
+            PrecipitationKind::None => {}
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,5 +699,55 @@ mod tests {
         // Far distances are 20.0 .. 80.0 in Q16.16.
         assert_eq!(FOG_FAR_DISTANCES[0].raw(), 0x14_0000);
         assert_eq!(FOG_FAR_DISTANCES[4].raw(), 0x50_0000);
+    }
+
+    #[test]
+    fn precipitation_counts_and_kinds_match_48bc60() {
+        assert_eq!(
+            PrecipitationSystem::new(0, 3, false).kind(),
+            PrecipitationKind::None
+        );
+        assert_eq!(PrecipitationSystem::new(0, 3, false).active_count(), 0);
+        let light_rain = PrecipitationSystem::new(3, 1, false);
+        assert_eq!(light_rain.kind(), PrecipitationKind::Rain);
+        assert_eq!(light_rain.active_count(), 50);
+        let med_snow = PrecipitationSystem::new(4, 2, false);
+        assert_eq!(med_snow.kind(), PrecipitationKind::Snow);
+        assert_eq!(med_snow.active_count(), 100);
+        let heavy_snow = PrecipitationSystem::new(4, 3, true);
+        assert_eq!(heavy_snow.active_count(), 200);
+    }
+
+    #[test]
+    fn precipitation_ticks_wrap_particles_around_moving_camera_and_emit_quads() {
+        let mut rng = crate::game_rng::GameLcg::new(42);
+        let trig = crate::fixed_point::build_sine_table();
+        let right = [0x1_0000, 0, 0];
+        let up = [0, 0x1_0000, 0];
+        let fwd = [0, 0, 0x1_0000];
+
+        let mut snow = PrecipitationSystem::new(4, 2, false);
+        snow.tick([0, 0, 0], fwd, &mut rng, &trig);
+        let q0 = snow.billboards(right, up, fwd);
+        assert_eq!(q0.len(), 100);
+        assert!(q0.iter().all(|q| q.is_snow && q.alpha == 0xfe));
+
+        // Move camera 50m forward and tick again: all particles wrap into [center - 6, center + 6].
+        snow.tick([0, 0, 50 * 0x1_0000], fwd, &mut rng, &trig);
+        let q1 = snow.billboards(right, up, fwd);
+        assert_eq!(q1.len(), 100);
+        for q in &q1 {
+            let z = q.corners[0][2];
+            assert!(
+                (53.5..=66.5).contains(&z),
+                "wrapped snowflake z={z} should stay near camera+10m (60m ± 6m)"
+            );
+        }
+
+        let mut rain = PrecipitationSystem::new(3, 1, false);
+        rain.tick([0, 0, 0], fwd, &mut rng, &trig);
+        let rq = rain.billboards(right, up, fwd);
+        assert_eq!(rq.len(), 50);
+        assert!(rq.iter().all(|q| !q.is_snow && q.grey == 0x64));
     }
 }

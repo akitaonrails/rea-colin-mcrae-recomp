@@ -3116,6 +3116,62 @@ impl StageRenderResources {
                 &[0xaa, 0x9b, 0x6c]
             });
         }
+        // `FUN_0048b960`: load `IMAGES\SNOW.BMP` for falling snowflakes and build
+        // a 2x2 white pixel bitmap for falling rain streaks (`0x48cd68`).
+        if let Some(snow_bmp) = store
+            .as_ref()
+            .and_then(|s| {
+                s.load("Game/IMAGES/SNOW.BMP")
+                    .or_else(|_| s.load("Game/images/snow.bmp"))
+                    .ok()
+            })
+            .and_then(|bytes| {
+                cmr_formats::bitmap::parse_indexed_bitmap(&bytes, BitmapLimits::default()).ok()
+            })
+        {
+            textures.insert(PRECIP_SNOW_TEXTURE_KEY, snow_bmp);
+        }
+        {
+            let mut pal = vec![
+                cmr_formats::bitmap::BitmapPaletteEntry {
+                    blue: 0,
+                    green: 0,
+                    red: 0,
+                    reserved: 0,
+                };
+                256
+            ];
+            pal[1] = cmr_formats::bitmap::BitmapPaletteEntry {
+                blue: 0xff,
+                green: 0xff,
+                red: 0xff,
+                reserved: 0,
+            };
+            textures.insert(
+                PRECIP_RAIN_TEXTURE_KEY,
+                cmr_formats::bitmap::IndexedBitmap {
+                    metadata: cmr_formats::bitmap::BitmapMetadata {
+                        reserved_1: 0,
+                        reserved_2: 0,
+                        x_pixels_per_meter: 0,
+                        y_pixels_per_meter: 0,
+                        important_colors: 0,
+                    },
+                    width: 2,
+                    height: 2,
+                    row_stride: 4,
+                    source_was_top_down: true,
+                    palette: pal,
+                    pixels: vec![1, 1, 1, 1],
+                    stored_pixels: vec![1, 1, 0, 0, 1, 1, 0, 0],
+                },
+            );
+        }
+        let precipitation = cmr_core::weather::PrecipitationSystem::new(
+            weather.weather_type,
+            weather.detail,
+            night,
+        );
         self.particles = Some(StageParticles {
             system: cmr_core::car_particles::ParticleSystem::new(1, true),
             tables: surfaces.store.tables().values.to_vec(),
@@ -3135,6 +3191,7 @@ impl StageRenderResources {
             mark_surfaces,
             ambient,
             textures,
+            precipitation,
         });
     }
 
@@ -3311,6 +3368,24 @@ impl StageRenderResources {
         particles.system.update(rng);
     }
 
+    /// One 25 Hz sim tick of falling rain/snow (`FUN_0048c080` + `FUN_0048c230`
+    /// + `FUN_0048c620`) anchored around the live camera.
+    fn tick_precipitation(
+        &mut self,
+        camera_world: &[i32; 16],
+        rng: &mut GameLcg,
+        trig: &[i32; cmr_core::fixed_point::TRIG_TABLE_LEN],
+    ) {
+        let Some(particles) = self.particles.as_mut() else {
+            return;
+        };
+        let camera_pos = [camera_world[12], camera_world[13], camera_world[14]];
+        let camera_fwd = [camera_world[8], camera_world[9], camera_world[10]];
+        particles
+            .precipitation
+            .tick(camera_pos, camera_fwd, rng, trig);
+    }
+
     /// `FUN_00428b80` for the player's viewport: the sprites in their
     /// camera-facing corners, far to near (`t = 1`: the tick just ran).
     fn plan_particles(
@@ -3377,6 +3452,23 @@ impl StageRenderResources {
                 grey: billboard.grey,
                 flip: billboard.flip,
                 key: (billboard.sprites, billboard.frame),
+            });
+        }
+        for quad in particles.precipitation.billboards(right, up, forward) {
+            let key = if quad.is_snow {
+                PRECIP_SNOW_TEXTURE_KEY
+            } else {
+                PRECIP_RAIN_TEXTURE_KEY
+            };
+            if !particles.textures.contains_key(&key) {
+                continue;
+            }
+            self.sprite_draws.push(SpriteDraw {
+                corners: quad.corners,
+                alpha: quad.alpha,
+                grey: quad.grey,
+                flip: false,
+                key,
             });
         }
     }
@@ -5611,7 +5703,15 @@ struct StageParticles {
         (cmr_core::car_particles::Sprites, usize),
         cmr_formats::bitmap::IndexedBitmap,
     >,
+    /// Falling rain streaks / `IMAGES\SNOW.BMP` snowflakes (`FUN_0048b960` /
+    /// `FUN_0048c080` / `FUN_0048c230` / `FUN_0048c620`).
+    precipitation: cmr_core::weather::PrecipitationSystem,
 }
+
+const PRECIP_SNOW_TEXTURE_KEY: (cmr_core::car_particles::Sprites, usize) =
+    (cmr_core::car_particles::Sprites::Dust, 100);
+const PRECIP_RAIN_TEXTURE_KEY: (cmr_core::car_particles::Sprites, usize) =
+    (cmr_core::car_particles::Sprites::Dust, 101);
 
 /// One planned sprite: its corners in world units and its texture key.
 struct SpriteDraw {
@@ -6450,6 +6550,9 @@ fn advance_game_frame<C: HostClock>(
             camera.interior(),
             true,
         );
+        if advanced.stepped || replay_tick {
+            resources.tick_precipitation(&camera_world, &mut camera.rng, &camera.trig);
+        }
         resources.plan_particles(session, &camera_world, camera.interior(), single_alpha);
         resources.plan_lamps(
             session,
