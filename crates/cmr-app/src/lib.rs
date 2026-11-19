@@ -3608,8 +3608,10 @@ impl StageRenderResources {
         out.with_rgba8(rgba8.into_boxed_slice()).unwrap_or(frame)
     }
 
-    /// Composite a translucent Time-Trial ghost car silhouette projected from
-    /// its `SnapshotCarLane` 4x4 Q16.16 pose (`FUN_0046c910` / `FUN_0046ca70`).
+    /// Composite a translucent Time-Trial ghost car rendered directly from the
+    /// pristine `.c3d` car mesh at its `SnapshotCarLane` 4x4 Q16.16 pose
+    /// (`FUN_0046c910` / `FUN_0046ca70`), with exact camera projection and
+    /// single-layer depth-tested alpha blending.
     fn composite_ghost_car(
         &self,
         frame: SoftwarePresentedFrame,
@@ -3619,6 +3621,9 @@ impl StageRenderResources {
         let Some(pose) = ghost_pose else {
             return frame;
         };
+        let Some(car_scene) = self.car_scene_pristine.as_ref() else {
+            return frame;
+        };
         let extent = frame.extent();
         let w = i32::from(extent.width);
         let h = i32::from(extent.height);
@@ -3626,6 +3631,7 @@ impl StageRenderResources {
             return frame;
         }
         let inv_q16 = 1.0_f32 / 65536.0_f32;
+        let model_world = car_model_world_q16(pose);
         let cx = camera_world[12] as f32 * inv_q16;
         let cy = camera_world[13] as f32 * inv_q16;
         let cz = camera_world[14] as f32 * inv_q16;
@@ -3644,62 +3650,195 @@ impl StageRenderResources {
             camera_world[9] as f32 * inv_q16,
             camera_world[10] as f32 * inv_q16,
         ];
-        let gx = pose[12] as f32 * inv_q16;
-        let gy = pose[13] as f32 * inv_q16;
-        let gz = pose[14] as f32 * inv_q16;
-        let grx = [
-            pose[0] as f32 * inv_q16,
-            pose[1] as f32 * inv_q16,
-            pose[2] as f32 * inv_q16,
-        ];
-        let gry = [
-            pose[4] as f32 * inv_q16,
-            pose[5] as f32 * inv_q16,
-            pose[6] as f32 * inv_q16,
-        ];
-        let grz = [
-            pose[8] as f32 * inv_q16,
-            pose[9] as f32 * inv_q16,
-            pose[10] as f32 * inv_q16,
-        ];
-        let focal = (w as f32) * 0.75;
+        let (proj_w, proj_h, z_near, z_far) = self.projection;
+        let focal_x = (w as f32) * z_near / proj_w.max(1e-4);
+        let focal_y = (h as f32) * z_near / proj_h.max(1e-4);
         let half_w = w as f32 * 0.5;
         let half_h = h as f32 * 0.5;
-        // 8 corners of a rally-car chassis envelope (1.8 m x 1.35 m x 4.2 m).
-        let local_corners: [[f32; 3]; 8] = [
-            [-0.9, 0.15, -2.1],
-            [0.9, 0.15, -2.1],
-            [0.9, 0.15, 2.1],
-            [-0.9, 0.15, 2.1],
-            [-0.75, 1.35, -1.3],
-            [0.75, 1.35, -1.3],
-            [0.75, 1.35, 1.5],
-            [-0.75, 1.35, 1.5],
-        ];
-        let mut projected = [None; 8];
-        let mut any_visible = false;
-        for (i, c) in local_corners.iter().enumerate() {
-            let wx = gx + grx[0] * c[0] + gry[0] * c[1] + grz[0] * c[2];
-            let wy = gy + grx[1] * c[0] + gry[1] * c[1] + grz[1] * c[2];
-            let wz = gz + grx[2] * c[0] + gry[2] * c[1] + grz[2] * c[2];
-            let dx = wx - cx;
-            let dy = wy - cy;
-            let dz = wz - cz;
-            let vx = dx * rx[0] + dy * rx[1] + dz * rx[2];
-            let vy = dx * ry[0] + dy * ry[1] + dz * ry[2];
-            let vz = dx * rz[0] + dy * rz[1] + dz * rz[2];
-            if vz > 0.6 && vz < 260.0 {
-                let sx = (half_w + (vx * focal) / vz) as i32;
-                let sy = (half_h - (vy * focal) / vz) as i32;
-                projected[i] = Some((sx, sy));
-                if sx >= -w && sx <= w * 2 && sy >= -h && sy <= h * 2 {
-                    any_visible = true;
+
+        // Quick frustum check on car origin before allocating/rasterizing.
+        let odx = model_world[12] as f32 * inv_q16 - cx;
+        let ody = model_world[13] as f32 * inv_q16 - cy;
+        let odz = model_world[14] as f32 * inv_q16 - cz;
+        let ovz = odx * rz[0] + ody * rz[1] + odz * rz[2];
+        if ovz < -3.0 || ovz > z_far.min(280.0) {
+            return frame;
+        }
+
+        // Compose world matrices for each Group-0 car node from `model_world`.
+        let mul_affine = |a: &[i32; 16], b: &[i32; 16]| -> [i32; 16] {
+            let mut out = [0i32; 16];
+            for r in 0..3 {
+                for c in 0..3 {
+                    let s = (i64::from(a[c]) * i64::from(b[r * 4])
+                        + i64::from(a[4 + c]) * i64::from(b[r * 4 + 1])
+                        + i64::from(a[8 + c]) * i64::from(b[r * 4 + 2]))
+                        >> 16;
+                    out[r * 4 + c] = s as i32;
+                }
+            }
+            for c in 0..3 {
+                let t = ((i64::from(a[c]) * i64::from(b[12])
+                    + i64::from(a[4 + c]) * i64::from(b[13])
+                    + i64::from(a[8 + c]) * i64::from(b[14]))
+                    >> 16)
+                    + i64::from(a[12 + c]);
+                out[12 + c] = t as i32;
+            }
+            out[15] = 0x1_0000;
+            out
+        };
+        let nodes: Vec<_> = car_scene.group0_records().collect();
+        let records: Vec<_> = car_scene.group1_records().collect();
+        let mut node_worlds: Vec<[i32; 16]> = Vec::with_capacity(nodes.len());
+        for (idx, node) in nodes.iter().enumerate() {
+            let local = node.affine_matrix_q16();
+            let world = match node.parent_index() {
+                Some(parent) if parent < idx => mul_affine(&node_worlds[parent], &local),
+                _ => mul_affine(&model_world, &local),
+            };
+            node_worlds.push(world);
+        }
+
+        // Collect screen-space triangles for the ghost car mesh.
+        struct GhostTri {
+            p: [(f32, f32, f32); 3],
+            shade: f32,
+        }
+        let mut tris: Vec<GhostTri> = Vec::new();
+        for (node_idx, node) in nodes.iter().enumerate() {
+            let g1_idx = node.field_04_i16();
+            if g1_idx < 0 {
+                continue;
+            }
+            let Some(record) = records.get(g1_idx as usize) else {
+                continue;
+            };
+            let nw = &node_worlds[node_idx];
+            let grx = [
+                nw[0] as f32 * inv_q16,
+                nw[1] as f32 * inv_q16,
+                nw[2] as f32 * inv_q16,
+            ];
+            let gry = [
+                nw[4] as f32 * inv_q16,
+                nw[5] as f32 * inv_q16,
+                nw[6] as f32 * inv_q16,
+            ];
+            let grz = [
+                nw[8] as f32 * inv_q16,
+                nw[9] as f32 * inv_q16,
+                nw[10] as f32 * inv_q16,
+            ];
+            let gtx = nw[12] as f32 * inv_q16;
+            let gty = nw[13] as f32 * inv_q16;
+            let gtz = nw[14] as f32 * inv_q16;
+            let verts: Vec<_> = record.entries_32().collect();
+            let projected: Vec<Option<(f32, f32, f32, f32)>> = verts
+                .iter()
+                .map(|v| {
+                    let p = v.position_q16();
+                    let lx = p[0] as f32 * inv_q16;
+                    let ly = p[1] as f32 * inv_q16;
+                    let lz = p[2] as f32 * inv_q16;
+                    let wx = gtx + grx[0] * lx + gry[0] * ly + grz[0] * lz;
+                    let wy = gty + grx[1] * lx + gry[1] * ly + grz[1] * lz;
+                    let wz = gtz + grx[2] * lx + gry[2] * ly + grz[2] * lz;
+                    let dx = wx - cx;
+                    let dy = wy - cy;
+                    let dz = wz - cz;
+                    let vx = dx * rx[0] + dy * rx[1] + dz * rx[2];
+                    let vy = dx * ry[0] + dy * ry[1] + dz * ry[2];
+                    let vz = dx * rz[0] + dy * rz[1] + dz * rz[2];
+                    if vz <= z_near.max(0.4) || vz >= z_far {
+                        return None;
+                    }
+                    let n = v.normal_q16();
+                    let ny = (n[1] as f32 * inv_q16).clamp(-1.0, 1.0);
+                    let sx = half_w + (vx * focal_x) / vz;
+                    let sy = half_h - (vy * focal_y) / vz;
+                    Some((sx, sy, vz, ny))
+                })
+                .collect();
+            for face in record.entries_24() {
+                let [i0, i1, i2] = face.entry32_ordinals();
+                let (Some(v0), Some(v1), Some(v2)) = (
+                    projected.get(usize::from(i0)).copied().flatten(),
+                    projected.get(usize::from(i1)).copied().flatten(),
+                    projected.get(usize::from(i2)).copied().flatten(),
+                ) else {
+                    continue;
+                };
+                // Backface cull in screen space.
+                let area = (v1.0 - v0.0) * (v2.1 - v0.1) - (v1.1 - v0.1) * (v2.0 - v0.0);
+                if area.abs() < 0.25 {
+                    continue;
+                }
+                let ny_avg = ((v0.3 + v1.3 + v2.3) / 3.0).max(0.0);
+                let shade = 0.45 + 0.55 * ny_avg;
+                tris.push(GhostTri {
+                    p: [(v0.0, v0.1, v0.2), (v1.0, v1.1, v1.2), (v2.0, v2.1, v2.2)],
+                    shade,
+                });
+            }
+        }
+        if tris.is_empty() {
+            return frame;
+        }
+
+        // Compute tight screen bounding box for a lightweight local ghost z-buffer.
+        let mut bx0 = w;
+        let mut by0 = h;
+        let mut bx1 = 0;
+        let mut by1 = 0;
+        for tri in &tris {
+            for &(sx, sy, _) in &tri.p {
+                bx0 = bx0.min(sx.floor() as i32);
+                by0 = by0.min(sy.floor() as i32);
+                bx1 = bx1.max(sx.ceil() as i32);
+                by1 = by1.max(sy.ceil() as i32);
+            }
+        }
+        bx0 = bx0.clamp(0, w - 1);
+        by0 = by0.clamp(0, h - 1);
+        bx1 = bx1.clamp(0, w - 1);
+        by1 = by1.clamp(0, h - 1);
+        if bx1 < bx0 || by1 < by0 {
+            return frame;
+        }
+        let bw = (bx1 - bx0 + 1) as usize;
+        let bh = (by1 - by0 + 1) as usize;
+        let mut zbuf = vec![f32::INFINITY; bw * bh];
+        let mut shade_buf = vec![0.0_f32; bw * bh];
+
+        for tri in &tris {
+            let [(x0, y0, z0), (x1, y1, z1), (x2, y2, z2)] = tri.p;
+            let area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+            let inv_area = 1.0 / area;
+            let min_x = (x0.min(x1).min(x2).floor() as i32).max(bx0);
+            let max_x = (x0.max(x1).max(x2).ceil() as i32).min(bx1);
+            let min_y = (y0.min(y1).min(y2).floor() as i32).max(by0);
+            let max_y = (y0.max(y1).max(y2).ceil() as i32).min(by1);
+            for py in min_y..=max_y {
+                let fy = py as f32 + 0.5;
+                let row = (py - by0) as usize * bw;
+                for px in min_x..=max_x {
+                    let fx = px as f32 + 0.5;
+                    let w0 = ((x1 - fx) * (y2 - fy) - (y1 - fy) * (x2 - fx)) * inv_area;
+                    let w1 = ((x2 - fx) * (y0 - fy) - (y2 - fy) * (x0 - fx)) * inv_area;
+                    let w2 = 1.0 - w0 - w1;
+                    if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
+                        let z = w0 * z0 + w1 * z1 + w2 * z2;
+                        let cell = row + (px - bx0) as usize;
+                        if z < zbuf[cell] {
+                            zbuf[cell] = z;
+                            shade_buf[cell] = tri.shade;
+                        }
+                    }
                 }
             }
         }
-        if !any_visible {
-            return frame;
-        }
+
         let wu = w as usize;
         let hu = h as usize;
         let palette = Box::new(*frame.palette());
@@ -3715,34 +3854,24 @@ impl StageRenderResources {
             }
             out
         });
-        let edges: [(usize, usize); 12] = [
-            (0, 1),
-            (1, 2),
-            (2, 3),
-            (3, 0),
-            (4, 5),
-            (5, 6),
-            (6, 7),
-            (7, 4),
-            (0, 4),
-            (1, 5),
-            (2, 6),
-            (3, 7),
-        ];
-        for (a, b) in edges {
-            let (Some((x0, y0)), Some((x1, y1))) = (projected[a], projected[b]) else {
-                continue;
-            };
-            let steps = (x1 - x0).abs().max((y1 - y0).abs()).clamp(1, 2048);
-            for s in 0..=steps {
-                let px = x0 + ((x1 - x0) * s) / steps;
-                let py = y0 + ((y1 - y0) * s) / steps;
-                if px >= 0 && px < w && py >= 0 && py < h {
-                    let off = ((py as usize) * wu + (px as usize)) * 4;
-                    rgba8[off] = rgba8[off].saturating_add(70);
-                    rgba8[off + 1] = rgba8[off + 1].saturating_add(160);
-                    rgba8[off + 2] = rgba8[off + 2].saturating_add(190);
+        // Single-layer translucent holographic cyan-silver blend over the ghost silhouette.
+        for ly in 0..bh {
+            let py = (by0 as usize) + ly;
+            let row = ly * bw;
+            for lx in 0..bw {
+                let shade = shade_buf[row + lx];
+                if shade <= 0.0 {
+                    continue;
                 }
+                let px = (bx0 as usize) + lx;
+                let off = (py * wu + px) * 4;
+                let gr = (145.0 * shade) as u32;
+                let gg = (225.0 * shade) as u32;
+                let gb = (255.0 * shade) as u32;
+                // Alpha = 42% (107/255)
+                rgba8[off] = ((u32::from(rgba8[off]) * 148 + gr * 107) / 255) as u8;
+                rgba8[off + 1] = ((u32::from(rgba8[off + 1]) * 148 + gg * 107) / 255) as u8;
+                rgba8[off + 2] = ((u32::from(rgba8[off + 2]) * 148 + gb * 107) / 255) as u8;
             }
         }
         let Ok(out) =
