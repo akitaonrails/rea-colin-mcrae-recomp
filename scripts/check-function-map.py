@@ -132,6 +132,47 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "status": "verified_1to1",
         "notes": "Rain streak & SNOW.BMP snowflake advection, box wrapping, night attenuation, and quad emission (PrecipitationSystem::billboards + StageRenderResources::plan_particles).",
     },
+    # Sky sun, halo, 7 lens-flare rings, moon, and twinkling stars (IMAGES\LENSFLR\*)
+    "0x00482d10": {
+        "status": "verified_1to1",
+        "notes": "Loads images\\lensflr\\sun.bmp, sunhalo.bmp, and 1.bmp..7.bmp (SkyOverlayAssets::load).",
+    },
+    "0x00483060": {
+        "status": "verified_1to1",
+        "notes": "Projects world sun/moon/star direction into screen space (SkyOverlayState::project_dir).",
+    },
+    "0x00483a40": {
+        "status": "verified_1to1",
+        "notes": "Dispatches sun disc, sun halo, and lens flare ring sprites (SkyOverlayState::plan).",
+    },
+    "0x00483c00": {
+        "status": "verified_1to1",
+        "notes": "Draws sun disc bitmap additively (SkyOverlaySpriteKind::Sun + composite_sky_overlay).",
+    },
+    "0x00483cc0": {
+        "status": "verified_1to1",
+        "notes": "Draws sun halo bitmap additively (SkyOverlaySpriteKind::SunHalo + composite_sky_overlay).",
+    },
+    "0x00483db0": {
+        "status": "verified_1to1",
+        "notes": "Draws 7 lens-flare rings along sun-to-center axis (SkyOverlaySpriteKind::LensFlare + composite_sky_overlay).",
+    },
+    "0x00484130": {
+        "status": "verified_1to1",
+        "notes": "Loads MOON.BMP and STAR.BMP and seeds 60 upper-dome stars (SkyOverlayAssets::load + SkyOverlayState::new).",
+    },
+    "0x00484a70": {
+        "status": "verified_1to1",
+        "notes": "Projects and draws night moon sprite (SkyOverlaySpriteKind::Moon + composite_sky_overlay).",
+    },
+    "0x00484eb0": {
+        "status": "verified_1to1",
+        "notes": "Night sky dispatcher projecting 60 twinkling stars and moon (SkyOverlayState::plan, gated by config[0x10] & 0x40).",
+    },
+    "0x00485100": {
+        "status": "verified_1to1",
+        "notes": "Draws twinkling star sprites additively (SkyOverlaySpriteKind::Star + composite_sky_overlay).",
+    },
     "0x00433750": {
         "status": "implemented_unwired",
         "notes": "Force-feedback effect update reconstructed in cmr-core::force_feedback; SDL rumble approximates it.",

@@ -601,6 +601,251 @@ impl PrecipitationSystem {
     }
 }
 
+/// Number of procedural night-sky stars (`FUN_00484130` / `FUN_00484eb0`).
+pub const SKY_STAR_COUNT: usize = 60;
+/// Number of numbered lens-flare ring bitmaps (`images\lensflr\1.bmp..7.bmp`,
+/// `0x482d57..0x482d95`).
+pub const LENS_FLARE_RING_COUNT: usize = 7;
+
+/// Sky overlay sprite identity (`FUN_00482d10` / `FUN_00484130`).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SkyOverlaySpriteKind {
+    Sun,
+    SunHalo,
+    /// `0..7` corresponding to `images/lensflr/1.bmp..7.bmp`.
+    LensFlare(u8),
+    Moon,
+    Star,
+}
+
+/// One projected 2D screen-space sky sprite (`FUN_00483c00` / `FUN_00483cc0` /
+/// `FUN_00483db0` / `FUN_00484a70` / `FUN_00484eb0` / `FUN_00485100`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SkyOverlaySprite {
+    pub kind: SkyOverlaySpriteKind,
+    pub dst_x: i32,
+    pub dst_y: i32,
+    pub dst_w: i32,
+    pub dst_h: i32,
+    pub alpha: u8,
+}
+
+/// Per-stage sky sun, lens flare, moon, and starfield state (`FUN_00482d10`,
+/// `FUN_00483060`, `FUN_00484130`, `FUN_00484eb0`).
+#[derive(Clone, Debug)]
+pub struct SkyOverlayState {
+    clear_sky: bool,
+    night: bool,
+    sun_dir: [f32; 3],
+    stars: [(f32, f32, f32); SKY_STAR_COUNT],
+}
+
+impl SkyOverlayState {
+    /// Initialize sky celestial bodies from the stage's weather and primary
+    /// directional light (`FUN_0048b960` -> `FUN_00482d10` + `FUN_00484130`).
+    #[must_use]
+    pub fn new(
+        weather_type: u32,
+        lighting: u32,
+        primary_light_dir: Option<[i32; 3]>,
+        rng: &mut crate::game_rng::GameLcg,
+        trig: &[i32; crate::fixed_point::TRIG_TABLE_LEN],
+    ) -> Self {
+        let clear_sky = weather_type == 1;
+        let night = is_night(lighting);
+        let raw_dir = primary_light_dir.unwrap_or([0x6000, 0x8000, 0x8000]);
+        let mut dx = f64::from(raw_dir[0]) / 65536.0;
+        let mut dy = f64::from(raw_dir[1]) / 65536.0;
+        let mut dz = f64::from(raw_dir[2]) / 65536.0;
+        // Keep the sun/moon above the horizon.
+        if dy < 0.22 {
+            dy = 0.28;
+        }
+        let len = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-4);
+        dx /= len;
+        dy /= len;
+        dz /= len;
+
+        // `0x484ed2..0x484f9d`: distribute 60 stars on the upper dome:
+        // horizontal radius = 70*(1 - elev), height = 30 + 90*elev.
+        let mut stars = [(0.0f32, 1.0f32, 0.0f32); SKY_STAR_COUNT];
+        for star in &mut stars {
+            let az = (rng.next_raw() & 0x0fff) as usize;
+            let elev = f64::from(rng.next_raw() & 0x7fff) / 32767.0;
+            let s = f64::from(trig[az & 0x0fff]) / 65536.0;
+            let c = f64::from(trig[(az + 0x400) & 0x0fff]) / 65536.0;
+            let horiz = 70.0 * (1.0 - elev);
+            let sx = s * horiz;
+            let sy = 30.0 + 90.0 * elev;
+            let sz = c * horiz;
+            let slen = (sx * sx + sy * sy + sz * sz).sqrt().max(1e-4);
+            *star = ((sx / slen) as f32, (sy / slen) as f32, (sz / slen) as f32);
+        }
+
+        Self {
+            clear_sky,
+            night,
+            sun_dir: [dx as f32, dy as f32, dz as f32],
+            stars,
+        }
+    }
+
+    fn project_dir(
+        dir: [f32; 3],
+        camera_world: &[i32; 16],
+        vw: f32,
+        vh: f32,
+    ) -> Option<(f32, f32, f32)> {
+        let to_f = |v: i32| (f64::from(v) / 65536.0) as f32;
+        let rx = to_f(camera_world[0]);
+        let ry = to_f(camera_world[1]);
+        let rz = to_f(camera_world[2]);
+        let ux = to_f(camera_world[4]);
+        let uy = to_f(camera_world[5]);
+        let uz = to_f(camera_world[6]);
+        let fx = to_f(camera_world[8]);
+        let fy = to_f(camera_world[9]);
+        let fz = to_f(camera_world[10]);
+
+        let cam_z = dir[0] * fx + dir[1] * fy + dir[2] * fz;
+        if cam_z <= 0.15 {
+            return None;
+        }
+        let cam_x = dir[0] * rx + dir[1] * ry + dir[2] * rz;
+        let cam_y = dir[0] * ux + dir[1] * uy + dir[2] * uz;
+        let focal_y = vh * 0.85;
+        let focal_x = focal_y;
+        let sx = vw * 0.5 + (cam_x / cam_z) * focal_x;
+        let sy = vh * 0.5 - (cam_y / cam_z) * focal_y;
+        Some((sx, sy, cam_z))
+    }
+
+    /// Plan screen-space sky sprites for the current camera view (`0x47aa35..0x47aa7f`,
+    /// dispatching `FUN_00483a40` for clear day and `FUN_00484eb0` for clear night).
+    #[must_use]
+    pub fn plan(
+        &self,
+        camera_world: &[i32; 16],
+        viewport_w: u16,
+        viewport_h: u16,
+        enabled: bool,
+        twinkle_phase: u32,
+    ) -> Vec<SkyOverlaySprite> {
+        if !enabled || !self.clear_sky || viewport_w == 0 || viewport_h == 0 {
+            return Vec::new();
+        }
+        let vw = f32::from(viewport_w);
+        let vh = f32::from(viewport_h);
+        let scale = vh / 480.0;
+        let mut out = Vec::new();
+
+        if !self.night {
+            // Clear day/dusk: sun disc + sun halo + 7 lens-flare rings (`0x483300..0x483f60`).
+            if let Some((sx, sy, _)) = Self::project_dir(self.sun_dir, camera_world, vw, vh) {
+                let margin = 96.0 * scale;
+                if sx >= -margin && sx <= vw + margin && sy >= -margin && sy <= vh + margin {
+                    let cx = vw * 0.5;
+                    let cy = vh * 0.5;
+                    let nx = ((sx - cx) / (vw * 0.65)).abs();
+                    let ny = ((sy - cy) / (vh * 0.65)).abs();
+                    let vis = (1.0 - nx.max(ny).clamp(0.0, 1.0)).clamp(0.0, 1.0);
+                    let sun_size = (64.0 * scale).round() as i32;
+                    let halo_size = (160.0 * scale).round() as i32;
+                    out.push(SkyOverlaySprite {
+                        kind: SkyOverlaySpriteKind::SunHalo,
+                        dst_x: sx.round() as i32 - halo_size / 2,
+                        dst_y: sy.round() as i32 - halo_size / 2,
+                        dst_w: halo_size,
+                        dst_h: halo_size,
+                        alpha: (190.0 * (0.4 + 0.6 * vis)).round() as u8,
+                    });
+                    out.push(SkyOverlaySprite {
+                        kind: SkyOverlaySpriteKind::Sun,
+                        dst_x: sx.round() as i32 - sun_size / 2,
+                        dst_y: sy.round() as i32 - sun_size / 2,
+                        dst_w: sun_size,
+                        dst_h: sun_size,
+                        alpha: 255,
+                    });
+                    if vis > 0.05 {
+                        // 7 flare elements along the sun -> screen-center axis (`0x483db0`).
+                        const FLARE_SPEC: [(f32, f32, f32); LENS_FLARE_RING_COUNT] = [
+                            (-0.35, 36.0, 0.55),
+                            (0.25, 28.0, 0.50),
+                            (0.55, 48.0, 0.45),
+                            (0.80, 24.0, 0.55),
+                            (1.05, 64.0, 0.40),
+                            (1.30, 32.0, 0.50),
+                            (1.55, 56.0, 0.35),
+                        ];
+                        let dx = cx - sx;
+                        let dy = cy - sy;
+                        for (idx, &(t, base_px, weight)) in FLARE_SPEC.iter().enumerate() {
+                            let fx = sx + dx * t;
+                            let fy = sy + dy * t;
+                            let sz = (base_px * scale).round().max(4.0) as i32;
+                            let alpha = (220.0 * weight * vis).round().clamp(0.0, 255.0) as u8;
+                            if alpha > 4 {
+                                out.push(SkyOverlaySprite {
+                                    kind: SkyOverlaySpriteKind::LensFlare(idx as u8),
+                                    dst_x: fx.round() as i32 - sz / 2,
+                                    dst_y: fy.round() as i32 - sz / 2,
+                                    dst_w: sz,
+                                    dst_h: sz,
+                                    alpha,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Clear night: twinkling stars (`STAR.BMP`) + moon (`MOON.BMP`) (`0x484eb0`).
+            let star_sz = (8.0 * scale).round().max(2.0) as i32;
+            for (i, &(sx_d, sy_d, sz_d)) in self.stars.iter().enumerate() {
+                if let Some((px, py, _)) =
+                    Self::project_dir([sx_d, sy_d, sz_d], camera_world, vw, vh)
+                    && px >= -10.0
+                    && px <= vw + 10.0
+                    && py >= -10.0
+                    && py <= vh * 0.65
+                {
+                    let hash = (i as u32)
+                        .wrapping_mul(2654435761)
+                        .wrapping_add(twinkle_phase >> 2);
+                    let alpha = 140 + ((hash & 0x7f) as u8 / 2);
+                    out.push(SkyOverlaySprite {
+                        kind: SkyOverlaySpriteKind::Star,
+                        dst_x: px.round() as i32 - star_sz / 2,
+                        dst_y: py.round() as i32 - star_sz / 2,
+                        dst_w: star_sz,
+                        dst_h: star_sz,
+                        alpha,
+                    });
+                }
+            }
+            if let Some((mx, my, _)) = Self::project_dir(self.sun_dir, camera_world, vw, vh) {
+                let moon_sz = (56.0 * scale).round().max(8.0) as i32;
+                if mx >= -moon_sz as f32
+                    && mx <= vw + moon_sz as f32
+                    && my >= -moon_sz as f32
+                    && my <= vh + moon_sz as f32
+                {
+                    out.push(SkyOverlaySprite {
+                        kind: SkyOverlaySpriteKind::Moon,
+                        dst_x: mx.round() as i32 - moon_sz / 2,
+                        dst_y: my.round() as i32 - moon_sz / 2,
+                        dst_w: moon_sz,
+                        dst_h: moon_sz,
+                        alpha: 240,
+                    });
+                }
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -749,5 +994,55 @@ mod tests {
         let rq = rain.billboards(right, up, fwd);
         assert_eq!(rq.len(), 50);
         assert!(rq.iter().all(|q| !q.is_snow && q.grey == 0x64));
+    }
+
+    #[test]
+    fn sky_overlay_emits_sun_and_flares_on_clear_day_and_moon_stars_on_clear_night() {
+        let mut rng = crate::game_rng::GameLcg::new(7);
+        let trig = crate::fixed_point::build_sine_table();
+        let identity_cam = [
+            0x1_0000, 0, 0, 0, // right = +X
+            0, 0x1_0000, 0, 0, // up    = +Y
+            0, 0, 0x1_0000, 0, // fwd   = +Z
+            0, 0, 0, 0x1_0000,
+        ];
+        // Clear day with sun in front (+Z, +Y).
+        let day = SkyOverlayState::new(1, 2, Some([0, 0x6000, 0x1_0000]), &mut rng, &trig);
+        let sprites = day.plan(&identity_cam, 640, 480, true, 0);
+        assert!(sprites.iter().any(|s| s.kind == SkyOverlaySpriteKind::Sun));
+        assert!(
+            sprites
+                .iter()
+                .any(|s| s.kind == SkyOverlaySpriteKind::SunHalo)
+        );
+        let flare_count = sprites
+            .iter()
+            .filter(|s| matches!(s.kind, SkyOverlaySpriteKind::LensFlare(_)))
+            .count();
+        assert_eq!(flare_count, LENS_FLARE_RING_COUNT);
+        // Option disabled -> empty.
+        assert!(day.plan(&identity_cam, 640, 480, false, 0).is_empty());
+
+        // Sun behind camera (-Z) -> empty.
+        let behind = SkyOverlayState::new(1, 2, Some([0, 0x6000, -0x1_0000]), &mut rng, &trig);
+        assert!(behind.plan(&identity_cam, 640, 480, true, 0).is_empty());
+
+        // Clear night -> moon + stars.
+        let night = SkyOverlayState::new(1, 8, Some([0, 0x6000, 0x1_0000]), &mut rng, &trig);
+        let night_sprites = night.plan(&identity_cam, 640, 480, true, 0);
+        assert!(
+            night_sprites
+                .iter()
+                .any(|s| s.kind == SkyOverlaySpriteKind::Moon)
+        );
+        assert!(
+            night_sprites
+                .iter()
+                .any(|s| s.kind == SkyOverlaySpriteKind::Star)
+        );
+
+        // Rainy weather (weather_type == 3) -> no sun/moon/stars.
+        let rainy = SkyOverlayState::new(3, 2, Some([0, 0x6000, 0x1_0000]), &mut rng, &trig);
+        assert!(rainy.plan(&identity_cam, 640, 480, true, 0).is_empty());
     }
 }

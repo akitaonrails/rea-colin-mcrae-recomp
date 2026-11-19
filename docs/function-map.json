@@ -18546,7 +18546,7 @@
       "size": 848,
       "name": "FUN_00482d10",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00421c90",
         "0x00495ed0",
@@ -18556,8 +18556,13 @@
       "callers": [
         "0x0048b960"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Loads images\\lensflr\\sun.bmp, sunhalo.bmp, and 1.bmp..7.bmp (SkyOverlayAssets::load).",
+      "manual_override": true
     },
     {
       "address": "0x00483060",
@@ -18565,7 +18570,7 @@
       "size": 960,
       "name": "FUN_00483060",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00483420",
         "0x00483a40",
@@ -18581,8 +18586,13 @@
         "0x00484a70",
         "0x00484eb0"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Projects world sun/moon/star direction into screen space (SkyOverlayState::project_dir).",
+      "manual_override": true
     },
     {
       "address": "0x00483420",
@@ -18606,7 +18616,7 @@
       "size": 448,
       "name": "FUN_00483a40",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00483c00",
         "0x00483cc0"
@@ -18614,8 +18624,12 @@
       "callers": [
         "0x00483060"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Dispatches sun disc, sun halo, and lens flare ring sprites (SkyOverlayState::plan).",
+      "manual_override": true
     },
     {
       "address": "0x00483c00",
@@ -18623,7 +18637,7 @@
       "size": 192,
       "name": "FUN_00483c00",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00483d70",
         "0x0049b1d0"
@@ -18631,8 +18645,12 @@
       "callers": [
         "0x00483a40"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Draws sun disc bitmap additively (SkyOverlaySpriteKind::Sun + composite_sky_overlay).",
+      "manual_override": true
     },
     {
       "address": "0x00483cc0",
@@ -18640,7 +18658,7 @@
       "size": 176,
       "name": "FUN_00483cc0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00483db0",
         "0x0049b1d0"
@@ -18648,8 +18666,12 @@
       "callers": [
         "0x00483a40"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Draws sun halo bitmap additively (SkyOverlaySpriteKind::SunHalo + composite_sky_overlay).",
+      "manual_override": true
     },
     {
       "address": "0x00483d70",
@@ -18676,7 +18698,7 @@
       "size": 432,
       "name": "FUN_00483db0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00483d70",
         "0x0049b1d0"
@@ -18685,8 +18707,12 @@
         "0x00483060",
         "0x00483cc0"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Draws 7 lens-flare rings along sun-to-center axis (SkyOverlaySpriteKind::LensFlare + composite_sky_overlay).",
+      "manual_override": true
     },
     {
       "address": "0x00483f60",
@@ -18694,7 +18720,7 @@
       "size": 432,
       "name": "FUN_00483f60",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "wired_live",
       "callees": [
         "0x00483d70",
         "0x0049b1d0"
@@ -18702,7 +18728,10 @@
       "callers": [
         "0x00483060"
       ],
-      "live_files": [],
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/weather.rs"
+      ],
       "test_files": []
     },
     {
@@ -18725,7 +18754,7 @@
       "size": 992,
       "name": "FUN_00484130",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00421c90",
         "0x00495ed0",
@@ -18736,8 +18765,13 @@
       "callers": [
         "0x0048b960"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Loads MOON.BMP and STAR.BMP and seeds 60 upper-dome stars (SkyOverlayAssets::load + SkyOverlayState::new).",
+      "manual_override": true
     },
     {
       "address": "0x00484510",
@@ -18780,7 +18814,7 @@
       "size": 1088,
       "name": "FUN_00484a70",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00483060",
         "0x00483d70",
@@ -18790,8 +18824,12 @@
       "callers": [
         "0x00484eb0"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Projects and draws night moon sprite (SkyOverlaySpriteKind::Moon + composite_sky_overlay).",
+      "manual_override": true
     },
     {
       "address": "0x00484eb0",
@@ -18799,7 +18837,7 @@
       "size": 592,
       "name": "FUN_00484eb0",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00483060",
         "0x00483d70",
@@ -18812,8 +18850,13 @@
       "callers": [
         "0x0047a900"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Night sky dispatcher projecting 60 twinkling stars and moon (SkyOverlayState::plan, gated by config[0x10] & 0x40).",
+      "manual_override": true
     },
     {
       "address": "0x00485100",
@@ -18821,7 +18864,7 @@
       "size": 208,
       "name": "FUN_00485100",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00483d70",
         "0x0049b1d0"
@@ -18829,8 +18872,12 @@
       "callers": [
         "0x00484eb0"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-core/src/weather.rs"
+      ],
+      "test_files": [],
+      "notes": "Draws twinkling star sprites additively (SkyOverlaySpriteKind::Star + composite_sky_overlay).",
+      "manual_override": true
     },
     {
       "address": "0x004851d0",

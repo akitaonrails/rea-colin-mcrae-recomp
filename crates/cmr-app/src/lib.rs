@@ -3172,6 +3172,7 @@ impl StageRenderResources {
             weather.detail,
             night,
         );
+        let sky_overlay = SkyOverlayAssets::load(store.as_ref(), weather);
         self.particles = Some(StageParticles {
             system: cmr_core::car_particles::ParticleSystem::new(1, true),
             tables: surfaces.store.tables().values.to_vec(),
@@ -3192,6 +3193,7 @@ impl StageRenderResources {
             ambient,
             textures,
             precipitation,
+            sky_overlay,
         });
     }
 
@@ -3384,6 +3386,94 @@ impl StageRenderResources {
         particles
             .precipitation
             .tick(camera_pos, camera_fwd, rng, trig);
+    }
+
+    /// Composite clear-day sun/halo/lens-flare (`FUN_00483300..FUN_00483f60`) or
+    /// clear-night moon/stars (`FUN_00484eb0`) additively over the world frame
+    /// and under the race HUD (`0x47aa35..0x47aa7f`).
+    fn composite_sky_overlay(
+        &self,
+        frame: SoftwarePresentedFrame,
+        camera_world: &[i32; 16],
+        enabled: bool,
+        twinkle_phase: u32,
+    ) -> SoftwarePresentedFrame {
+        let Some(particles) = self.particles.as_ref() else {
+            return frame;
+        };
+        let extent = frame.extent();
+        let sprites = particles.sky_overlay.state.plan(
+            camera_world,
+            extent.width,
+            extent.height,
+            enabled,
+            twinkle_phase,
+        );
+        if sprites.is_empty() {
+            return frame;
+        }
+        let w = usize::from(extent.width);
+        let h = usize::from(extent.height);
+        let palette = Box::new(*frame.palette());
+        let pixels = frame.pixels().to_vec();
+        let mut rgba8 = frame.rgba8().map(<[u8]>::to_vec).unwrap_or_else(|| {
+            let mut out = vec![0u8; w * h * 4];
+            for (i, &idx) in pixels.iter().enumerate() {
+                let c = palette[usize::from(idx)];
+                out[i * 4] = c.red;
+                out[i * 4 + 1] = c.green;
+                out[i * 4 + 2] = c.blue;
+                out[i * 4 + 3] = 255;
+            }
+            out
+        });
+        for sprite in &sprites {
+            let Some(bmp) = particles.sky_overlay.bitmaps.get(&sprite.kind) else {
+                continue;
+            };
+            if bmp.width == 0 || bmp.height == 0 || sprite.dst_w <= 0 || sprite.dst_h <= 0 {
+                continue;
+            }
+            let x0 = sprite.dst_x.max(0);
+            let y0 = sprite.dst_y.max(0);
+            let x1 = (sprite.dst_x + sprite.dst_w).min(w as i32);
+            let y1 = (sprite.dst_y + sprite.dst_h).min(h as i32);
+            let alpha = u32::from(sprite.alpha);
+            for ty in y0..y1 {
+                let sy = (((ty - sprite.dst_y) as u64 * u64::from(bmp.height))
+                    / (sprite.dst_h as u64))
+                    .min(u64::from(bmp.height - 1)) as usize;
+                let srow = sy * bmp.width as usize;
+                let drow = (ty as usize) * w;
+                for tx in x0..x1 {
+                    let sx = (((tx - sprite.dst_x) as u64 * u64::from(bmp.width))
+                        / (sprite.dst_w as u64))
+                        .min(u64::from(bmp.width - 1)) as usize;
+                    let idx = bmp.pixels[srow + sx];
+                    if idx == 0 {
+                        continue;
+                    }
+                    let Some(c) = bmp.palette.get(usize::from(idx)) else {
+                        continue;
+                    };
+                    if c.red == 0 && c.green == 0 && c.blue == 0 {
+                        continue;
+                    }
+                    let off = (drow + tx as usize) * 4;
+                    rgba8[off] = rgba8[off].saturating_add(((u32::from(c.red) * alpha) >> 8) as u8);
+                    rgba8[off + 1] =
+                        rgba8[off + 1].saturating_add(((u32::from(c.green) * alpha) >> 8) as u8);
+                    rgba8[off + 2] =
+                        rgba8[off + 2].saturating_add(((u32::from(c.blue) * alpha) >> 8) as u8);
+                }
+            }
+        }
+        let Ok(out) =
+            SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)
+        else {
+            return frame;
+        };
+        out.with_rgba8(rgba8.into_boxed_slice()).unwrap_or(frame)
     }
 
     /// `FUN_00428b80` for the player's viewport: the sprites in their
@@ -4244,6 +4334,8 @@ struct SubtickRenderSnapshot {
     checkpoint_hud: cmr_core::race_hud_plan::RaceHudCheckpointInputs,
     hud_countdown: Option<cmr_core::race_hud_plan::RaceHudCountdown>,
     pacenote_arrows: Vec<cmr_core::pacenote_schedule::PacenoteArrowSprite>,
+    lens_flare_enabled: bool,
+    twinkle_phase: u32,
     show_hud: bool,
 }
 
@@ -5706,6 +5798,75 @@ struct StageParticles {
     /// Falling rain streaks / `IMAGES\SNOW.BMP` snowflakes (`FUN_0048b960` /
     /// `FUN_0048c080` / `FUN_0048c230` / `FUN_0048c620`).
     precipitation: cmr_core::weather::PrecipitationSystem,
+    /// Sky sun, lens flare, moon, and starfield overlay (`FUN_00482d10`,
+    /// `FUN_00483060`, `FUN_00484130`, `FUN_00484eb0`).
+    sky_overlay: SkyOverlayAssets,
+}
+
+struct SkyOverlayAssets {
+    state: cmr_core::weather::SkyOverlayState,
+    bitmaps: std::collections::HashMap<
+        cmr_core::weather::SkyOverlaySpriteKind,
+        cmr_formats::bitmap::IndexedBitmap,
+    >,
+}
+
+impl SkyOverlayAssets {
+    fn load(store: Option<&AssetStore>, weather: StageWeather) -> Self {
+        use cmr_core::weather::{LENS_FLARE_RING_COUNT, SkyOverlaySpriteKind, SkyOverlayState};
+        let mut bitmaps = std::collections::HashMap::new();
+        let load_one = |candidates: &[&str]| -> Option<cmr_formats::bitmap::IndexedBitmap> {
+            let store = store?;
+            for path in candidates {
+                if let Ok(bytes) = store.load(path)
+                    && let Ok(bmp) =
+                        cmr_formats::bitmap::parse_indexed_bitmap(&bytes, BitmapLimits::default())
+                {
+                    return Some(bmp);
+                }
+            }
+            None
+        };
+        if let Some(bmp) = load_one(&["Game/images/lensflr/sun.bmp", "Game/IMAGES/LENSFLR/SUN.BMP"])
+        {
+            bitmaps.insert(SkyOverlaySpriteKind::Sun, bmp);
+        }
+        if let Some(bmp) = load_one(&[
+            "Game/images/lensflr/sunhalo.bmp",
+            "Game/IMAGES/LENSFLR/SUNHALO.BMP",
+        ]) {
+            bitmaps.insert(SkyOverlaySpriteKind::SunHalo, bmp);
+        }
+        for i in 0..LENS_FLARE_RING_COUNT {
+            let lo = format!("Game/images/lensflr/{}.bmp", i + 1);
+            let hi = format!("Game/IMAGES/LENSFLR/{}.BMP", i + 1);
+            if let Some(bmp) = load_one(&[&lo, &hi]) {
+                bitmaps.insert(SkyOverlaySpriteKind::LensFlare(i as u8), bmp);
+            }
+        }
+        if let Some(bmp) = load_one(&[
+            "Game/IMAGES/LENSFLR/MOON.BMP",
+            "Game/images/lensflr/moon.bmp",
+        ]) {
+            bitmaps.insert(SkyOverlaySpriteKind::Moon, bmp);
+        }
+        if let Some(bmp) = load_one(&[
+            "Game/IMAGES/LENSFLR/STAR.BMP",
+            "Game/images/lensflr/star.bmp",
+        ]) {
+            bitmaps.insert(SkyOverlaySpriteKind::Star, bmp);
+        }
+        let mut rng = GameLcg::new(0x1357_9bdf);
+        let trig = cmr_core::fixed_point::build_sine_table();
+        let state = SkyOverlayState::new(
+            weather.weather_type,
+            weather.lighting,
+            None,
+            &mut rng,
+            &trig,
+        );
+        Self { state, bitmaps }
+    }
 }
 
 const PRECIP_SNOW_TEXTURE_KEY: (cmr_core::car_particles::Sprites, usize) =
@@ -6499,6 +6660,8 @@ fn advance_game_frame<C: HostClock>(
                 } else {
                     Vec::new()
                 },
+                lens_flare_enabled: (config.image[0x10] & 0x40) != 0,
+                twinkle_phase: session.sim_ticks(),
                 show_hud,
             }));
         } else {
@@ -6573,6 +6736,12 @@ fn advance_game_frame<C: HostClock>(
                 resources.compose_software(&camera_world, Some(&car_world), &wheels)
             })
             .map(|rendered| rendered.frame)?;
+        let world = resources.composite_sky_overlay(
+            world,
+            &camera_world,
+            (config.image[0x10] & 0x40) != 0,
+            session.sim_ticks(),
+        );
         // The HUD bar is queued after the quad and drawn over it unfaded.
         let world = match fade_step {
             FadeComposite::Quad(alpha) if quad_under_hud => world.under_black_quad(alpha),
@@ -6854,6 +7023,12 @@ fn compose_subtick_frame(
         .compose_with_posed_car(&camera_world, Some(&car_world), &wheels)
         .ok()?
         .frame;
+    world = resources.composite_sky_overlay(
+        world,
+        &camera_world,
+        snap.lens_flare_enabled,
+        snap.twinkle_phase,
+    );
     if let FadeComposite::Quad(alpha) = snap.fade_step
         && snap.quad_under_hud
     {
