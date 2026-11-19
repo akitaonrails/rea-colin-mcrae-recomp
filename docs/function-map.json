@@ -14914,7 +14914,7 @@
       "test_files": [
         "crates/cmr-core/src/gameplay_session.rs"
       ],
-      "notes": "Stage-start and periodic 50-tick mid-stage RaceState seek keyframes wired in StageReplayRecorder (GameplaySession::seek_stage_replay / FUN_0046ca70).",
+      "notes": "Stage-start, periodic 50-tick mid-stage RaceState seek keyframes, and 4-tick Time-Trial ghost SnapshotCarLane recording wired in GameplaySession.",
       "manual_override": true
     },
     {
@@ -14923,7 +14923,7 @@
       "size": 352,
       "name": "FUN_0046c910",
       "category": "core_game",
-      "status": "wired_live",
+      "status": "verified_1to1",
       "callees": [
         "0x0041a880",
         "0x0041a8a0",
@@ -14934,9 +14934,13 @@
         "0x0046ca70"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/replay.rs"
       ],
-      "test_files": []
+      "test_files": [],
+      "notes": "Packed 24-byte render snapshot unpacking (SnapshotKeyframe::to_transform_46c910) wired live for Time-Trial ghost playback.",
+      "manual_override": true
     },
     {
       "address": "0x0046ca70",
@@ -14944,7 +14948,7 @@
       "size": 768,
       "name": "FUN_0046ca70",
       "category": "core_game",
-      "status": "wired_live",
+      "status": "verified_1to1",
       "callees": [
         "0x0041a800",
         "0x00435400",
@@ -14958,7 +14962,9 @@
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/replay.rs"
       ],
-      "test_files": []
+      "test_files": [],
+      "notes": "4-tick snapshot playback with 20.0 teleport snap and Q16.16 pose blending (TimeTrialGhostRecording::pose_at_tick) wired live in GameplaySession and cmr-app.",
+      "manual_override": true
     },
     {
       "address": "0x0046cd70",

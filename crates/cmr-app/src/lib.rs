@@ -3585,6 +3585,151 @@ impl StageRenderResources {
         out.with_rgba8(rgba8.into_boxed_slice()).unwrap_or(frame)
     }
 
+    /// Composite a translucent Time-Trial ghost car silhouette projected from
+    /// its `SnapshotCarLane` 4x4 Q16.16 pose (`FUN_0046c910` / `FUN_0046ca70`).
+    fn composite_ghost_car(
+        &self,
+        frame: SoftwarePresentedFrame,
+        camera_world: &[i32; 16],
+        ghost_pose: Option<&[i32; 16]>,
+    ) -> SoftwarePresentedFrame {
+        let Some(pose) = ghost_pose else {
+            return frame;
+        };
+        let extent = frame.extent();
+        let w = i32::from(extent.width);
+        let h = i32::from(extent.height);
+        if w == 0 || h == 0 {
+            return frame;
+        }
+        let inv_q16 = 1.0_f32 / 65536.0_f32;
+        let cx = camera_world[12] as f32 * inv_q16;
+        let cy = camera_world[13] as f32 * inv_q16;
+        let cz = camera_world[14] as f32 * inv_q16;
+        let rx = [
+            camera_world[0] as f32 * inv_q16,
+            camera_world[1] as f32 * inv_q16,
+            camera_world[2] as f32 * inv_q16,
+        ];
+        let ry = [
+            camera_world[4] as f32 * inv_q16,
+            camera_world[5] as f32 * inv_q16,
+            camera_world[6] as f32 * inv_q16,
+        ];
+        let rz = [
+            camera_world[8] as f32 * inv_q16,
+            camera_world[9] as f32 * inv_q16,
+            camera_world[10] as f32 * inv_q16,
+        ];
+        let gx = pose[12] as f32 * inv_q16;
+        let gy = pose[13] as f32 * inv_q16;
+        let gz = pose[14] as f32 * inv_q16;
+        let grx = [
+            pose[0] as f32 * inv_q16,
+            pose[1] as f32 * inv_q16,
+            pose[2] as f32 * inv_q16,
+        ];
+        let gry = [
+            pose[4] as f32 * inv_q16,
+            pose[5] as f32 * inv_q16,
+            pose[6] as f32 * inv_q16,
+        ];
+        let grz = [
+            pose[8] as f32 * inv_q16,
+            pose[9] as f32 * inv_q16,
+            pose[10] as f32 * inv_q16,
+        ];
+        let focal = (w as f32) * 0.75;
+        let half_w = w as f32 * 0.5;
+        let half_h = h as f32 * 0.5;
+        // 8 corners of a rally-car chassis envelope (1.8 m x 1.35 m x 4.2 m).
+        let local_corners: [[f32; 3]; 8] = [
+            [-0.9, 0.15, -2.1],
+            [0.9, 0.15, -2.1],
+            [0.9, 0.15, 2.1],
+            [-0.9, 0.15, 2.1],
+            [-0.75, 1.35, -1.3],
+            [0.75, 1.35, -1.3],
+            [0.75, 1.35, 1.5],
+            [-0.75, 1.35, 1.5],
+        ];
+        let mut projected = [None; 8];
+        let mut any_visible = false;
+        for (i, c) in local_corners.iter().enumerate() {
+            let wx = gx + grx[0] * c[0] + gry[0] * c[1] + grz[0] * c[2];
+            let wy = gy + grx[1] * c[0] + gry[1] * c[1] + grz[1] * c[2];
+            let wz = gz + grx[2] * c[0] + gry[2] * c[1] + grz[2] * c[2];
+            let dx = wx - cx;
+            let dy = wy - cy;
+            let dz = wz - cz;
+            let vx = dx * rx[0] + dy * rx[1] + dz * rx[2];
+            let vy = dx * ry[0] + dy * ry[1] + dz * ry[2];
+            let vz = dx * rz[0] + dy * rz[1] + dz * rz[2];
+            if vz > 0.6 && vz < 260.0 {
+                let sx = (half_w + (vx * focal) / vz) as i32;
+                let sy = (half_h - (vy * focal) / vz) as i32;
+                projected[i] = Some((sx, sy));
+                if sx >= -w && sx <= w * 2 && sy >= -h && sy <= h * 2 {
+                    any_visible = true;
+                }
+            }
+        }
+        if !any_visible {
+            return frame;
+        }
+        let wu = w as usize;
+        let hu = h as usize;
+        let palette = Box::new(*frame.palette());
+        let pixels = frame.pixels().to_vec();
+        let mut rgba8 = frame.rgba8().map(<[u8]>::to_vec).unwrap_or_else(|| {
+            let mut out = vec![0u8; wu * hu * 4];
+            for (i, &idx) in pixels.iter().enumerate() {
+                let c = palette[usize::from(idx)];
+                out[i * 4] = c.red;
+                out[i * 4 + 1] = c.green;
+                out[i * 4 + 2] = c.blue;
+                out[i * 4 + 3] = 255;
+            }
+            out
+        });
+        let edges: [(usize, usize); 12] = [
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 0),
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (7, 4),
+            (0, 4),
+            (1, 5),
+            (2, 6),
+            (3, 7),
+        ];
+        for (a, b) in edges {
+            let (Some((x0, y0)), Some((x1, y1))) = (projected[a], projected[b]) else {
+                continue;
+            };
+            let steps = (x1 - x0).abs().max((y1 - y0).abs()).clamp(1, 2048);
+            for s in 0..=steps {
+                let px = x0 + ((x1 - x0) * s) / steps;
+                let py = y0 + ((y1 - y0) * s) / steps;
+                if px >= 0 && px < w && py >= 0 && py < h {
+                    let off = ((py as usize) * wu + (px as usize)) * 4;
+                    rgba8[off] = rgba8[off].saturating_add(70);
+                    rgba8[off + 1] = rgba8[off + 1].saturating_add(160);
+                    rgba8[off + 2] = rgba8[off + 2].saturating_add(190);
+                }
+            }
+        }
+        let Ok(out) =
+            SoftwarePresentedFrame::from_indexed(extent, pixels.into_boxed_slice(), palette)
+        else {
+            return frame;
+        };
+        out.with_rgba8(rgba8.into_boxed_slice()).unwrap_or(frame)
+    }
+
     /// `FUN_00428b80` for the player's viewport: the sprites in their
     /// camera-facing corners, far to near (`t = 1`: the tick just ran).
     fn plan_particles(
@@ -4459,6 +4604,7 @@ struct SubtickRenderSnapshot {
     display_mode: cmr_core::race_hud_plan::GameDisplayMode,
     use_classic_dial: bool,
     show_hud: bool,
+    ghost_pose: Option<[i32; 16]>,
 }
 
 /// The windowed session's camera state is the recovered multi-mode view
@@ -6282,6 +6428,36 @@ impl FrontEndConfig {
         Self::with_default_table(stage, car, None, None, b"Player", Language::English)
     }
 
+    fn ghost_file_path(&self, country: u8, stage: u8) -> Option<PathBuf> {
+        let dir = self.file.as_ref()?.parent()?;
+        Some(dir.join(format!("ghost_c{country}_s{stage}.cmrg")))
+    }
+
+    fn load_time_trial_ghost(
+        &self,
+        country: u8,
+        stage: u8,
+    ) -> Option<cmr_core::replay::TimeTrialGhostRecording> {
+        let path = self.ghost_file_path(country, stage)?;
+        let bytes = std::fs::read(path).ok()?;
+        cmr_core::replay::TimeTrialGhostRecording::from_bytes(&bytes).ok()
+    }
+
+    fn save_time_trial_ghost(
+        &self,
+        country: u8,
+        stage: u8,
+        ghost: &cmr_core::replay::TimeTrialGhostRecording,
+    ) {
+        let Some(path) = self.ghost_file_path(country, stage) else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, ghost.to_bytes());
+    }
+
     /// [`FrontEndConfig::new`] with the executable's default hi-score and
     /// table block (`0x506230`, copied to `+0xc98` by the defaults), the
     /// host's computer name and the game text `0x5f` the default player
@@ -6792,12 +6968,24 @@ fn advance_game_frame<C: HostClock>(
     {
         resources.apply_car_damage(damage);
     }
-    if session.take_damage_writeback() && session.event().cfg.mode_166 & 3 != 2 {
+    if session.take_damage_writeback() {
         let event = session.event();
-        let carry = event.globals.school_d3ca88 || event.cfg.cursor_168 & 0xf0 != 0x50;
-        let fractions = session.car_setup().setup_800;
-        let live = cmr_core::config_commit::live_mut(&mut config.image);
-        cmr_core::car_damage::stage_end(&mut live[0x9a..0xb6], &fractions, carry);
+        if event.cfg.mode_166 & 3 != 2 {
+            let carry = event.globals.school_d3ca88 || event.cfg.cursor_168 & 0xf0 != 0x50;
+            let fractions = session.car_setup().setup_800;
+            let live = cmr_core::config_commit::live_mut(&mut config.image);
+            cmr_core::car_damage::stage_end(&mut live[0x9a..0xb6], &fractions, carry);
+        } else {
+            let country = event.cfg.cursor_168 & 0xf;
+            let stage_idx = event.cfg.cursor_168 >> 4;
+            let car_sel = event.cfg.car_0b6 & 0xf;
+            let finish_cs =
+                elapsed_centiseconds(session.stage_clock(), Fixed16::ZERO).max(0) as u32;
+            if let Some(new_ghost) = session.build_new_best_ghost(finish_cs, car_sel) {
+                config.save_time_trial_ghost(country, stage_idx, &new_ghost);
+                session.set_time_trial_ghost(Some(new_ghost));
+            }
+        }
     }
     // The wheel particles' spawn and update ride the sim tick
     // (`DAT_0054f8b0`: the options' effects bit and `cfg[0x26] & 2`).
@@ -6921,6 +7109,7 @@ fn advance_game_frame<C: HostClock>(
                         session.event().cfg.car_0b6,
                     ),
                 show_hud,
+                ghost_pose: session.ghost_pose_at_current_tick(),
             }));
         } else {
             camera.subtick_snapshot = None;
@@ -6999,6 +7188,11 @@ fn advance_game_frame<C: HostClock>(
             &camera_world,
             (config.image[0x10] & 0x40) != 0,
             session.sim_ticks(),
+        );
+        let world = resources.composite_ghost_car(
+            world,
+            &camera_world,
+            session.ghost_pose_at_current_tick().as_ref(),
         );
         // The HUD bar is queued after the quad and drawn over it unfaded.
         let world = match fade_step {
@@ -7330,6 +7524,7 @@ fn compose_subtick_frame(
         snap.lens_flare_enabled,
         snap.twinkle_phase,
     );
+    world = resources.composite_ghost_car(world, &camera_world, snap.ghost_pose.as_ref());
     if let FadeComposite::Quad(alpha) = snap.fade_step
         && snap.quad_under_hud
     {
@@ -10412,6 +10607,13 @@ fn reload_stage_for_event<'a>(
         session.set_moving_objects(objects);
     }
     session.set_moj_slots(resources.build_moj_slots(false));
+    if session.event().cfg.mode_166 & 3 == 2 {
+        let country = session.event().cfg.cursor_168 & 0xf;
+        let stage_idx = session.event().cfg.cursor_168 >> 4;
+        session.set_time_trial_ghost(config.load_time_trial_ghost(country, stage_idx));
+    } else {
+        session.set_time_trial_ghost(None);
+    }
     // The school's stage load (`FUN_004716b0`) and setup (`FUN_0046ee70`).
     if session.event().globals.school_d3ca88 {
         start_school_task(

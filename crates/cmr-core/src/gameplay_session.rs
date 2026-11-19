@@ -308,6 +308,12 @@ pub struct GameplaySession<'a> {
     pacenote_arrows: crate::pacenote_schedule::PacenoteArrowHud,
     /// Last observed waypoint cursor for the 12-waypoint arrow TTL countdown.
     pacenote_arrow_cursor: usize,
+    /// Live Time-Trial ghost snapshot recorder (`FUN_0046c7d0`, every 4th tick).
+    ghost_recorder: crate::replay::SnapshotCarLane,
+    /// Active Time-Trial ghost loaded for the current stage (`FUN_0046ca70`).
+    active_ghost: Option<crate::replay::TimeTrialGhostRecording>,
+    /// 25 Hz race-tick counter since `"GO!"` for ghost recording & playback.
+    ghost_tick: u32,
 }
 
 /// Live per-tick RLE input recorder (`FUN_0046d8f0`), periodic mid-stage seek
@@ -1082,7 +1088,82 @@ impl<'a> GameplaySession<'a> {
             stage_replay: StageReplayRecorder::default(),
             pacenote_arrows: crate::pacenote_schedule::PacenoteArrowHud::new(),
             pacenote_arrow_cursor: 0,
+            ghost_recorder: crate::replay::SnapshotCarLane::new(),
+            active_ghost: None,
+            ghost_tick: 0,
         }
+    }
+
+    /// Install (or clear) the Time-Trial ghost recording played back during
+    /// State 5 (`FUN_0046c910` / `FUN_0046ca70`).
+    pub fn set_time_trial_ghost(&mut self, ghost: Option<crate::replay::TimeTrialGhostRecording>) {
+        self.active_ghost = ghost;
+    }
+
+    /// Evaluated 4x4 Q16.16 world transform of the active Time-Trial ghost car
+    /// at the current race tick (`FUN_0046ca70`), if racing in State 5.
+    #[must_use]
+    pub fn ghost_pose_at_current_tick(&self) -> Option<[i32; 16]> {
+        if self.session.current().id() != 5 || self.start_phase_57b0ac < 5 {
+            return None;
+        }
+        self.active_ghost.as_ref()?.pose_at_tick(self.ghost_tick)
+    }
+
+    /// Build a new best Time-Trial ghost recording from the just-completed
+    /// stage run if it beats the currently loaded ghost (or if none exists).
+    #[must_use]
+    pub fn build_new_best_ghost(
+        &self,
+        finish_centiseconds: u32,
+        car_selector: u8,
+    ) -> Option<crate::replay::TimeTrialGhostRecording> {
+        if finish_centiseconds == 0 || self.ghost_recorder.keyframes().len() < 2 {
+            return None;
+        }
+        if let Some(existing) = self.active_ghost.as_ref() {
+            if finish_centiseconds >= existing.best_time_centiseconds {
+                return None;
+            }
+        }
+        Some(crate::replay::TimeTrialGhostRecording {
+            best_time_centiseconds: finish_centiseconds,
+            car_selector,
+            lane: self.ghost_recorder.clone(),
+        })
+    }
+
+    fn record_ghost_tick(&mut self) {
+        if self.start_phase_57b0ac >= 5 {
+            let car = self.race.car();
+            let [forward, up, left] = car.motion.basis;
+            let tf = [
+                left.x.raw().wrapping_neg(),
+                left.y.raw().wrapping_neg(),
+                left.z.raw().wrapping_neg(),
+                0,
+                up.x.raw(),
+                up.y.raw(),
+                up.z.raw(),
+                0,
+                forward.x.raw(),
+                forward.y.raw(),
+                forward.z.raw(),
+                0,
+                car.position.x.raw(),
+                car.position.y.raw(),
+                car.position.z.raw(),
+                Fixed16::ONE.raw(),
+            ];
+            self.ghost_recorder
+                .capture_tick_46c7d0(self.ghost_tick, &tf);
+            self.ghost_tick = self.ghost_tick.saturating_add(1);
+        }
+    }
+
+    fn reset_ghost_recorder(&mut self) {
+        self.ghost_recorder.clear();
+        self.ghost_tick = 0;
     }
 
     /// Currently visible on-screen pacenote corner arrow sprites in 640x480 HUD
@@ -1655,6 +1736,7 @@ impl<'a> GameplaySession<'a> {
         self.car_760 = false;
         self.stage_dirty = false;
         self.stage_replay.clear();
+        self.reset_ghost_recorder();
         self.reset_pacenote_arrows(progress.cursor());
         self.reset_start_sequence();
     }
@@ -1690,6 +1772,7 @@ impl<'a> GameplaySession<'a> {
         let pause = std::mem::take(&mut self.pause_flow);
         if pause.restart {
             self.stage_replay.clear();
+            self.reset_ghost_recorder();
             self.reset_pacenote_arrows(progress.cursor());
         }
         let mut driving_sample = if self.session.current().id() == 5 && !pause.enter_pause {
@@ -1709,6 +1792,7 @@ impl<'a> GameplaySession<'a> {
                 self.race.step(&controls, &self.params)
             };
             self.stage_replay.record_tick(&race_before, controls);
+            self.record_ghost_tick();
             Some(sample)
         } else {
             None
@@ -1798,6 +1882,7 @@ impl<'a> GameplaySession<'a> {
         let pause = std::mem::take(&mut self.pause_flow);
         if pause.restart {
             self.stage_replay.clear();
+            self.reset_ghost_recorder();
             self.reset_pacenote_arrows(progress.cursor());
         }
         let mut driving_sample = if self.session.current().id() == 5 && !pause.enter_pause {
@@ -1896,6 +1981,7 @@ impl<'a> GameplaySession<'a> {
                 }
             }
             self.stage_replay.record_tick(&race_before, controls);
+            self.record_ghost_tick();
             Some(sample)
         } else {
             None

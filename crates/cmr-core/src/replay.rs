@@ -563,6 +563,15 @@ impl SnapshotCarLane {
     }
 
     #[must_use]
+    pub fn from_keyframes(frames: Vec<SnapshotKeyframe>) -> Self {
+        Self { frames }
+    }
+
+    pub fn clear(&mut self) {
+        self.frames.clear();
+    }
+
+    #[must_use]
     pub fn keyframes(&self) -> &[SnapshotKeyframe] {
         &self.frames
     }
@@ -605,6 +614,114 @@ impl SnapshotCarLane {
         let prev_tf = prev.to_transform_46c910();
         let alpha = snapshot_interp_factor(sub).raw();
         Some(blend_pose(&prev_tf, &curr_tf, alpha))
+    }
+}
+
+/// Magic header for persisted Time-Trial ghost recordings (`SnapshotCarLane`).
+pub const GHOST_MAGIC: [u8; 4] = *b"CMRG";
+/// Binary format version for [`TimeTrialGhostRecording`].
+pub const GHOST_VERSION: u16 = 1;
+/// Header size in bytes for [`TimeTrialGhostRecording`].
+pub const GHOST_HEADER_BYTES: usize = 16;
+
+/// Errors returned while decoding a persisted [`TimeTrialGhostRecording`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GhostCodecError {
+    TruncatedHeader { actual: usize },
+    InvalidMagic([u8; 4]),
+    UnsupportedVersion(u16),
+    FrameCountExceedsCapacity(usize),
+    LengthMismatch { expected: usize, actual: usize },
+}
+
+/// Persisted Time-Trial ghost recording built directly on the recovered
+/// `SnapshotCarLane` (`FUN_0046c7d0` / `FUN_0046c910` / `FUN_0046ca70`).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TimeTrialGhostRecording {
+    /// Best stage time in centiseconds (`0.01 s` units).
+    pub best_time_centiseconds: u32,
+    /// Car selector (`0..14`) that recorded the ghost.
+    pub car_selector: u8,
+    /// 4-tick-strided 16-byte packed render snapshots (`FUN_0046c7d0`).
+    pub lane: SnapshotCarLane,
+}
+
+impl TimeTrialGhostRecording {
+    /// Evaluate the interpolated 4x4 Q16.16 world transform for the ghost car
+    /// at 25 Hz race tick `tick` using `FUN_0046c910` and `FUN_0046ca70`.
+    #[must_use]
+    pub fn pose_at_tick(&self, tick: u32) -> Option<[i32; 16]> {
+        let keyframe = (tick / 4) as usize;
+        let sub = tick & 3;
+        let idx = if sub == 0 { keyframe } else { keyframe + 1 };
+        self.lane.evaluate_playback_46ca70(idx, sub)
+    }
+
+    /// Encode this ghost recording into a portable, bounds-checked byte stream.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let frames = self.lane.keyframes();
+        let count = frames.len().min(SNAPSHOT_CAPACITY_PER_CAR);
+        let mut out = Vec::with_capacity(GHOST_HEADER_BYTES + count * SNAPSHOT_RECORD_BYTES);
+        out.extend_from_slice(&GHOST_MAGIC);
+        out.extend_from_slice(&GHOST_VERSION.to_le_bytes());
+        out.push(self.car_selector);
+        out.push(0);
+        out.extend_from_slice(&self.best_time_centiseconds.to_le_bytes());
+        out.extend_from_slice(&(count as u32).to_le_bytes());
+        for kf in &frames[..count] {
+            out.extend_from_slice(&kf.to_bytes());
+        }
+        out
+    }
+
+    /// Decode a persisted ghost recording, validating header, version, capacity,
+    /// and exact byte length.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, GhostCodecError> {
+        if bytes.len() < GHOST_HEADER_BYTES {
+            return Err(GhostCodecError::TruncatedHeader {
+                actual: bytes.len(),
+            });
+        }
+        let magic: [u8; 4] = bytes[0..4].try_into().unwrap();
+        if magic != GHOST_MAGIC {
+            return Err(GhostCodecError::InvalidMagic(magic));
+        }
+        let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+        if version != GHOST_VERSION {
+            return Err(GhostCodecError::UnsupportedVersion(version));
+        }
+        let car_selector = bytes[6];
+        let best_time_centiseconds = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+        let frame_count = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        if frame_count > SNAPSHOT_CAPACITY_PER_CAR {
+            return Err(GhostCodecError::FrameCountExceedsCapacity(frame_count));
+        }
+        let expected = GHOST_HEADER_BYTES + frame_count * SNAPSHOT_RECORD_BYTES;
+        if bytes.len() != expected {
+            return Err(GhostCodecError::LengthMismatch {
+                expected,
+                actual: bytes.len(),
+            });
+        }
+        let mut frames = Vec::with_capacity(frame_count);
+        for i in 0..frame_count {
+            let start = GHOST_HEADER_BYTES + i * SNAPSHOT_RECORD_BYTES;
+            let Some(kf) =
+                SnapshotKeyframe::from_bytes(&bytes[start..start + SNAPSHOT_RECORD_BYTES])
+            else {
+                return Err(GhostCodecError::LengthMismatch {
+                    expected,
+                    actual: bytes.len(),
+                });
+            };
+            frames.push(kf);
+        }
+        Ok(Self {
+            best_time_centiseconds,
+            car_selector,
+            lane: SnapshotCarLane::from_keyframes(frames),
+        })
     }
 }
 
@@ -1597,5 +1714,61 @@ mod tests {
         }
         assert_eq!(school_exit_rsp_path_46de70(3, 2), None);
         assert_eq!(school_exit_rsp_path_46de70(0, 5), None);
+    }
+
+    #[test]
+    fn time_trial_ghost_roundtrip_and_subframe_pose_interpolation() {
+        let mut lane = SnapshotCarLane::new();
+        let tf0 = [
+            0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000,
+        ];
+        let tf1 = [
+            0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0, 0, 0, 0x1_0000, 0, 0x4_0000, 0, 0, 0x1_0000,
+        ];
+        assert!(lane.capture_tick_46c7d0(0, &tf0));
+        assert!(!lane.capture_tick_46c7d0(1, &tf1));
+        assert!(lane.capture_tick_46c7d0(4, &tf1));
+
+        let ghost = TimeTrialGhostRecording {
+            best_time_centiseconds: 12_345,
+            car_selector: 2,
+            lane,
+        };
+        let encoded = ghost.to_bytes();
+        let decoded = TimeTrialGhostRecording::from_bytes(&encoded).expect("valid ghost");
+        assert_eq!(decoded, ghost);
+
+        // Tick 0 -> keyframe 0 (x = 0.0), Tick 2 -> midpoint (x = 2.0), Tick 4 -> keyframe 1 (x = 4.0)
+        assert_eq!(decoded.pose_at_tick(0).unwrap()[12], 0);
+        assert_eq!(decoded.pose_at_tick(2).unwrap()[12], 0x2_0000);
+        assert_eq!(decoded.pose_at_tick(4).unwrap()[12], 0x4_0000);
+        assert!(decoded.pose_at_tick(5).is_none());
+
+        // Malformed inputs
+        assert_eq!(
+            TimeTrialGhostRecording::from_bytes(&encoded[..4]),
+            Err(GhostCodecError::TruncatedHeader { actual: 4 })
+        );
+        let mut bad_magic = encoded.clone();
+        bad_magic[0] = b'X';
+        assert_eq!(
+            TimeTrialGhostRecording::from_bytes(&bad_magic),
+            Err(GhostCodecError::InvalidMagic(*b"XMRG"))
+        );
+        let mut bad_ver = encoded.clone();
+        bad_ver[4] = 99;
+        assert_eq!(
+            TimeTrialGhostRecording::from_bytes(&bad_ver),
+            Err(GhostCodecError::UnsupportedVersion(99))
+        );
+        let mut truncated = encoded.clone();
+        truncated.pop();
+        assert_eq!(
+            TimeTrialGhostRecording::from_bytes(&truncated),
+            Err(GhostCodecError::LengthMismatch {
+                expected: encoded.len(),
+                actual: encoded.len() - 1,
+            })
+        );
     }
 }

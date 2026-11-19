@@ -67,7 +67,15 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
     },
     "0x0046c7d0": {
         "status": "verified_1to1",
-        "notes": "Stage-start and periodic 50-tick mid-stage RaceState seek keyframes wired in StageReplayRecorder (GameplaySession::seek_stage_replay / FUN_0046ca70).",
+        "notes": "Stage-start, periodic 50-tick mid-stage RaceState seek keyframes, and 4-tick Time-Trial ghost SnapshotCarLane recording wired in GameplaySession.",
+    },
+    "0x0046c910": {
+        "status": "verified_1to1",
+        "notes": "Packed 24-byte render snapshot unpacking (SnapshotKeyframe::to_transform_46c910) wired live for Time-Trial ghost playback.",
+    },
+    "0x0046ca70": {
+        "status": "verified_1to1",
+        "notes": "4-tick snapshot playback with 20.0 teleport snap and Q16.16 pose blending (TimeTrialGhostRecording::pose_at_tick) wired live in GameplaySession and cmr-app.",
     },
     "0x00438100": {
         "status": "verified_1to1",
