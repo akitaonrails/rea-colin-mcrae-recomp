@@ -267,6 +267,14 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "status": "verified_1to1",
         "notes": "Car mesh vertex crash-dent deformation helper (car_setup[+0x2d0]); reconstructed in cmr-core::car_crash_damage.",
     },
+    "0x00458670": {
+        "status": "verified_1to1",
+        "notes": "Per-car damaged windshield glass texture table (DAMAGED_GLASS_TEXTURE_NAMES) & wheel mud/dust texture resolver (wheel_dirt_bitmap_path) in cmr-core::car_crash_damage.",
+    },
+    "0x00459260": {
+        "status": "verified_1to1",
+        "notes": "Progressive car-body & wheel mud/dust accumulation (CarDirtState::tick + lower-body diffuse modulation keeping roof/glass clean) wired live in cmr-app.",
+    },
     "0x0042aba0": {
         "status": "verified_1to1",
         "notes": "HUD and Stage Results screen compositor called from FUN_00439ee0; reconstructed in cmr-app.",

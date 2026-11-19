@@ -2437,6 +2437,8 @@ pub struct StageRenderResources {
     /// The car model as loaded, before any crash damage.
     car_scene_pristine: Option<C3dFile>,
     car_textures: Option<StageC3dTextures>,
+    /// Progressive car-body mud/dust state (`FUN_00458670` / `FUN_00459260`).
+    car_dirt: cmr_core::car_crash_damage::CarDirtState,
     race_hud: Option<RaceHudAssets>,
     /// The car shadows (`FUN_004a4f20`), once the race setup attached them.
     shadow: Option<StageShadow>,
@@ -2556,6 +2558,7 @@ impl StageRenderResources {
             car_scene: None,
             car_scene_pristine: None,
             car_textures: None,
+            car_dirt: cmr_core::car_crash_damage::CarDirtState::new(),
             race_hud: None,
             shadow: None,
             shadow_draws: Vec::new(),
@@ -2950,6 +2953,7 @@ impl StageRenderResources {
     /// model as loaded again and its fresh damage parts. `model` is the car
     /// model index `car +0x739`.
     fn fresh_car_damage(&mut self, model: u8) -> Option<cmr_core::car_crash_damage::CarDamage> {
+        self.car_dirt.reset();
         let pristine = self.car_scene_pristine.as_ref()?;
         let mut damage = cmr_core::car_crash_damage::CarDamage::from_c3d(pristine, false, model)?;
         if let Some(lamps) = self.lamps.as_ref() {
@@ -2995,7 +2999,7 @@ impl StageRenderResources {
                         cmr_gpu_contract::C3dStageVertex::from_raw_components([
                             p[0], p[1], p[2], uv[0], uv[1], n[0], n[1], n[2],
                         ])
-                        .with_diffuse_rgba([0xff, 0xff, 0xff, 0])
+                        .with_diffuse_rgba(self.car_dirt.vertex_diffuse_rgba(p[1]))
                     })
                     .collect();
                 if let Err(error) =
@@ -3467,6 +3471,25 @@ impl StageRenderResources {
             particles.sparks.emit(origin, vel, max_sev, rng);
         }
         particles.sparks.tick();
+        let weather_wet = particles.weather_type == 1 || particles.weather_type == 2;
+        let dirt_changed = if let Some(words) = session.surface_sound_words() {
+            self.car_dirt.tick(
+                words.speed_ec,
+                words.surfaces.map(|s| s.max(0) as u8),
+                [
+                    words.contact[0],
+                    words.contact[1],
+                    words.contact[2],
+                    words.contact[3],
+                ],
+                weather_wet,
+            )
+        } else {
+            false
+        };
+        if dirt_changed && let Some(damage) = session.car_damage() {
+            self.sync_gpu_car(damage);
+        }
     }
 
     /// One 25 Hz sim tick of falling rain/snow (`FUN_0048c080` + `FUN_0048c230`

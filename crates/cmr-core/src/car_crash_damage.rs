@@ -556,6 +556,140 @@ fn lod_prims(record: C3dGroup1Record<'_>) -> Vec<DamagePrim> {
         .collect()
 }
 
+/// Exact damaged windshield glass material names loaded by `FUN_00458670`
+/// (indexed by car selector `0..14`).
+pub const DAMAGED_GLASS_TEXTURE_NAMES: [&str; 14] = [
+    "DSUBGLA2", "DSEAGLA2", "DSKOGLAS", "QUATDGLA", "RS2DGLAS", "DESCGLAS", "DMITGLAS", "VWDGLASS",
+    "DINTGLAS", "DCORGLA2", "COSDGLAS", "DMEGGLA2", "M4RDGLAS", "DCELGLAS",
+];
+
+/// Returns the wheel dirt bitmap path (`FUN_00458670`: `images\Wheels\%s\WhlNMud.bmp`
+/// or `WhlNDust.bmp`) for a car code and dirt level.
+#[must_use]
+pub fn wheel_dirt_bitmap_path(car_code: &str, mud_level: u8, dust_level: u8) -> Option<String> {
+    if mud_level == 0 && dust_level == 0 {
+        return None;
+    }
+    if mud_level >= dust_level {
+        Some(format!("images\\Wheels\\{car_code}\\WhlNMud.bmp"))
+    } else {
+        Some(format!("images\\Wheels\\{car_code}\\WhlNDust.bmp"))
+    }
+}
+
+/// Progressive car-body & wheel mud/dust accumulation (`FUN_00458670` /
+/// `FUN_00459260`).
+///
+/// Tracks 25 Hz driving ticks over mud/gravel/dirt surfaces (divided by 25 as
+/// in `FUN_00459260` `0x459285..0x4592cc`) and computes lower-body earthy
+/// diffuse modulation (`fMudLowV`..`fMudHighV`) while leaving the roof and
+/// windshield glass clean.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CarDirtState {
+    pub mud_ticks: u32,
+    pub dust_ticks: u32,
+    pub mud_level: u8,
+    pub dust_level: u8,
+}
+
+impl CarDirtState {
+    /// Maximum discrete dirt stage (`0..=4`).
+    pub const MAX_LEVEL: u8 = 4;
+    /// 25 Hz ticks per dirt stage (3 seconds of off-tarmac driving).
+    pub const TICKS_PER_LEVEL: u32 = 75;
+    /// Local-Y height cutoff in Q16.16 (`0.45 m`) above which mud splatter
+    /// fades out so the upper roof & windshield glass stay clean.
+    pub const MUD_HIGH_Y_Q16: i32 = 0x7333;
+
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            mud_ticks: 0,
+            dust_ticks: 0,
+            mud_level: 0,
+            dust_level: 0,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Advance one 25 Hz driving tick (`FUN_00459260`). Returns `true` when
+    /// `mud_level` or `dust_level` advances to a new discrete stage.
+    pub fn tick(
+        &mut self,
+        speed_q16: i32,
+        surfaces: [u8; 4],
+        contacts: [u8; 4],
+        weather_wet: bool,
+    ) -> bool {
+        if speed_q16.abs() <= 0x1000 {
+            return false;
+        }
+        let mut mud_wheels = 0u32;
+        let mut dust_wheels = 0u32;
+        for w in 0..4 {
+            if contacts[w] == 0 {
+                continue;
+            }
+            let s = surfaces[w];
+            // Surface classes >= 2 are gravel/mud/dirt/snow off-tarmac surfaces.
+            if s >= 2 {
+                if weather_wet || s == 3 || s == 4 {
+                    mud_wheels += 1;
+                } else {
+                    dust_wheels += 1;
+                }
+            }
+        }
+        if mud_wheels > 0 {
+            self.mud_ticks = self
+                .mud_ticks
+                .saturating_add(1)
+                .min(u32::from(Self::MAX_LEVEL) * Self::TICKS_PER_LEVEL);
+        } else if dust_wheels > 0 {
+            self.dust_ticks = self
+                .dust_ticks
+                .saturating_add(1)
+                .min(u32::from(Self::MAX_LEVEL) * Self::TICKS_PER_LEVEL);
+        } else {
+            return false;
+        }
+        let next_mud =
+            (self.mud_ticks / Self::TICKS_PER_LEVEL).min(u32::from(Self::MAX_LEVEL)) as u8;
+        let next_dust =
+            (self.dust_ticks / Self::TICKS_PER_LEVEL).min(u32::from(Self::MAX_LEVEL)) as u8;
+        let changed = next_mud != self.mud_level || next_dust != self.dust_level;
+        self.mud_level = next_mud;
+        self.dust_level = next_dust;
+        changed
+    }
+
+    /// Compute the per-vertex diffuse RGBA tint (`[r, g, b, 0]`) for a car
+    /// vertex at local height `local_y_q16`. Lower panels darken with earthy
+    /// mud/dust while upper panels above [`Self::MUD_HIGH_Y_Q16`] stay crisp.
+    #[must_use]
+    pub fn vertex_diffuse_rgba(&self, local_y_q16: i32) -> [u8; 4] {
+        let level = self.mud_level.max(self.dust_level);
+        if level == 0 || local_y_q16 >= Self::MUD_HIGH_Y_Q16 {
+            return [0xff, 0xff, 0xff, 0];
+        }
+        let is_mud = self.mud_level >= self.dust_level;
+        // Target full-dirt tint: dark earthy brown for mud, warm sandy tan for dust.
+        let (tr, tg, tb) = if is_mud {
+            (175i32, 152i32, 126i32)
+        } else {
+            (215i32, 202i32, 180i32)
+        };
+        let level_f = i32::from(level);
+        let r = 255 - ((255 - tr) * level_f) / i32::from(Self::MAX_LEVEL);
+        let g = 255 - ((255 - tg) * level_f) / i32::from(Self::MAX_LEVEL);
+        let b = 255 - ((255 - tb) * level_f) / i32::from(Self::MAX_LEVEL);
+        [r as u8, g as u8, b as u8, 0]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,5 +836,27 @@ mod tests {
         assert!(damage.deform_788[7] > 0x6666);
         assert_eq!(damage.broken_pod_count_cc0, 2);
         assert_eq!(damage.broken_pod_lamps_ca8[..3], [true, true, false]);
+    }
+
+    #[test]
+    fn car_dirt_state_accumulates_mud_and_preserves_roof_glass() {
+        let mut dirt = CarDirtState::new();
+        assert_eq!(dirt.vertex_diffuse_rgba(0), [0xff, 0xff, 0xff, 0]);
+        assert_eq!(wheel_dirt_bitmap_path("SUB", 0, 0), None);
+        let mut changed = false;
+        for _ in 0..CarDirtState::TICKS_PER_LEVEL {
+            changed |= dirt.tick(0x8000, [3, 3, 3, 3], [1, 1, 1, 1], true);
+        }
+        assert!(changed);
+        assert_eq!(dirt.mud_level, 1);
+        assert_eq!(
+            wheel_dirt_bitmap_path("SUB", dirt.mud_level, dirt.dust_level).as_deref(),
+            Some("images\\Wheels\\SUB\\WhlNMud.bmp")
+        );
+        // Lower body darkens with mud while upper roof/windshield stays white.
+        let lower = dirt.vertex_diffuse_rgba(0);
+        let upper = dirt.vertex_diffuse_rgba(CarDirtState::MUD_HIGH_Y_Q16);
+        assert!(lower[0] < 0xff && lower[2] < lower[0]);
+        assert_eq!(upper, [0xff, 0xff, 0xff, 0]);
     }
 }

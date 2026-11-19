@@ -12109,7 +12109,7 @@
       "size": 2944,
       "name": "FUN_00458670",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x004591f0",
         "0x00495ed0",
@@ -12121,8 +12121,13 @@
       "callers": [
         "0x00454300"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/car_crash_damage.rs"
+      ],
+      "test_files": [],
+      "notes": "Per-car damaged windshield glass texture table (DAMAGED_GLASS_TEXTURE_NAMES) & wheel mud/dust texture resolver (wheel_dirt_bitmap_path) in cmr-core::car_crash_damage.",
+      "manual_override": true
     },
     {
       "address": "0x004591f0",
@@ -12145,15 +12150,20 @@
       "size": 1440,
       "name": "FUN_00459260",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x004cfbd0"
       ],
       "callers": [
         "0x00452d60"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/car_crash_damage.rs"
+      ],
+      "test_files": [],
+      "notes": "Progressive car-body & wheel mud/dust accumulation (CarDirtState::tick + lower-body diffuse modulation keeping roof/glass clean) wired live in cmr-app.",
+      "manual_override": true
     },
     {
       "address": "0x00459800",
