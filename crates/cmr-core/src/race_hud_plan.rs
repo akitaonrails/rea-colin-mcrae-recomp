@@ -597,7 +597,7 @@ pub fn plan_classic_single_player_race_hud(
     // 7. Speed readout on the classic bottom strip.
     commands.push(RaceHudCommand::Text {
         font: RaceHudFont::Numbers640,
-        text: format!("{}", input.speed.max(0)),
+        text: format!("{}", input.speed),
         position: HudTextPosition::Q16(HudPoint::new(0xda9f, 0xd8d4)),
         color: COMMON_GAUGE_COLOR,
         flags: LEGACY_TEXT_FLAGS,
