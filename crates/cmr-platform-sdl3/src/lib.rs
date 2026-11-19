@@ -494,6 +494,22 @@ fn query_display_usable_and_density(
     (pixel_density, usable_bounds)
 }
 
+fn set_canvas_vsync(canvas: &mut Canvas<Window>, enabled: bool) {
+    let interval = if enabled { 1 } else { 0 };
+    // SAFETY: `canvas.raw()` returns a valid SDL_Renderer owned by `canvas`.
+    unsafe {
+        let _ = sdl3::sys::render::SDL_SetRenderVSync(canvas.raw(), interval);
+    }
+}
+
+/// Uniform Q16.16 interpolation factor `[0x0000, 0x1_0000]` across one 40 ms
+/// (`25 Hz`) simulation period.
+#[must_use]
+pub fn subtick_alpha_q16(elapsed_since_sim_tick: Duration) -> i32 {
+    let elapsed_ns = elapsed_since_sim_tick.as_nanos().min(40_000_000) as i64;
+    ((elapsed_ns * 0x1_0000) / 40_000_000).clamp(0, 0x1_0000) as i32
+}
+
 fn apply_modern_window_size(
     video: &sdl3::VideoSubsystem,
     window: &mut Window,
@@ -1060,6 +1076,7 @@ where
         .build()
         .map_err(|error| SdlHostError::sdl("window creation", error))?;
     let mut canvas = window.into_canvas();
+    set_canvas_vsync(&mut canvas, active_modern.vsync);
     apply_modern_window_size(&video, canvas.window_mut(), active_modern.resolution);
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator
@@ -1238,17 +1255,9 @@ where
                 }
                 if pacing
                     .wait_duration(now)
-                    .is_some_and(|rem| rem > Duration::from_millis(2))
+                    .is_some_and(|rem| rem > Duration::from_micros(500))
                 {
-                    let elapsed_ns = now
-                        .saturating_sub(last_sim_tick_at)
-                        .as_nanos()
-                        .min(40_000_000) as i64;
-                    // Continuous Q16 interpolation factor from the tick's starting
-                    // point (`0x5555`) up to `0x1_0000` at the end of the 40 ms period.
-                    let alpha_q16 = (0x5555
-                        + ((elapsed_ns * (0x1_0000 - 0x5555)) / 40_000_000) as i32)
-                        .clamp(0x5555, 0x1_0000);
+                    let alpha_q16 = subtick_alpha_q16(now.saturating_sub(last_sim_tick_at));
                     if let Some(presented) = step(WindowedStepRequest::Subtick(alpha_q16)).present
                         && let Ok(rgba) = presented.into_rgba8()
                     {
@@ -1304,6 +1313,9 @@ where
                 && canvas.window().fullscreen_state() == sdl3::video::FullscreenType::Off
             {
                 apply_modern_window_size(&video, canvas.window_mut(), new_modern.resolution);
+            }
+            if new_modern.vsync != active_modern.vsync {
+                set_canvas_vsync(&mut canvas, new_modern.vsync);
             }
             let mode = if new_modern.texture_filter.uses_linear_filtering() {
                 ScaleMode::Linear
@@ -1952,5 +1964,15 @@ mod tests {
         assert_eq!(height, 100);
         assert!(width <= 300);
         assert!((width as f32 / height as f32 - 16.0 / 9.0).abs() < 0.02);
+    }
+
+    #[test]
+    fn subtick_alpha_q16_interpolates_uniformly_across_40ms() {
+        assert_eq!(subtick_alpha_q16(Duration::ZERO), 0);
+        assert_eq!(subtick_alpha_q16(Duration::from_millis(10)), 0x4000);
+        assert_eq!(subtick_alpha_q16(Duration::from_millis(20)), 0x8000);
+        assert_eq!(subtick_alpha_q16(Duration::from_millis(30)), 0xc000);
+        assert_eq!(subtick_alpha_q16(Duration::from_millis(40)), 0x1_0000);
+        assert_eq!(subtick_alpha_q16(Duration::from_millis(80)), 0x1_0000);
     }
 }

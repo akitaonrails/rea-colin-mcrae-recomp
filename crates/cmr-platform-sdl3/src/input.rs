@@ -278,6 +278,12 @@ impl KeyboardVkState {
         self.held.contains(&vk)
     }
 
+    /// Whether any physical keyboard key is currently held.
+    #[must_use]
+    pub fn has_any_keyboard_down(&self) -> bool {
+        !self.held.is_empty()
+    }
+
     /// Whether an in-race pause trigger (`Escape` on the keyboard, or `Start` /
     /// `Back` on the gamepad) is currently held. Excludes `Button::East` so
     /// pressing B/Circle during a race does not pause driving.

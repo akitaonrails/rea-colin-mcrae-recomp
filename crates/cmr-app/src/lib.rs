@@ -4163,6 +4163,10 @@ struct ViewHarness {
     prev_tick_pose: Option<([i32; 16], [i32; 16], CarState)>,
     /// The current 40 ms period's interpolation endpoints for sub-tick rendering.
     subtick_snapshot: Option<Box<SubtickRenderSnapshot>>,
+    /// Sticky active driving input mode (`true` = gamepad/analog, `false` = keyboard).
+    /// Prevents `steer_analog` (`ctl + 0x410`) from flipping to keyboard mode
+    /// whenever the gamepad stick or triggers pass through neutral.
+    active_input_is_gamepad: bool,
 }
 
 impl ViewHarness {
@@ -4194,6 +4198,7 @@ impl ViewHarness {
             subtick_enabled: false,
             prev_tick_pose: None,
             subtick_snapshot: None,
+            active_input_is_gamepad: false,
         }
     }
 
@@ -4259,6 +4264,27 @@ impl ViewHarness {
 
 fn analog_driving_is_active(pad: &GamepadDrivingState) -> bool {
     pad.has_driving_input()
+}
+
+/// Sticky driving input mode selector: stays in gamepad/analog mode when the
+/// stick or triggers momentarily pass through neutral, so `steer_analog`
+/// (`ctl + 0x410`) does not oscillate mid-corner. Switches cleanly on
+/// intentional input from the other device or gamepad disconnect.
+fn select_driving_input_mode(
+    was_gamepad: bool,
+    pad_connected: bool,
+    pad_active: bool,
+    keyboard_active: bool,
+) -> bool {
+    if !pad_connected {
+        false
+    } else if pad_active {
+        true
+    } else if keyboard_active {
+        false
+    } else {
+        was_gamepad
+    }
 }
 
 /// Recovered speed-display multiplier applied to the reconstructed Q16 velocity
@@ -6150,7 +6176,17 @@ fn advance_game_frame<C: HostClock>(
         menu_inputs.preload_done = done;
         screen = frame;
     }
-    let drive = if let Some(pad) = input.gamepad.filter(|pad| analog_driving_is_active(pad)) {
+    let pad_active = input.gamepad.is_some_and(analog_driving_is_active);
+    let keyboard_active = input.keys.has_any_keyboard_down();
+    camera.active_input_is_gamepad = select_driving_input_mode(
+        camera.active_input_is_gamepad,
+        input.gamepad.is_some(),
+        pad_active,
+        keyboard_active,
+    );
+    let drive = if camera.active_input_is_gamepad
+        && let Some(pad) = input.gamepad
+    {
         analog.poll(
             pad.steer_axis(),
             pad.pedal_axis(),
@@ -6344,7 +6380,10 @@ fn advance_game_frame<C: HostClock>(
         } else {
             camera.subtick_snapshot = None;
         }
-        let alpha_q16 = if use_subtick { 0x5555 } else { 0x1_0000 };
+        // When sub-tick interpolation is active, the sim tick frame (`t = 0 ms`)
+        // starts at `alpha_q16 = 0` (`prev`) so sub-ticks advance uniformly from
+        // `0x0000` to `0x1_0000` across the 40 ms period with no 25 Hz jump.
+        let alpha_q16 = if use_subtick { 0 } else { 0x1_0000 };
         let camera_world = cmr_core::wheel_animation::interpolate_matrix_435400(
             &prev_camera_world,
             &curr_camera_world,
@@ -9809,12 +9848,14 @@ fn reload_changed_stage<'a>(
         stage_crowd_points(resources),
         weather,
     );
-    // A fresh view; the shared `rand()` generator and sub-tick mode carry on.
+    // A fresh view; the shared `rand()` generator, sub-tick mode, and sticky input device carry on.
     let rng = camera.rng;
     let subtick_enabled = camera.subtick_enabled;
+    let active_input_is_gamepad = camera.active_input_is_gamepad;
     *camera = ViewHarness::new();
     camera.rng = rng;
     camera.subtick_enabled = subtick_enabled;
+    camera.active_input_is_gamepad = active_input_is_gamepad;
     if car != loaded.car {
         // The car loader `FUN_004872b0` registers the new car's waves.
         audio.engine = EngineAudio::open(context.runtime_data, car);
@@ -11416,6 +11457,20 @@ mod tests {
     #[test]
     fn idle_gamepad_does_not_mask_keyboard_driving_input() {
         assert!(!analog_driving_is_active(&GamepadDrivingState::new()));
+        assert!(!select_driving_input_mode(false, true, false, false));
+        assert!(!select_driving_input_mode(false, true, false, true));
+    }
+
+    #[test]
+    fn sticky_driving_input_mode_preserves_gamepad_through_neutral() {
+        // Active gamepad switches to gamepad mode.
+        assert!(select_driving_input_mode(false, true, true, false));
+        // Neutral stick/triggers stay in gamepad mode so steer_analog does not flip mid-corner.
+        assert!(select_driving_input_mode(true, true, false, false));
+        // Pressing a keyboard driving key switches back to keyboard mode.
+        assert!(!select_driving_input_mode(true, true, false, true));
+        // Disconnecting the gamepad falls back to keyboard mode.
+        assert!(!select_driving_input_mode(true, false, false, false));
     }
 
     #[test]
