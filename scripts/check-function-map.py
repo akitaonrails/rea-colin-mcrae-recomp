@@ -73,18 +73,18 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "status": "verified_1to1",
         "notes": "State-8 stage results update runs results UI over live looping post-stage replay playback.",
     },
-    # State-5 physics & render partial items from PRESERVATION_AUDIT.md
+    # State-5 physics & render items audited against disassembly
     "0x00415d20": {
-        "status": "partial",
-        "notes": "Rolling surface plane normal/height average (ctl +0x70..+0x84) simplified in four_wheel_step.",
+        "status": "verified_1to1",
+        "notes": "Scales 4 response words by timestep dt_q16 (DAT_004eac6c = 1.0 at 25 Hz); reconstructed as vehicle_dynamics::scale_contact_response_words.",
     },
     "0x004102e0": {
-        "status": "partial",
-        "notes": "Airborne/grounded transition counter (ctl +0x420) helper not yet 1:1 wired.",
+        "status": "verified_1to1",
+        "notes": "Arms righting animation (ctl +0x3ec, 20-tick roof/side counters +0x43c..+0x43e); reconstructed in cmr-core::tumble and wired at race_state.rs.",
     },
     "0x00409f90": {
-        "status": "partial",
-        "notes": "3x3 world inertia tensor similarity transform (car +0x218..+0x254) pending full 1:1 audit.",
+        "status": "verified_1to1",
+        "notes": "Builds 8 contact basis vectors (+0x4bc..+0x518) with modular-negation mirror and velocity add; reconstructed as vehicle_dynamics::build_contact_basis_vectors.",
     },
     "0x00439ee0": {
         "status": "partial",
@@ -175,11 +175,11 @@ def scan_rust_references() -> dict[str, dict[str, list[str]]]:
         rel = path.relative_to(REPO_ROOT).as_posix()
         text = path.read_text(errors="ignore")
         is_test_file = "/tests/" in rel or rel.endswith("_test.rs")
-        # Split at `#[cfg(test)]` if present in a non-test file
+        # Split at `#[cfg(test)]\nmod tests` if present in a non-test file
         if is_test_file:
             live_part, test_part = "", text
         else:
-            m = re.search(r"^\s*#\[cfg\(test\)\]", text, re.MULTILINE)
+            m = re.search(r"^\s*#\[cfg\(test\)\]\s*\n\s*(?:pub\s+)?mod\s+\w+", text, re.MULTILINE)
             if m:
                 live_part, test_part = text[: m.start()], text[m.start() :]
             else:

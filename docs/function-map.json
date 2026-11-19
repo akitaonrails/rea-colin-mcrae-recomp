@@ -139,14 +139,14 @@
         "0x0048c080"
       ],
       "live_files": [
+        "crates/cmr-assets/src/static_tables_profile.rs",
         "crates/cmr-core/src/event_flow.rs",
         "crates/cmr-core/src/pause_menu.rs",
         "crates/cmr-core/src/trigger_walk.rs",
+        "crates/cmr-formats/src/pe_aux_control_initializer.rs",
         "crates/cmr-formats/src/pe_compiled_initializer.rs"
       ],
       "test_files": [
-        "crates/cmr-assets/src/static_tables_profile.rs",
-        "crates/cmr-formats/src/pe_aux_control_initializer.rs",
         "crates/cmr-formats/src/pe_car_selector.rs",
         "crates/cmr-formats/src/pe_engine_audio_tables.rs",
         "crates/cmr-formats/src/pe_rival_records.rs",
@@ -427,15 +427,14 @@
         "0x00403a00"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/barrier_collision.rs",
         "crates/cmr-core/src/collision.rs",
         "crates/cmr-core/src/prang_sound.rs",
+        "crates/cmr-core/src/stage_triggers.rs",
         "crates/cmr-core/src/trigger_walk.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs",
-        "crates/cmr-core/src/stage_triggers.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00403470",
@@ -450,11 +449,10 @@
         "0x00403980"
       ],
       "live_files": [
-        "crates/cmr-core/src/barrier_collision.rs"
-      ],
-      "test_files": [
+        "crates/cmr-core/src/barrier_collision.rs",
         "crates/cmr-core/src/stage_triggers.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x004035a0",
@@ -469,11 +467,10 @@
         "0x00403980"
       ],
       "live_files": [
-        "crates/cmr-core/src/barrier_collision.rs"
-      ],
-      "test_files": [
+        "crates/cmr-core/src/barrier_collision.rs",
         "crates/cmr-core/src/stage_triggers.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x004036e0",
@@ -488,11 +485,10 @@
         "0x00403980"
       ],
       "live_files": [
-        "crates/cmr-core/src/barrier_collision.rs"
-      ],
-      "test_files": [
+        "crates/cmr-core/src/barrier_collision.rs",
         "crates/cmr-core/src/stage_triggers.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x00403980",
@@ -500,7 +496,7 @@
       "size": 128,
       "name": "FUN_00403980",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [
         "0x00403470",
         "0x004035a0",
@@ -510,10 +506,10 @@
         "0x00403a00",
         "0x00403e70"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-core/src/stage_triggers.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x00403a00",
@@ -549,9 +545,7 @@
         "crates/cmr-core/src/trigger_walk.rs",
         "crates/cmr-formats/src/stage.rs"
       ],
-      "test_files": [
-        "crates/cmr-core/src/stage_triggers.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00403e00",
@@ -559,15 +553,15 @@
       "size": 112,
       "name": "FUN_00403e00",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [],
       "callers": [
         "0x00403a00"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-core/src/stage_triggers.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x00403e70",
@@ -636,11 +630,10 @@
         "0x00404440"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/compiled_car_initializer.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00404160",
@@ -679,9 +672,7 @@
         "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/results_director.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004043d0",
@@ -747,14 +738,13 @@
         "0x00404440"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gearbox.rs",
         "crates/cmr-core/src/race_state.rs",
         "crates/cmr-core/src/wheel_animation.rs",
         "crates/cmr-formats/src/pe_aux_control_initializer.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00407590",
@@ -948,7 +938,7 @@
       "size": 1296,
       "name": "FUN_00409f90",
       "category": "core_game",
-      "status": "partial",
+      "status": "verified_1to1",
       "callees": [],
       "callers": [
         "0x00407690"
@@ -958,7 +948,7 @@
         "crates/cmr-core/src/vehicle_dynamics.rs"
       ],
       "test_files": [],
-      "notes": "3x3 world inertia tensor similarity transform (car +0x218..+0x254) pending full 1:1 audit.",
+      "notes": "Builds 8 contact basis vectors (+0x4bc..+0x518) with modular-negation mirror and velocity add; reconstructed as vehicle_dynamics::build_contact_basis_vectors.",
       "manual_override": true
     },
     {
@@ -1187,7 +1177,7 @@
       "size": 112,
       "name": "FUN_004102e0",
       "category": "core_game",
-      "status": "partial",
+      "status": "verified_1to1",
       "callees": [],
       "callers": [
         "0x00407690"
@@ -1197,7 +1187,7 @@
         "crates/cmr-core/src/tumble.rs"
       ],
       "test_files": [],
-      "notes": "Airborne/grounded transition counter (ctl +0x420) helper not yet 1:1 wired.",
+      "notes": "Arms righting animation (ctl +0x3ec, 20-tick roof/side counters +0x43c..+0x43e); reconstructed in cmr-core::tumble and wired at race_state.rs.",
       "manual_override": true
     },
     {
@@ -1351,14 +1341,13 @@
         "0x004115d0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/ground_pass.rs",
         "crates/cmr-core/src/race_state.rs",
         "crates/cmr-core/src/tumble.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00413a80",
@@ -1459,7 +1448,7 @@
       "size": 208,
       "name": "FUN_00415d20",
       "category": "core_game",
-      "status": "partial",
+      "status": "verified_1to1",
       "callees": [],
       "callers": [
         "0x00407690"
@@ -1468,7 +1457,7 @@
         "crates/cmr-core/src/vehicle_dynamics.rs"
       ],
       "test_files": [],
-      "notes": "Rolling surface plane normal/height average (ctl +0x70..+0x84) simplified in four_wheel_step.",
+      "notes": "Scales 4 response words by timestep dt_q16 (DAT_004eac6c = 1.0 at 25 Hz); reconstructed as vehicle_dynamics::scale_contact_response_words.",
       "manual_override": true
     },
     {
@@ -2169,11 +2158,10 @@
         "0x00485d30"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/steering_response.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0041b240",
@@ -2484,12 +2472,11 @@
         "0x00421da0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_assets.rs",
         "crates/cmr-core/src/audio_weather_assets.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0041cfe0",
@@ -2514,14 +2501,13 @@
         "0x004384a0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_ambience.rs",
         "crates/cmr-core/src/audio_mixer.rs",
         "crates/cmr-core/src/audio_weather_assets.rs",
         "crates/cmr-core/src/crowd_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0041d270",
@@ -2753,9 +2739,7 @@
         "crates/cmr-core/src/car_damage.rs",
         "crates/cmr-core/src/gameplay_session.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0041f630",
@@ -2890,14 +2874,13 @@
         "0x0041efe0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/car_crash_damage.rs",
         "crates/cmr-core/src/car_damage.rs",
         "crates/cmr-core/src/car_setup.rs",
         "crates/cmr-core/src/gameplay_session.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00420db0",
@@ -2917,13 +2900,12 @@
         "0x00485d30"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/car_damage.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/pause_menu.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004213a0",
@@ -3110,13 +3092,12 @@
       ],
       "callers": [],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/game_state.rs",
         "crates/cmr-core/src/load_interstitial.rs",
         "crates/cmr-core/src/render_route.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00421da0",
@@ -3217,15 +3198,14 @@
         "0x00438b90"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/game_state.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/load_interstitial.rs",
         "crates/cmr-core/src/render_route.rs",
         "crates/cmr-core/src/stage_path.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ],
+      "test_files": [],
       "notes": "LoadInterstitial steps LoadProgress (0..=0x1a) across State-4 frames via StageLoadPump and draws BAR/LINE over the target stage .LOA.",
       "manual_override": true
     },
@@ -3373,12 +3353,11 @@
       ],
       "callers": [],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/game_state.rs",
         "crates/cmr-core/src/render_route.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00423380",
@@ -3416,13 +3395,13 @@
       ],
       "callers": [],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/game_state.rs",
         "crates/cmr-core/src/overlay_alt.rs",
         "crates/cmr-core/src/render_compose.rs",
         "crates/cmr-core/src/render_route.rs"
       ],
       "test_files": [
-        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/render_route.rs"
       ]
     },
@@ -3622,9 +3601,7 @@
         "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/car_particles.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004249f0",
@@ -3680,9 +3657,7 @@
         "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/car_particles.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00424f40",
@@ -5347,11 +5322,10 @@
         "0x00421da0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/results_draw.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0042e320",
@@ -5650,12 +5624,11 @@
         "0x00443c80"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/results_director.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0042fa40",
@@ -5697,11 +5670,10 @@
         "0x0042f860"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/standings.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00430100",
@@ -5709,17 +5681,17 @@
       "size": 112,
       "name": "FUN_00430100",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [
         "0x0046d670"
       ],
       "callers": [
         "0x0042fab0"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-app/src/lib.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x00430170",
@@ -5776,9 +5748,7 @@
         "crates/cmr-core/src/results_director.rs",
         "crates/cmr-core/src/results_draw.rs"
       ],
-      "test_files": [
-        "crates/cmr-core/src/moving_objects.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004304d0",
@@ -5950,12 +5920,11 @@
         "0x00430770"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/results_director.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00430a40",
@@ -7231,13 +7200,12 @@
         "0x00449580"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/camera_mode.rs",
         "crates/cmr-core/src/camera_view.rs",
         "crates/cmr-core/src/input_map.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004343a0",
@@ -7268,15 +7236,14 @@
         "0x0043afd0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/camera_crossfade.rs",
         "crates/cmr-core/src/camera_mode.rs",
         "crates/cmr-core/src/camera_trackside.rs",
         "crates/cmr-core/src/camera_view.rs",
         "crates/cmr-core/src/gameplay_camera.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00434870",
@@ -7296,12 +7263,11 @@
         "0x0043afd0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/car_reset.rs",
         "crates/cmr-core/src/race_state.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00434950",
@@ -7378,11 +7344,10 @@
         "0x0047fac0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/engine_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00434d40",
@@ -7441,17 +7406,17 @@
         "0x0046ca70"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/camera_crossfade.rs",
         "crates/cmr-core/src/gameplay_camera.rs",
+        "crates/cmr-core/src/moving_objects.rs",
         "crates/cmr-core/src/replay.rs",
         "crates/cmr-core/src/stage_moj_motion.rs",
         "crates/cmr-core/src/wheel_animation.rs",
         "crates/cmr-platform-sdl3/src/lib.rs"
       ],
       "test_files": [
-        "crates/cmr-app/src/lib.rs",
-        "crates/cmr-core/src/gameplay_camera.rs",
-        "crates/cmr-core/src/moving_objects.rs"
+        "crates/cmr-core/src/gameplay_camera.rs"
       ]
     },
     {
@@ -7620,7 +7585,7 @@
       "size": 176,
       "name": "FUN_00436730",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [
         "0x004011b0",
         "0x0041a330",
@@ -7630,10 +7595,10 @@
       "callers": [
         "0x00434870"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-app/src/lib.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x004367e0",
@@ -7776,11 +7741,10 @@
         "0x00421da0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/pause_menu_draw.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00436b40",
@@ -7812,9 +7776,7 @@
       "live_files": [
         "crates/cmr-core/src/moving_objects.rs"
       ],
-      "test_files": [
-        "crates/cmr-core/src/moving_objects.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00436be0",
@@ -7942,12 +7904,11 @@
       "callees": [],
       "callers": [],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/game_menu_flow.rs",
         "crates/cmr-core/src/game_state.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004371f0",
@@ -8343,9 +8304,7 @@
       "live_files": [
         "crates/cmr-core/src/moving_objects.rs"
       ],
-      "test_files": [
-        "crates/cmr-core/src/moving_objects.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00438b90",
@@ -8612,10 +8571,7 @@
         "crates/cmr-core/src/wheel_animation.rs",
         "crates/cmr-platform-sdl3/src/lib.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs",
-        "crates/cmr-core/src/moving_objects.rs"
-      ],
+      "test_files": [],
       "notes": "Root/Node-5/4-wheel/camera/.moj/.obj/shadow posed; secondary car child nodes (wishbones, steering wheel, driver, mudflaps, spare wheel, gauges) at rest.",
       "manual_override": true
     },
@@ -8711,15 +8667,14 @@
         "0x00476e30"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/descriptor_menu.rs",
         "crates/cmr-core/src/pause_menu.rs",
         "crates/cmr-core/src/results_director.rs",
         "crates/cmr-core/src/save_dialog.rs",
         "crates/cmr-core/src/service_screen.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0043bb60",
@@ -8747,7 +8702,7 @@
       "size": 64,
       "name": "FUN_0043bc00",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [
         "0x00495ed0",
         "0x0049b040"
@@ -8759,10 +8714,10 @@
         "0x00479040",
         "0x0048d8e0"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-app/src/lib.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x0043bc40",
@@ -8960,9 +8915,7 @@
         "crates/cmr-core/src/moving_objects.rs",
         "crates/cmr-core/src/static_collision_response_input.rs"
       ],
-      "test_files": [
-        "crates/cmr-core/src/moving_objects.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0043c2f0",
@@ -8996,9 +8949,7 @@
       "live_files": [
         "crates/cmr-core/src/moving_objects.rs"
       ],
-      "test_files": [
-        "crates/cmr-core/src/moving_objects.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0043c6f0",
@@ -9123,15 +9074,14 @@
         "0x0043d5d0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/collision.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/race_state.rs",
         "crates/cmr-core/src/static_collision_response.rs",
         "crates/cmr-core/src/static_world_collision.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0043e140",
@@ -9668,13 +9618,12 @@
         "0x00438970"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_music_cues.rs",
         "crates/cmr-core/src/music_player.rs",
         "crates/cmr-core/src/pause_menu.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00443c80",
@@ -9701,11 +9650,10 @@
         "0x00463c70"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00443da0",
@@ -9948,12 +9896,11 @@
         "0x00421da0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_pacenote.rs",
         "crates/cmr-platform-sdl3/src/lib.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004442b0",
@@ -10008,12 +9955,11 @@
         "crates/cmr-core/src/audio_pacenote.rs",
         "crates/cmr-core/src/collision.rs",
         "crates/cmr-core/src/pacenote_schedule.rs",
+        "crates/cmr-core/src/stage_triggers.rs",
         "crates/cmr-core/src/trigger_walk.rs",
         "crates/cmr-platform-sdl3/src/lib.rs"
       ],
-      "test_files": [
-        "crates/cmr-core/src/stage_triggers.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00444450",
@@ -10058,12 +10004,11 @@
         "0x00468200"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/pause_menu.rs",
         "crates/cmr-core/src/render_route.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00444710",
@@ -10629,11 +10574,10 @@
         "0x00437200"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/stage_weather.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00449bd0",
@@ -10653,9 +10597,7 @@
         "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/car_shadow.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00449da0",
@@ -11069,12 +11011,11 @@
         "0x00481350"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/load_interstitial.rs",
         "crates/cmr-core/src/render_route.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0044dea0",
@@ -11212,14 +11153,13 @@
         "0x004c6880"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/frontend_flow.rs",
         "crates/cmr-core/src/frontend_load.rs",
         "crates/cmr-core/src/profile_store.rs",
         "crates/cmr-core/src/save_dialog.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0044edac",
@@ -11315,12 +11255,11 @@
         "0x0043bce0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/profile_store.rs",
         "crates/cmr-core/src/save_dialog.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0044f070",
@@ -11558,7 +11497,7 @@
       "size": 1168,
       "name": "FUN_004508b0",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [
         "0x00446c40",
         "0x0048e100"
@@ -11566,10 +11505,10 @@
       "callers": [
         "0x00450d40"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-core/src/moving_objects.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x00450d40",
@@ -11594,9 +11533,7 @@
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/moving_objects.rs"
       ],
-      "test_files": [
-        "crates/cmr-core/src/moving_objects.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004526b0",
@@ -13410,12 +13347,11 @@
         "0x00464930"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/race_hud_plan.rs",
         "crates/cmr-core/src/stage_checkpoints.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00463b70",
@@ -13490,14 +13426,13 @@
         "0x00422c30"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/race_hud_plan.rs",
         "crates/cmr-core/src/race_hud_prepare.rs",
         "crates/cmr-core/src/stage_checkpoints.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00464710",
@@ -13513,11 +13448,10 @@
         "0x00464130"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/race_hud_plan.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00464840",
@@ -13569,12 +13503,11 @@
         "0x00476030"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/race_hud_plan.rs",
         "crates/cmr-core/src/race_hud_prepare.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00465d40",
@@ -13641,13 +13574,12 @@
         "0x004228d0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/championship_progression.rs",
         "crates/cmr-core/src/stage_rivals.rs",
         "crates/cmr-formats/src/stage.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004671f0",
@@ -13817,11 +13749,11 @@
         "0x004321f0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_menu.rs",
         "crates/cmr-core/src/results_director.rs"
       ],
       "test_files": [
-        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_menu.rs"
       ]
     },
@@ -13844,11 +13776,11 @@
         "0x00430770"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_menu.rs",
         "crates/cmr-core/src/results_director.rs"
       ],
       "test_files": [
-        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_menu.rs"
       ]
     },
@@ -14127,12 +14059,11 @@
         "0x00421da0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_assets.rs",
         "crates/cmr-core/src/audio_menu.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00469060",
@@ -14316,11 +14247,10 @@
         "0x00421da0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/prang_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00469e60",
@@ -14376,13 +14306,12 @@
         "0x00441f30"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/prang_sound.rs",
         "crates/cmr-core/src/race_state.rs",
         "crates/cmr-core/src/static_collision_response.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0046a030",
@@ -14406,12 +14335,11 @@
         "0x004384a0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/prang_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0046a2a0",
@@ -14440,15 +14368,14 @@
         "0x00441f30"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/car_crash_damage.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/prang_sound.rs",
         "crates/cmr-core/src/race_state.rs",
         "crates/cmr-core/src/static_collision_response.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0046a650",
@@ -14506,11 +14433,10 @@
         "0x00439b10"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_music_cues.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0046af30",
@@ -14637,15 +14563,14 @@
         "0x0048d340"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/car_particles.rs",
         "crates/cmr-core/src/compiled_car_initializer.rs",
         "crates/cmr-core/src/stage_weather.rs",
         "crates/cmr-core/src/weather.rs",
         "crates/cmr-core/src/wet_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0046b230",
@@ -14662,13 +14587,12 @@
         "0x0048d2d0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_weather_assets.rs",
         "crates/cmr-core/src/compiled_car_initializer.rs",
         "crates/cmr-core/src/stage_weather.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0046b240",
@@ -15523,12 +15447,11 @@
         "0x00485bf0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/replay.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0046de30",
@@ -15565,13 +15488,12 @@
         "0x004716b0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/intro_video.rs",
         "crates/cmr-core/src/replay.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0046e0f0",
@@ -15731,11 +15653,10 @@
         "0x00437200"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/school_race.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0046ef30",
@@ -16106,11 +16027,10 @@
         "0x00470f50"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/school_menu.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004716a0",
@@ -16145,13 +16065,12 @@
         "0x004228d0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/school_race.rs",
         "crates/cmr-formats/src/stage.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00471800",
@@ -16527,11 +16446,10 @@
         "0x00480c00"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/school_race.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00473330",
@@ -16613,17 +16531,17 @@
       "size": 208,
       "name": "FUN_00473470",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [],
       "callers": [
         "0x0046a740",
         "0x00473540",
         "0x00474600"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-app/src/lib.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x00473540",
@@ -16745,11 +16663,10 @@
         "0x00437ef0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00474d90",
@@ -17611,11 +17528,10 @@
         "0x0047a7f0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/car_shadow.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0047bee0",
@@ -17769,15 +17685,14 @@
         "0x0048d4a0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_engine.rs",
         "crates/cmr-core/src/audio_menu.rs",
         "crates/cmr-core/src/audio_mixer.rs",
         "crates/cmr-core/src/engine_sound.rs",
         "crates/cmr-core/src/surface_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0047eba0",
@@ -17842,12 +17757,11 @@
         "0x004384a0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/engine_listener.rs",
         "crates/cmr-core/src/engine_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0047f680",
@@ -18330,7 +18244,7 @@
       "size": 64,
       "name": "FUN_00480c50",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [
         "0x00495ed0",
         "0x00499230",
@@ -18339,10 +18253,10 @@
       "callers": [
         "0x004228d0"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-app/src/lib.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x00480c90",
@@ -18447,9 +18361,7 @@
         "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/car_resources.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00481310",
@@ -18538,12 +18450,11 @@
         "0x00421da0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/crowd_sound.rs",
         "crates/cmr-core/src/static_world_collision.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00482140",
@@ -19299,12 +19210,11 @@
         "0x00468200"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/pause_menu.rs",
         "crates/cmr-core/src/render_route.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00487210",
@@ -19322,11 +19232,10 @@
         "0x00488d60"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/engine_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00487250",
@@ -19343,11 +19252,10 @@
         "0x004872b0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/engine_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004872b0",
@@ -19369,12 +19277,11 @@
         "0x00421da0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_car_assets.rs",
         "crates/cmr-core/src/engine_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00487d10",
@@ -19509,14 +19416,13 @@
         "0x004384a0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/drivetrain.rs",
         "crates/cmr-core/src/engine_sound.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/race_state.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00489230",
@@ -19594,11 +19500,10 @@
         "0x00421da0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/surface_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00489890",
@@ -19626,13 +19531,12 @@
         "0x004384a0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/race_state.rs",
         "crates/cmr-core/src/surface_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0048b650",
@@ -19651,13 +19555,12 @@
         "0x00468200"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/pause_menu.rs",
         "crates/cmr-core/src/render_route.rs",
         "crates/cmr-core/src/surface_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0048b680",
@@ -19675,11 +19578,10 @@
         "0x004343a0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/surface_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0048b710",
@@ -19867,17 +19769,17 @@
       "size": 336,
       "name": "FUN_0048cf20",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [
         "0x0048dfd0"
       ],
       "callers": [
         "0x0047a900"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-app/src/lib.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x0048d070",
@@ -19977,11 +19879,10 @@
         "0x00421da0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/wet_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0048d4a0",
@@ -20027,11 +19928,10 @@
         "0x004384a0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/wet_sound.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0048d8c0",
@@ -20039,7 +19939,7 @@
       "size": 32,
       "name": "FUN_0048d8c0",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [
         "0x00495b10",
         "0x00495d10"
@@ -20049,10 +19949,10 @@
         "0x00437ac0",
         "0x00438b90"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-app/src/lib.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x0048d8e0",
@@ -21644,10 +21544,10 @@
         "0x004c9a60",
         "0x004c9d70"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-app/src/lib.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x004957d0",
@@ -22280,13 +22180,12 @@
         "0x004c9a60"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/audio_car_assets.rs",
         "crates/cmr-core/src/audio_pacenote.rs",
         "crates/cmr-core/src/audio_weather_assets.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x00496740",
@@ -23610,6 +23509,7 @@
         "0x004cf0b0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/championship_model.rs",
         "crates/cmr-core/src/championship_setup.rs",
         "crates/cmr-core/src/config_commit.rs",
@@ -23621,9 +23521,7 @@
         "crates/cmr-core/src/service_draw.rs",
         "crates/cmr-core/src/welcome_screen.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0049b040",
@@ -23858,10 +23756,10 @@
         "0x0048d8e0",
         "0x004aae00"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-app/src/lib.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x0049cb90",
@@ -24167,13 +24065,12 @@
         "0x004c2d60"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/config_commit.rs",
         "crates/cmr-core/src/control_bindings.rs",
         "crates/cmr-core/src/input_map.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x0049d9b0",
@@ -25512,9 +25409,7 @@
         "crates/cmr-core/src/car_particles.rs",
         "crates/cmr-video/src/software_stage_scene.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004a4f20",
@@ -25535,9 +25430,7 @@
       "live_files": [
         "crates/cmr-app/src/lib.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004a51b0",
@@ -25985,11 +25878,10 @@
         "0x004233e0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-platform-sdl3/src/lib.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004a7d70",
@@ -26337,9 +26229,7 @@
         "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/car_headlights.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004a9cd0",
@@ -28583,14 +28473,13 @@
         "0x0046f920"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/intro_video.rs",
         "crates/cmr-core/src/school_menu.rs",
         "crates/cmr-core/src/video_player.rs",
         "crates/cmr-formats/src/avi.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004afa00",
@@ -30269,6 +30158,7 @@
         "0x004c7d30"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/config_commit.rs",
         "crates/cmr-core/src/frontend_flow.rs",
         "crates/cmr-core/src/frontend_load.rs",
@@ -30276,9 +30166,7 @@
         "crates/cmr-core/src/frontend_options.rs",
         "crates/cmr-core/src/frontend_stage_select.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004b9600",
@@ -30292,11 +30180,10 @@
         "0x004c1e00"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/config_commit.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004b98b0",
@@ -30320,12 +30207,11 @@
         "0x004c1e00"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/config_commit.rs",
         "crates/cmr-core/src/frontend_controls.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004b9e50",
@@ -30367,12 +30253,11 @@
         "0x004c1e00"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/modern_settings.rs",
         "crates/cmr-core/src/settings_store.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004b9f70",
@@ -30409,15 +30294,14 @@
         "0x004b9e70"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/control_bindings.rs",
         "crates/cmr-core/src/frontend_controls.rs",
         "crates/cmr-core/src/frontend_flow.rs",
         "crates/cmr-core/src/input_map.rs",
         "crates/cmr-core/src/root_menu_interactive.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004ba120",
@@ -30491,12 +30375,11 @@
         "0x004c85e0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/results_draw.rs",
         "crates/cmr-core/src/service_draw.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004ba4b0",
@@ -30511,11 +30394,10 @@
         "0x00466350"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/championship_progression.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004ba510",
@@ -30579,12 +30461,11 @@
         "0x004c6880"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/modern_settings.rs",
         "crates/cmr-core/src/settings_store.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004ba870",
@@ -31738,10 +31619,10 @@
         "0x004c1e00"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/frontend_screen_frame.rs"
       ],
       "test_files": [
-        "crates/cmr-app/src/lib.rs",
         "crates/cmr-video/src/software_root_menu_session.rs"
       ]
     },
@@ -31832,6 +31713,7 @@
         "0x0049db00"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/event_flow.rs",
         "crates/cmr-core/src/frontend.rs",
         "crates/cmr-core/src/game_driver.rs",
@@ -31840,9 +31722,7 @@
         "crates/cmr-core/src/host_loop.rs",
         "crates/cmr-core/src/root_menu_interactive.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004c20f0",
@@ -31871,15 +31751,14 @@
         "0x004c1e00"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/event_flow.rs",
         "crates/cmr-core/src/frontend_flow.rs",
         "crates/cmr-core/src/frontend_menu.rs",
         "crates/cmr-core/src/options_screen.rs",
         "crates/cmr-core/src/root_menu_interactive.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004c2590",
@@ -31901,7 +31780,7 @@
       "size": 80,
       "name": "FUN_004c25a0",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [
         "0x004957a0",
         "0x004992e0",
@@ -31912,10 +31791,10 @@
       "callers": [
         "0x004c1e00"
       ],
-      "live_files": [],
-      "test_files": [
+      "live_files": [
         "crates/cmr-app/src/lib.rs"
-      ]
+      ],
+      "test_files": []
     },
     {
       "address": "0x004c25f0",
@@ -32576,16 +32455,17 @@
       "size": 304,
       "name": "FUN_004c46f0",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "wired_live",
       "callees": [
         "0x00498910"
       ],
       "callers": [
         "0x004c46c0"
       ],
-      "live_files": [],
+      "live_files": [
+        "crates/cmr-app/src/lib.rs"
+      ],
       "test_files": [
-        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/frontend_screen_bitmaps.rs",
         "crates/cmr-video/src/software_root_menu_session.rs"
       ]
@@ -33630,11 +33510,10 @@
         "0x004c1e00"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/frontend_sounds.rs"
       ],
-      "test_files": [
-        "crates/cmr-app/src/lib.rs"
-      ]
+      "test_files": []
     },
     {
       "address": "0x004c9d50",
