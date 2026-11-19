@@ -6592,7 +6592,7 @@ fn advance_game_frame<C: HostClock>(
     let quad_under_hud =
         matches!(advanced.route, Some(RenderRoute::StageWorld(_))) && session.results().is_none();
     let reset_fade = session.car().four_wheel.reset.fade_428;
-    if !(advanced.stepped && session.state().id() == 5) && !replay_tick {
+    if !(replay_tick || (advanced.stepped && session.state().id() == 5)) {
         camera.prev_tick_pose = None;
         camera.subtick_snapshot = None;
     }
