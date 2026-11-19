@@ -7072,7 +7072,7 @@
       "size": 176,
       "name": "FUN_00433750",
       "category": "core_game",
-      "status": "implemented_unwired",
+      "status": "verified_1to1",
       "callees": [
         "0x00432e00",
         "0x004335d0",
@@ -7086,10 +7086,11 @@
         "0x0043afd0"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/force_feedback.rs"
       ],
       "test_files": [],
-      "notes": "Force-feedback effect update reconstructed in cmr-core::force_feedback; SDL rumble approximates it.",
+      "notes": "Force-feedback effect update (FfbRumbleMixer: decaying collision accumulator FUN_004330c0/00433ac0 + engine vibration FUN_00433ec0) wired live into SDL3 dual-motor rumble.",
       "manual_override": true
     },
     {
@@ -7120,6 +7121,7 @@
         "0x00433750"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/force_feedback.rs"
       ],
       "test_files": []
@@ -7152,6 +7154,7 @@
         "0x00433750"
       ],
       "live_files": [
+        "crates/cmr-app/src/lib.rs",
         "crates/cmr-core/src/force_feedback.rs"
       ],
       "test_files": []

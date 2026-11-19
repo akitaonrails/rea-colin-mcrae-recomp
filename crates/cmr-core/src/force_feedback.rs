@@ -566,6 +566,81 @@ pub fn ffb_active(device_present: bool, session_active: bool, player_enabled: bo
     device_present && session_active && player_enabled
 }
 
+/// Stateful per-car force-feedback mixer driving dual-motor gamepad rumble from
+/// the recovered `FUN_00433750` / `FUN_004330c0` / `FUN_00433ac0` /
+/// `FUN_00433ec0` effect accumulators.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FfbRumbleMixer {
+    collision: DecayAccumulator,
+}
+
+impl FfbRumbleMixer {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            collision: DecayAccumulator {
+                magnitude: 0,
+                step: 0,
+            },
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.collision = DecayAccumulator::default();
+    }
+
+    /// Feed a collision impact magnitude in Q16.16 (`0..=0x10000`, `FUN_004330c0`).
+    /// Replaces the decaying accumulator only when the new peak exceeds the
+    /// current magnitude and passes [`FORCE_THRESHOLD_Q16`].
+    pub fn push_collision_impact(&mut self, game_magnitude_q16: i32, long_effect: bool) {
+        if game_magnitude_q16 <= FORCE_THRESHOLD_Q16 {
+            return;
+        }
+        let peak = collision_peak(game_magnitude_q16);
+        if peak > self.collision.magnitude {
+            self.collision =
+                DecayAccumulator::seed_collision(game_magnitude_q16, 0x8000, long_effect);
+        }
+    }
+
+    /// Advance one 25 Hz tick (`FUN_00433750` / `FUN_00433ac0` / `FUN_00433ec0`)
+    /// and map the DirectInput effect gains (`0..=10000`) to SDL dual-motor
+    /// rumble `(low_freq_u16, high_freq_u16)`.
+    pub fn tick(
+        &mut self,
+        active: bool,
+        speed_q16: i32,
+        front_contact: bool,
+        wheel_slip_q16: u32,
+        rough_surface: bool,
+    ) -> (u16, u16) {
+        if !active {
+            self.reset();
+            return (0, 0);
+        }
+        let impact_di = self.collision.tick().clamp(0, di::FF_NOMINAL_MAX) as u32;
+        let impact_u16 = (impact_di * 0xFFFF) / (di::FF_NOMINAL_MAX as u32);
+        let engine_di = if front_contact {
+            engine_vibration_magnitude(speed_q16).clamp(0, di::FF_NOMINAL_MAX) as u32
+        } else {
+            0
+        };
+        let engine_low = ((engine_di * 0xFFFF) / (di::FF_NOMINAL_MAX as u32)) / 5;
+        let rough_low = if rough_surface && speed_q16 > 0x1000 {
+            (speed_q16.unsigned_abs() >> 4).min(0x3800)
+        } else {
+            0
+        };
+        let low = impact_u16
+            .max(rough_low)
+            .saturating_add(engine_low)
+            .min(0xFFFF) as u16;
+        let slip_high = (wheel_slip_q16 >> 3).min(0xA000);
+        let high = slip_high.max(impact_u16 / 2).min(0xFFFF) as u16;
+        (low, high)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -612,6 +687,18 @@ mod tests {
         assert_eq!(collision_second_peak(0x4000), 5000);
         assert_eq!(collision_second_peak(0x8000), di::FF_NOMINAL_MAX);
         assert_eq!(collision_second_peak(0x10000), di::FF_NOMINAL_MAX);
+    }
+
+    #[test]
+    fn ffb_rumble_mixer_decays_impacts_smoothly_and_clears_when_inactive() {
+        let mut mixer = FfbRumbleMixer::new();
+        mixer.push_collision_impact(0x1_0000, false);
+        let (low0, high0) = mixer.tick(true, 0, false, 0, false);
+        let (low1, _) = mixer.tick(true, 0, false, 0, false);
+        assert_eq!(low0, 0xFFFF);
+        assert!(high0 > 0);
+        assert!(low1 > 0 && low1 < low0, "impact must decay across frames");
+        assert_eq!(mixer.tick(false, 0x1_0000, true, 0x1_0000, true), (0, 0));
     }
 
     #[test]

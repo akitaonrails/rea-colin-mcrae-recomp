@@ -225,8 +225,8 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "notes": "Jelly-car / bouncy mesh cheat (cfg[0x26] & 1) vertex spring wobbler.",
     },
     "0x00433750": {
-        "status": "implemented_unwired",
-        "notes": "Force-feedback effect update reconstructed in cmr-core::force_feedback; SDL rumble approximates it.",
+        "status": "verified_1to1",
+        "notes": "Force-feedback effect update (FfbRumbleMixer: decaying collision accumulator FUN_004330c0/00433ac0 + engine vibration FUN_00433ec0) wired live into SDL3 dual-motor rumble.",
     },
     "0x00442740": {
         "status": "implemented_unwired",

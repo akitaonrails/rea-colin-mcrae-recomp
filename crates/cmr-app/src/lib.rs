@@ -4632,6 +4632,8 @@ struct ViewHarness {
     active_input_is_gamepad: bool,
     /// Edge-detection mask for State-8 interactive replay controls (P / [ / ] / Home).
     prev_replay_keys: u8,
+    /// Stateful force-feedback mixer (`FUN_00433750` / `FUN_00433ac0` / `FUN_00433ec0`).
+    ffb: cmr_core::force_feedback::FfbRumbleMixer,
 }
 
 impl ViewHarness {
@@ -4665,6 +4667,7 @@ impl ViewHarness {
             subtick_snapshot: None,
             active_input_is_gamepad: false,
             prev_replay_keys: 0,
+            ffb: cmr_core::force_feedback::FfbRumbleMixer::new(),
         }
     }
 
@@ -7374,7 +7377,11 @@ fn advance_game_frame<C: HostClock>(
             Vec::new()
         },
         rumble_low_high_q16: if advanced.stepped {
-            Some(compute_gamepad_rumble(session, config.modern.rumble))
+            Some(compute_gamepad_rumble(
+                session,
+                &mut camera.ffb,
+                config.modern.rumble,
+            ))
         } else {
             None
         },
@@ -7421,36 +7428,43 @@ fn apply_state_8_replay_keys(
     }
 }
 
-fn compute_gamepad_rumble(session: &GameplaySession, enabled: bool) -> (u16, u16) {
-    if !enabled || session.state().id() != 5 {
-        return (0, 0);
+fn compute_gamepad_rumble(
+    session: &GameplaySession,
+    ffb: &mut cmr_core::force_feedback::FfbRumbleMixer,
+    enabled: bool,
+) -> (u16, u16) {
+    let active = enabled && session.state().id() == 5;
+    if !active {
+        return ffb.tick(false, 0, false, 0, false);
     }
-    let mut low = 0u32;
-    let mut high = 0u32;
     for impact in session.last_static_impacts() {
-        let sev = (impact.severity.unsigned_abs() >> 2).min(0xFFFF);
-        low = low.max(sev);
+        let mag = (impact.severity.abs() >> 2).min(cmr_core::force_feedback::GAME_MAGNITUDE_MAX);
+        ffb.push_collision_impact(mag, false);
     }
     if session.last_tumble_impact().is_some() {
-        low = low.max(0xC000);
+        ffb.push_collision_impact(0xC000, true);
     }
-    if let Some(words) = session.surface_sound_words()
-        && words.speed_ec > 0x1000
-    {
-        for w in 0..4 {
-            if words.contact[w] == 0 {
-                continue;
-            }
-            let slip =
-                (words.longitudinal[w].unsigned_abs() + words.lateral[w].unsigned_abs()) >> 3;
-            high = high.max(slip.min(0xA000));
-            if words.surfaces[w] > 3 {
-                let rough = (words.speed_ec.unsigned_abs() >> 4).min(0x3800);
-                low = low.max(rough);
+    let mut speed_q16 = 0i32;
+    let mut front_contact = false;
+    let mut max_slip = 0u32;
+    let mut rough_surface = false;
+    if let Some(words) = session.surface_sound_words() {
+        speed_q16 = words.speed_ec;
+        front_contact = words.contact[0] != 0 || words.contact[1] != 0;
+        if words.speed_ec > 0x1000 {
+            for w in 0..4 {
+                if words.contact[w] == 0 {
+                    continue;
+                }
+                let slip = words.longitudinal[w].unsigned_abs() + words.lateral[w].unsigned_abs();
+                max_slip = max_slip.max(slip);
+                if words.surfaces[w] > 3 {
+                    rough_surface = true;
+                }
             }
         }
     }
-    (low.min(0xFFFF) as u16, high.min(0xFFFF) as u16)
+    ffb.tick(true, speed_q16, front_contact, max_slip, rough_surface)
 }
 
 /// Compose an in-race sub-tick interpolated frame (`FUN_004a7c90` ->
