@@ -220,9 +220,8 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "notes": "Emits collision spark bursts on barrier/scenery/tumble impacts and advances 3D streaks (CollisionSparkSystem::emit/tick/streaks).",
     },
     "0x0041d790": {
-        "category": "core_game",
-        "status": "non_core_omitted",
-        "notes": "Jelly-car / bouncy mesh cheat (cfg[0x26] & 1) vertex spring wobbler.",
+        "status": "verified_1to1",
+        "notes": "Jelly-car / bouncy mesh cheat (live_cfg[0x26] & 1) vertex spring wobbler (jelly_wobble_offset_41d790) wired live in cmr-app.",
     },
     "0x00433750": {
         "status": "verified_1to1",

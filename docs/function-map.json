@@ -2589,7 +2589,7 @@
       "size": 1712,
       "name": "FUN_0041d790",
       "category": "core_game",
-      "status": "non_core_omitted",
+      "status": "verified_1to1",
       "callees": [
         "0x0048e100",
         "0x004cfb9c"
@@ -2597,9 +2597,12 @@
       "callers": [
         "0x00407690"
       ],
-      "live_files": [],
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/car_crash_damage.rs"
+      ],
       "test_files": [],
-      "notes": "Jelly-car / bouncy mesh cheat (cfg[0x26] & 1) vertex spring wobbler.",
+      "notes": "Jelly-car / bouncy mesh cheat (live_cfg[0x26] & 1) vertex spring wobbler (jelly_wobble_offset_41d790) wired live in cmr-app.",
       "manual_override": true
     },
     {

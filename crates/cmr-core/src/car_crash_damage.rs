@@ -690,6 +690,31 @@ impl CarDirtState {
     }
 }
 
+/// Jelly-car cheat vertex spring wobble (`FUN_0041d790`, gated by `live_cfg[0x26] & 1`).
+///
+/// Displaces upper chassis vertices laterally and vertically using the 4096-entry
+/// Q16.16 sine table so the car body wobbles like jelly while driving.
+#[must_use]
+pub fn jelly_wobble_offset_41d790(
+    local_pos_q16: [i32; 3],
+    tick: u32,
+    trig: &[i32; crate::fixed_point::TRIG_TABLE_LEN],
+) -> [i32; 3] {
+    let height = local_pos_q16[1].max(0);
+    if height == 0 {
+        return [0; 3];
+    }
+    let phase_x = ((tick.wrapping_mul(180)) as usize) & 0xfff;
+    let phase_y = ((tick.wrapping_mul(240).wrapping_add(1024)) as usize) & 0xfff;
+    let sin_x = i64::from(trig[phase_x]);
+    let sin_y = i64::from(trig[phase_y]);
+    let h = i64::from(height);
+    // ~15% lateral sway and ~8% vertical bounce scaled by vertex height.
+    let dx = ((h * sin_x) >> 16) * 15 / 100;
+    let dy = ((h * sin_y) >> 16) * 8 / 100;
+    [dx as i32, dy as i32, 0]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -858,5 +883,13 @@ mod tests {
         let upper = dirt.vertex_diffuse_rgba(CarDirtState::MUD_HIGH_Y_Q16);
         assert!(lower[0] < 0xff && lower[2] < lower[0]);
         assert_eq!(upper, [0xff, 0xff, 0xff, 0]);
+    }
+
+    #[test]
+    fn jelly_wobble_displaces_upper_vertices_and_keeps_ground_vertices_pinned() {
+        let trig = crate::fixed_point::build_sine_table();
+        assert_eq!(jelly_wobble_offset_41d790([0, 0, 0], 5, &trig), [0, 0, 0]);
+        let off = jelly_wobble_offset_41d790([0, 0x1_0000, 0], 5, &trig);
+        assert!(off[0] != 0 || off[1] != 0);
     }
 }

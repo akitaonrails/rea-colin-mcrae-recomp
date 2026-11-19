@@ -2975,8 +2975,17 @@ impl StageRenderResources {
     }
 
     /// Rewrite the GPU's car prims from the live meshes (the vertex
-    /// normals stay the model's).
+    /// normals stay the model's), applying progressive mud/dust tinting and
+    /// optional Jelly-Car wobble (`FUN_0041d790`, `live_cfg[0x26] & 1`).
     fn sync_gpu_car(&mut self, damage: &cmr_core::car_crash_damage::CarDamage) {
+        self.sync_gpu_car_with_jelly(damage, None);
+    }
+
+    fn sync_gpu_car_with_jelly(
+        &mut self,
+        damage: &cmr_core::car_crash_damage::CarDamage,
+        jelly: Option<(u32, &[i32; cmr_core::fixed_point::TRIG_TABLE_LEN])>,
+    ) {
         let (Some(gpu), Some(scene)) = (self.gpu.as_mut(), self.car_scene.as_ref()) else {
             return;
         };
@@ -2996,8 +3005,18 @@ impl StageRenderResources {
                         let n = entries
                             .get(usize::from(entry))
                             .map_or([0; 3], |e| e.normal_q16());
+                        let w = jelly.map_or([0; 3], |(tick, trig)| {
+                            cmr_core::car_crash_damage::jelly_wobble_offset_41d790(*p, tick, trig)
+                        });
                         cmr_gpu_contract::C3dStageVertex::from_raw_components([
-                            p[0], p[1], p[2], uv[0], uv[1], n[0], n[1], n[2],
+                            p[0].wrapping_add(w[0]),
+                            p[1].wrapping_add(w[1]),
+                            p[2].wrapping_add(w[2]),
+                            uv[0],
+                            uv[1],
+                            n[0],
+                            n[1],
+                            n[2],
                         ])
                         .with_diffuse_rgba(self.car_dirt.vertex_diffuse_rgba(p[1]))
                     })
@@ -7158,6 +7177,11 @@ fn advance_game_frame<C: HostClock>(
             &camera.trig,
         );
         resources.tick_lamps(session, &mut camera.rng);
+        if live_cfg[0x26] & 1 != 0
+            && let Some(damage) = session.car_damage()
+        {
+            resources.sync_gpu_car_with_jelly(damage, Some((session.sim_ticks(), &camera.trig)));
+        }
     }
     // The render's compositor step: the screen fade's black quad
     // (`FUN_00423170`), or state 0xb's display shutdown.
