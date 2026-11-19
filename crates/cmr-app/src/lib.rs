@@ -86,7 +86,7 @@ use cmr_core::prang_sound::{
 };
 use cmr_core::race_hud_plan::{
     CommonGaugeInset, RaceHudBitmap, RaceHudFont, RaceHudPlanError, RaceHudPreparedInputs,
-    plan_common_gauge_border_fragments, plan_normal_single_player_race_hud,
+    plan_common_gauge_border_fragments,
 };
 use cmr_core::race_state::{
     CarState, Controls, FirstWheelParams, FourWheelIterationParams, FourWheelPostprocessParams,
@@ -4336,6 +4336,7 @@ struct SubtickRenderSnapshot {
     pacenote_arrows: Vec<cmr_core::pacenote_schedule::PacenoteArrowSprite>,
     lens_flare_enabled: bool,
     twinkle_phase: u32,
+    display_mode: cmr_core::race_hud_plan::GameDisplayMode,
     show_hud: bool,
 }
 
@@ -4705,7 +4706,15 @@ fn compose_live_race_hud(
     frame: SoftwarePresentedFrame,
     input: RaceHudPreparedInputs,
 ) -> Result<SoftwarePresentedFrame, StageFrameError> {
-    compose_live_race_hud_with_countdown(resources, frame, input, None, None, &[])
+    compose_live_race_hud_with_countdown(
+        resources,
+        frame,
+        input,
+        None,
+        None,
+        &[],
+        cmr_core::race_hud_plan::GameDisplayMode::Full,
+    )
 }
 
 fn compose_live_race_hud_with_countdown(
@@ -4715,15 +4724,25 @@ fn compose_live_race_hud_with_countdown(
     checkpoint: Option<&cmr_core::race_hud_plan::RaceHudCheckpointInputs>,
     countdown: Option<cmr_core::race_hud_plan::RaceHudCountdown>,
     pacenote_arrows: &[cmr_core::pacenote_schedule::PacenoteArrowSprite],
+    display_mode: cmr_core::race_hud_plan::GameDisplayMode,
 ) -> Result<SoftwarePresentedFrame, StageFrameError> {
     let assets = resources
         .race_hud()
         .ok_or(StageFrameError::MissingHudAssets)?;
-    let mut commands =
-        plan_common_gauge_border_fragments(input.viewport).map_err(StageFrameError::HudPlan)?;
-    let plan = plan_normal_single_player_race_hud(input).map_err(StageFrameError::HudPlan)?;
-    commands.extend_from_slice(plan.commands());
-    if let Some(checkpoint) = checkpoint {
+    let mut commands = Vec::new();
+    if display_mode.shows_progress_and_splits() {
+        commands.extend(
+            plan_common_gauge_border_fragments(input.viewport).map_err(StageFrameError::HudPlan)?,
+        );
+    }
+    if display_mode.shows_gauges() {
+        let plan = cmr_core::race_hud_plan::plan_race_hud_for_display_mode(input, display_mode)
+            .map_err(StageFrameError::HudPlan)?;
+        commands.extend_from_slice(plan.commands());
+    }
+    if display_mode.shows_progress_and_splits()
+        && let Some(checkpoint) = checkpoint
+    {
         commands.extend(cmr_core::race_hud_plan::plan_race_checkpoint_hud(
             input.viewport,
             checkpoint,
@@ -4740,6 +4759,9 @@ fn compose_live_race_hud_with_countdown(
             cmr_core::race_hud_plan::plan_race_countdown_overlay(input.viewport, countdown)
     {
         commands.push(cmd);
+    }
+    if commands.is_empty() {
+        return Ok(frame);
     }
     compose_race_hud_commands(
         frame,
@@ -6662,6 +6684,9 @@ fn advance_game_frame<C: HostClock>(
                 },
                 lens_flare_enabled: (config.image[0x10] & 0x40) != 0,
                 twinkle_phase: session.sim_ticks(),
+                display_mode: cmr_core::race_hud_plan::GameDisplayMode::from_config_byte(
+                    config.image[0x10],
+                ),
                 show_hud,
             }));
         } else {
@@ -6763,6 +6788,7 @@ fn advance_game_frame<C: HostClock>(
             Some(&checkpoint_hud),
             session.hud_countdown(),
             &pacenote_arrows,
+            cmr_core::race_hud_plan::GameDisplayMode::from_config_byte(config.image[0x10]),
         )
     })?;
     // The results director's cues: `FUN_00467ef0(0, 0, 1)` (FORWARD) on a
@@ -7042,6 +7068,7 @@ fn compose_subtick_frame(
             Some(&snap.checkpoint_hud),
             snap.hud_countdown,
             &snap.pacenote_arrows,
+            snap.display_mode,
         )
         .ok()?;
     }

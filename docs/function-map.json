@@ -13031,7 +13031,7 @@
       "size": 2432,
       "name": "FUN_0045f530",
       "category": "core_game",
-      "status": "wired_live",
+      "status": "verified_1to1",
       "callees": [
         "0x00401000",
         "0x00461a60",
@@ -13050,7 +13050,9 @@
       "live_files": [
         "crates/cmr-core/src/race_hud_plan.rs"
       ],
-      "test_files": []
+      "test_files": [],
+      "notes": "Normal single-player race HUD rev strip, speed, gear, timer, progress rail, and GAME DISPLAYS (OFF/MINIMAL/FULL) gates (race_hud_plan.rs + compose_live_race_hud_with_countdown).",
+      "manual_override": true
     },
     {
       "address": "0x0045feb0",

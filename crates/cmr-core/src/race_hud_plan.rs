@@ -431,6 +431,77 @@ const REV_SEGMENTS: [RevSegment; 15] = [
     },
 ];
 
+/// `GAME DISPLAYS` option mode encoded in `config.image[0x10]` bits 3..4
+/// (`(byte >> 3) & 3`), checked by `FUN_0045f530` (`0x45f554`, `0x45f695`) and
+/// `FUN_00464930` (`0x464be2`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GameDisplayMode {
+    /// `0` (`0x00`): hides gauges, progress rail, and split/classification HUD.
+    Off = 0,
+    /// `1` (`0x08`): shows rev gauge, speed, gear, and timer; hides progress rail
+    /// and split/classification HUD.
+    Minimal = 1,
+    /// `2` (`0x10`, default): shows all HUD elements.
+    Full = 2,
+}
+
+impl GameDisplayMode {
+    /// Decode `GAME DISPLAYS` from `config.image[0x10]` (`0xd3ca80 + 0x08`).
+    #[must_use]
+    pub const fn from_config_byte(byte_0x10: u8) -> Self {
+        match (byte_0x10 >> 3) & 0x03 {
+            0 => Self::Off,
+            1 => Self::Minimal,
+            _ => Self::Full,
+        }
+    }
+
+    /// Whether the main rev/speed/gear/timer HUD is drawn (`0x45f554`).
+    #[must_use]
+    pub const fn shows_gauges(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    /// Whether the stage progress rail and classification/split HUD are drawn
+    /// (`0x45f695`, `0x464be2`).
+    #[must_use]
+    pub const fn shows_progress_and_splits(self) -> bool {
+        matches!(self, Self::Full)
+    }
+}
+
+/// Plans the normal single-player race HUD honoring `GAME DISPLAYS`
+/// (`FUN_0045f530` at `0x45f554` and `0x45f695`).
+pub fn plan_race_hud_for_display_mode(
+    input: RaceHudPreparedInputs,
+    mode: GameDisplayMode,
+) -> Result<RaceHudPlan, RaceHudPlanError> {
+    if !mode.shows_gauges() {
+        if input.viewport.width == 0 || input.viewport.height == 0 {
+            return Err(RaceHudPlanError::EmptyViewport);
+        }
+        return Ok(RaceHudPlan {
+            commands: Vec::new(),
+            incomplete: Vec::new(),
+        });
+    }
+    let mut plan = plan_normal_single_player_race_hud(input)?;
+    if !mode.shows_progress_and_splits() {
+        plan.commands.retain(|cmd| {
+            !matches!(
+                cmd,
+                RaceHudCommand::Bitmap {
+                    bitmap: RaceHudBitmap::ProgressRedSpot
+                        | RaceHudBitmap::ProgressBarTop
+                        | RaceHudBitmap::VerticalBar,
+                    ..
+                }
+            )
+        });
+    }
+    Ok(plan)
+}
+
 /// Plans the exact recovered subset in native source order.
 pub fn plan_normal_single_player_race_hud(
     input: RaceHudPreparedInputs,
@@ -1345,6 +1416,57 @@ mod tests {
                 flags: 0x12,
                 ..
             } if text == "-00:00.50"
+        )));
+    }
+
+    #[test]
+    fn game_display_mode_filters_gauges_and_progress_rail_like_45f530() {
+        assert_eq!(
+            GameDisplayMode::from_config_byte(0x00),
+            GameDisplayMode::Off
+        );
+        assert_eq!(
+            GameDisplayMode::from_config_byte(0x08),
+            GameDisplayMode::Minimal
+        );
+        assert_eq!(
+            GameDisplayMode::from_config_byte(0x10),
+            GameDisplayMode::Full
+        );
+        assert_eq!(
+            GameDisplayMode::from_config_byte(0x14),
+            GameDisplayMode::Full
+        );
+
+        let input = RaceHudPreparedInputs {
+            viewport: REFERENCE_EXTENT,
+            gauge_inset: CommonGaugeInset::ConfigLowThreeBitsZero,
+            rev_q16: 0x8000,
+            speed: 88,
+            gear: 3,
+            progress_q16: 0x8000,
+            elapsed_centiseconds: 1234,
+        };
+        let off = plan_race_hud_for_display_mode(input, GameDisplayMode::Off).unwrap();
+        assert!(off.commands().is_empty());
+
+        let minimal = plan_race_hud_for_display_mode(input, GameDisplayMode::Minimal).unwrap();
+        assert!(!minimal.commands().is_empty());
+        assert!(!minimal.commands().iter().any(|cmd| matches!(
+            cmd,
+            RaceHudCommand::Bitmap {
+                bitmap: RaceHudBitmap::ProgressRedSpot,
+                ..
+            }
+        )));
+
+        let full = plan_race_hud_for_display_mode(input, GameDisplayMode::Full).unwrap();
+        assert!(full.commands().iter().any(|cmd| matches!(
+            cmd,
+            RaceHudCommand::Bitmap {
+                bitmap: RaceHudBitmap::ProgressRedSpot,
+                ..
+            }
         )));
     }
 }

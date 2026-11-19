@@ -107,6 +107,10 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "status": "verified_1to1",
         "notes": "In-race pacenote corner arrow slide animation & 64x64 tile renderer (PacenoteArrowHud + plan_pacenote_arrow_hud, flags 0x08 right / 0x01 left flip).",
     },
+    "0x0045f530": {
+        "status": "verified_1to1",
+        "notes": "Normal single-player race HUD rev strip, speed, gear, timer, progress rail, and GAME DISPLAYS (OFF/MINIMAL/FULL) gates (race_hud_plan.rs + compose_live_race_hud_with_countdown).",
+    },
     # Falling rain streaks and snow billboards (IMAGES\SNOW.BMP)
     "0x0048b960": {
         "status": "verified_1to1",
