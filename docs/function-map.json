@@ -14875,7 +14875,7 @@
       "size": 320,
       "name": "FUN_0046c7d0",
       "category": "core_game",
-      "status": "partial",
+      "status": "verified_1to1",
       "callees": [
         "0x0041a800",
         "0x0041a820",
@@ -14889,8 +14889,10 @@
         "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/replay.rs"
       ],
-      "test_files": [],
-      "notes": "Stage-start snapshot capture/restore wired for State-8 replay loop; mid-stage seek keyframes remain in cmr-core::replay.",
+      "test_files": [
+        "crates/cmr-core/src/gameplay_session.rs"
+      ],
+      "notes": "Stage-start and periodic 50-tick mid-stage RaceState seek keyframes wired in StageReplayRecorder (GameplaySession::seek_stage_replay / FUN_0046ca70).",
       "manual_override": true
     },
     {
@@ -14930,6 +14932,7 @@
         "0x0043afd0"
       ],
       "live_files": [
+        "crates/cmr-core/src/gameplay_session.rs",
         "crates/cmr-core/src/replay.rs"
       ],
       "test_files": []

@@ -66,8 +66,8 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "notes": "Per-tick replay playback wired for both Rally School demos (States 7/9) and live State-8 post-stage results replay.",
     },
     "0x0046c7d0": {
-        "status": "partial",
-        "notes": "Stage-start snapshot capture/restore wired for State-8 replay loop; mid-stage seek keyframes remain in cmr-core::replay.",
+        "status": "verified_1to1",
+        "notes": "Stage-start and periodic 50-tick mid-stage RaceState seek keyframes wired in StageReplayRecorder (GameplaySession::seek_stage_replay / FUN_0046ca70).",
     },
     "0x00438100": {
         "status": "verified_1to1",

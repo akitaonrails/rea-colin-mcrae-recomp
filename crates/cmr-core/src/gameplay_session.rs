@@ -310,14 +310,20 @@ pub struct GameplaySession<'a> {
     pacenote_arrow_cursor: usize,
 }
 
-/// Live per-tick RLE input recorder (`FUN_0046d8f0`) and State-8 post-stage
-/// replay playback controller (`FUN_0046dd50` / `FUN_0046c7d0` / `FUN_00438100`).
+/// Live per-tick RLE input recorder (`FUN_0046d8f0`), periodic mid-stage seek
+/// keyframe ring (`FUN_0046c7d0` / `FUN_0046ca70`), and State-8 post-stage
+/// replay playback controller (`FUN_0046dd50` / `FUN_00438100`).
 #[derive(Clone, Default)]
 struct StageReplayRecorder {
     start_race: Option<RaceState>,
+    /// Periodic mid-stage `(tick_index, RaceState)` seek keyframes captured
+    /// every [`Self::KEYFRAME_INTERVAL`] ticks (`FUN_0046c7d0`).
+    keyframes: Vec<(usize, RaceState)>,
     runs: Vec<(Controls, u32)>,
     total_ticks: usize,
     playing: bool,
+    paused: bool,
+    play_tick: usize,
     play_run: usize,
     play_remaining: u32,
     camera_snap_pending: bool,
@@ -326,12 +332,19 @@ struct StageReplayRecorder {
 impl StageReplayRecorder {
     /// Maximum recorded ticks (~20 minutes at 25 Hz) to bound replay memory.
     const MAX_TICKS: usize = 30_000;
+    /// Capture one seek keyframe every 50 ticks (2.0 s at 25 Hz, `FUN_0046c7d0`).
+    const KEYFRAME_INTERVAL: usize = 50;
+    /// Maximum stored seek keyframes.
+    const MAX_KEYFRAMES: usize = 256;
 
     fn clear(&mut self) {
         self.start_race = None;
+        self.keyframes.clear();
         self.runs.clear();
         self.total_ticks = 0;
         self.playing = false;
+        self.paused = false;
+        self.play_tick = 0;
         self.play_run = 0;
         self.play_remaining = 0;
         self.camera_snap_pending = false;
@@ -344,6 +357,11 @@ impl StageReplayRecorder {
         if self.start_race.is_none() {
             self.start_race = Some(race_before.clone());
         }
+        if self.total_ticks % Self::KEYFRAME_INTERVAL == 0
+            && self.keyframes.len() < Self::MAX_KEYFRAMES
+        {
+            self.keyframes.push((self.total_ticks, race_before.clone()));
+        }
         if let Some(last) = self.runs.last_mut()
             && last.0 == controls
             && last.1 < u32::MAX
@@ -355,13 +373,58 @@ impl StageReplayRecorder {
         self.total_ticks += 1;
     }
 
+    /// Position the RLE playback cursor at `target_tick` and return the nearest
+    /// preceding keyframe `(race_state, controls_to_replay)` (`FUN_0046ca70`).
+    fn prepare_seek(&mut self, target_tick: usize) -> Option<(RaceState, Vec<Controls>)> {
+        if self.runs.is_empty() || self.total_ticks == 0 {
+            return None;
+        }
+        let target = target_tick.min(self.total_ticks.saturating_sub(1));
+        let (kf_tick, kf_race) = self
+            .keyframes
+            .iter()
+            .rev()
+            .find(|(t, _)| *t <= target)
+            .cloned()
+            .or_else(|| self.start_race.clone().map(|r| (0, r)))?;
+
+        // Collect controls from `kf_tick..target` and position cursor at `target`.
+        let mut replay_slice = Vec::with_capacity(target.saturating_sub(kf_tick));
+        let mut tick = 0usize;
+        let mut cursor_run = 0usize;
+        let mut cursor_rem = 0u32;
+        for (run_idx, &(ctl, count)) in self.runs.iter().enumerate() {
+            let run_end = tick + count as usize;
+            if run_end > kf_tick && tick < target {
+                let start = kf_tick.max(tick);
+                let end = target.min(run_end);
+                for _ in start..end {
+                    replay_slice.push(ctl);
+                }
+            }
+            if target >= tick && target < run_end {
+                cursor_run = run_idx;
+                cursor_rem = (run_end - target) as u32;
+                break;
+            }
+            tick = run_end;
+        }
+        self.playing = true;
+        self.play_tick = target;
+        self.play_run = cursor_run;
+        self.play_remaining = cursor_rem;
+        self.camera_snap_pending = true;
+        Some((kf_race, replay_slice))
+    }
+
     /// Returns `(controls, reset_to_start)` for the next State-8 replay tick.
     fn next_playback_controls(&mut self) -> Option<(Controls, bool)> {
-        if self.runs.is_empty() || self.start_race.is_none() {
+        if self.runs.is_empty() || self.start_race.is_none() || self.paused {
             return None;
         }
         if !self.playing {
             self.playing = true;
+            self.play_tick = 1;
             self.play_run = 0;
             self.play_remaining = self.runs[0].1.saturating_sub(1);
             self.camera_snap_pending = true;
@@ -370,6 +433,7 @@ impl StageReplayRecorder {
         if self.play_remaining == 0 {
             self.play_run += 1;
             if self.play_run >= self.runs.len() {
+                self.play_tick = 1;
                 self.play_run = 0;
                 self.play_remaining = self.runs[0].1.saturating_sub(1);
                 self.camera_snap_pending = true;
@@ -378,6 +442,7 @@ impl StageReplayRecorder {
             self.play_remaining = self.runs[self.play_run].1;
         }
         self.play_remaining = self.play_remaining.saturating_sub(1);
+        self.play_tick = (self.play_tick + 1).min(self.total_ticks);
         Some((self.runs[self.play_run].0, false))
     }
 }
@@ -1073,6 +1138,53 @@ impl<'a> GameplaySession<'a> {
     /// starts or wraps back to the beginning of the recorded run.
     pub fn take_replay_camera_snap(&mut self) -> bool {
         std::mem::take(&mut self.stage_replay.camera_snap_pending)
+    }
+
+    /// Number of mid-stage seek keyframes captured during State-5 driving
+    /// (`FUN_0046c7d0`).
+    #[must_use]
+    pub fn stage_replay_keyframe_count(&self) -> usize {
+        self.stage_replay.keyframes.len()
+    }
+
+    /// Current playback tick index (`0..=total_ticks`) during State-8 replay.
+    #[must_use]
+    pub fn stage_replay_tick(&self) -> usize {
+        self.stage_replay.play_tick
+    }
+
+    /// Pause or resume State-8 post-stage replay playback.
+    pub fn set_stage_replay_paused(&mut self, paused: bool) {
+        self.stage_replay.paused = paused;
+    }
+
+    /// Whether State-8 post-stage replay playback is paused.
+    #[must_use]
+    pub fn is_stage_replay_paused(&self) -> bool {
+        self.stage_replay.paused
+    }
+
+    /// Seek State-8 replay to `target_tick` by restoring the nearest preceding
+    /// `FUN_0046c7d0` keyframe (`FUN_0046ca70`) and fast-replaying the remainder
+    /// ticks (`< KEYFRAME_INTERVAL`).
+    pub fn seek_stage_replay(&mut self, target_tick: usize) -> Result<bool, WheelPostprocessError> {
+        if self.session.current().id() != 8 {
+            return Ok(false);
+        }
+        let Some((kf_race, replay_slice)) = self.stage_replay.prepare_seek(target_tick) else {
+            return Ok(false);
+        };
+        self.race = kf_race;
+        for ctl in replay_slice {
+            if self.wheel.is_some() {
+                let _ = self.four_wheel_drive(&ctl)?;
+                self.race
+                    .animate_wheel_spin(&ctl, self.wheel.as_ref().expect("a four-wheel session"));
+            } else {
+                let _ = self.race.step(&ctl, &self.params);
+            }
+        }
+        Ok(true)
     }
 
     /// Whether this session steps the complete four-wheel producer, whose car
@@ -3960,5 +4072,61 @@ mod tests {
             finish_cs,
             "State-8 replay playback must not mutate finished stage time"
         );
+    }
+
+    #[test]
+    fn state_8_replay_keyframes_and_seek_restore_exact_mid_stage_pose() {
+        // Long enough straight line so the run lasts > 60 ticks and captures >= 2 keyframes.
+        let nodes: Vec<CatNode> = (1..=12)
+            .map(|i| CatNode {
+                position: [(i * 40) << 16, 0, 0],
+                direction: [1 << 16, 0, 0],
+                split_flag: 0b1,
+                reserved: 0,
+                seq_index: 0,
+            })
+            .collect();
+        let mut progress = StageProgress::new(&nodes, 0);
+        let mut session = GameplaySession::new(params(), InRaceScript::gameplay_harness());
+        let mut recorded_x = Vec::new();
+        for _ in 0..800 {
+            if session.state().id() == 5 {
+                recorded_x.push(session.car().position.x.raw());
+            }
+            let _ = session.advance(&StationaryClock, frontend_menu(), forward(), &mut progress);
+            if session.state().id() == 8 {
+                session.event_mut().globals.results_550024 = true;
+                break;
+            }
+        }
+        assert_eq!(session.state().id(), 8);
+        let recorded = session.stage_replay_recorded_ticks();
+        assert!(
+            recorded >= 60,
+            "need >= 60 ticks for mid-stage keyframe test (got {recorded})"
+        );
+        assert!(
+            session.stage_replay_keyframe_count() >= 2,
+            "FUN_0046c7d0 must capture periodic seek keyframes every 50 ticks"
+        );
+
+        // Seek to tick 55 (past keyframe 50) and verify exact pose match.
+        assert!(session.seek_stage_replay(55).unwrap());
+        assert_eq!(session.stage_replay_tick(), 55);
+        assert!(session.take_replay_camera_snap());
+        assert_eq!(session.car().position.x.raw(), recorded_x[55]);
+
+        // Pausing holds the car position steady.
+        session.set_stage_replay_paused(true);
+        assert!(session.is_stage_replay_paused());
+        let paused_x = session.car().position.x.raw();
+        let _ = session.advance(
+            &StationaryClock,
+            frontend_menu(),
+            Controls::default(),
+            &mut progress,
+        );
+        assert_eq!(session.car().position.x.raw(), paused_x);
+        session.set_stage_replay_paused(false);
     }
 }
