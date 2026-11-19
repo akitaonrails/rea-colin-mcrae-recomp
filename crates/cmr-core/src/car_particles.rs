@@ -1487,6 +1487,143 @@ impl CarParticles {
     }
 }
 
+/// Maximum concurrent collision sparks (`0x41a993`: `0x64` = 100).
+pub const MAX_COLLISION_SPARKS: usize = 100;
+/// Initial collision spark lifetime in 25 Hz ticks (`0x41af1b`: `0x08`).
+pub const COLLISION_SPARK_TTL: u8 = 8;
+/// Collision spark colour RGBA `(0xff, 0xf0, 0x96, 0xff)` (`0x41a925..0x41a93a`).
+pub const COLLISION_SPARK_RGBA: [u8; 4] = [0xff, 0xf0, 0x96, 0xff];
+
+/// One active 3D collision spark streak quad (`FUN_0041a960` / `0x41afb1`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SparkQuad {
+    pub corners: [[f32; 3]; 4],
+    pub alpha: u8,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CollisionSpark {
+    pos: [i32; 3],
+    vel: [i32; 3],
+    ttl: u8,
+}
+
+/// 100-slot collision spark pool reconstructing `FUN_0041a900` (init),
+/// `FUN_0041ab00` (emit burst on barrier/scenery impact), and `FUN_0041a960`
+/// (per-tick integration & 3D streak emission).
+#[derive(Clone, Debug, Default)]
+pub struct CollisionSparkSystem {
+    sparks: Vec<CollisionSpark>,
+}
+
+impl CollisionSparkSystem {
+    /// Create an empty spark pool (`FUN_0041a900`).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            sparks: Vec::with_capacity(MAX_COLLISION_SPARKS),
+        }
+    }
+
+    /// Number of currently active sparks (`0..=MAX_COLLISION_SPARKS`).
+    #[must_use]
+    pub fn active_count(&self) -> usize {
+        self.sparks.len()
+    }
+
+    /// Emit a burst of sparks at `origin_q16` (`FUN_0041ab00`), clamping
+    /// impact intensity to `[0x4000, 0x1_0000]` (`0x41ab43..0x41ab59`) and
+    /// scaling spark spray velocity by `0x4ccc` (~0.3, `0x41ae7d`).
+    pub fn emit(
+        &mut self,
+        origin_q16: [i32; 3],
+        car_vel_q16: [i32; 3],
+        severity: i32,
+        rng: &mut GameLcg,
+    ) {
+        let clamped = severity.abs().clamp(0x4000, 0x1_0000);
+        let room = MAX_COLLISION_SPARKS.saturating_sub(self.sparks.len());
+        if room == 0 {
+            return;
+        }
+        let burst = (6 + ((clamped >> 12) as usize)).min(room);
+        let speed_scale = ((i64::from(clamped) * 0x4ccc) >> 16) as i32;
+        for _ in 0..burst {
+            let rx = ((rng.next_raw() & 0x7fff) as i32) - 0x4000;
+            let ry = ((rng.next_raw() & 0x3fff) as i32) + 0x1000;
+            let rz = ((rng.next_raw() & 0x7fff) as i32) - 0x4000;
+            let vx = car_vel_q16[0]
+                .wrapping_add(((i64::from(rx) * i64::from(speed_scale)) >> 14) as i32);
+            let vy = car_vel_q16[1]
+                .wrapping_add(((i64::from(ry) * i64::from(speed_scale)) >> 14) as i32);
+            let vz = car_vel_q16[2]
+                .wrapping_add(((i64::from(rz) * i64::from(speed_scale)) >> 14) as i32);
+            self.sparks.push(CollisionSpark {
+                pos: origin_q16,
+                vel: [vx, vy, vz],
+                ttl: COLLISION_SPARK_TTL,
+            });
+        }
+    }
+
+    /// Advance all active sparks by one 25 Hz tick (`FUN_0041a960`).
+    pub fn tick(&mut self) {
+        for spark in &mut self.sparks {
+            spark.pos[0] = spark.pos[0].wrapping_add(spark.vel[0]);
+            spark.pos[1] = spark.pos[1].wrapping_add(spark.vel[1]);
+            spark.pos[2] = spark.pos[2].wrapping_add(spark.vel[2]);
+            // Gravity pull on sparks.
+            spark.vel[1] = spark.vel[1].wrapping_sub(0x0a00);
+            spark.ttl = spark.ttl.saturating_sub(1);
+        }
+        self.sparks.retain(|s| s.ttl > 0);
+    }
+
+    /// Build 3D streak quads for all active sparks (`FUN_0041a960` / `0x41afb1`).
+    #[must_use]
+    pub fn streaks(&self, right: [i32; 3], forward: [i32; 3]) -> Vec<SparkQuad> {
+        if self.sparks.is_empty() {
+            return Vec::new();
+        }
+        let to_m = |v: i32| (f64::from(v) / 65536.0) as f32;
+        let rx = to_m(right[0]);
+        let ry = to_m(right[1]);
+        let rz = to_m(right[2]);
+        let fx = to_m(forward[0]);
+        let fy = to_m(forward[1]);
+        let fz = to_m(forward[2]);
+        let half_w = 0.018f32;
+        let mut out = Vec::with_capacity(self.sparks.len());
+        for spark in &self.sparks {
+            let p0 = spark.pos.map(to_m);
+            let dx = to_m(spark.vel[0]);
+            let dy = to_m(spark.vel[1]);
+            let dz = to_m(spark.vel[2]);
+            let p1 = [p0[0] + dx, p0[1] + dy, p0[2] + dz];
+            let sx = dy * fz - dz * fy;
+            let sy = dz * fx - dx * fz;
+            let sz = dx * fy - dy * fx;
+            let slen = (sx * sx + sy * sy + sz * sz).sqrt();
+            let side = if slen > 1e-4 {
+                [sx / slen * half_w, sy / slen * half_w, sz / slen * half_w]
+            } else {
+                [rx * half_w, ry * half_w, rz * half_w]
+            };
+            let alpha = ((u32::from(spark.ttl) * 255) / u32::from(COLLISION_SPARK_TTL)) as u8;
+            out.push(SparkQuad {
+                corners: [
+                    [p0[0] - side[0], p0[1] - side[1], p0[2] - side[2]],
+                    [p0[0] + side[0], p0[1] + side[1], p0[2] + side[2]],
+                    [p1[0] + side[0], p1[1] + side[1], p1[2] + side[2]],
+                    [p1[0] - side[0], p1[1] - side[1], p1[2] - side[2]],
+                ],
+                alpha,
+            });
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1743,5 +1880,27 @@ mod tests {
             ..view
         };
         assert!(c.billboards(&snap, &hidden).is_empty());
+    }
+
+    #[test]
+    fn collision_sparks_cap_at_100_and_decay_over_8_ticks() {
+        let mut rng = GameLcg::new(19);
+        let mut sparks = CollisionSparkSystem::new();
+        for _ in 0..20 {
+            sparks.emit([0, 0x1_0000, 0], [0x4_0000, 0, 0], 0x1_0000, &mut rng);
+        }
+        assert_eq!(sparks.active_count(), MAX_COLLISION_SPARKS);
+        let quads = sparks.streaks([0x1_0000, 0, 0], [0, 0, 0x1_0000]);
+        assert_eq!(quads.len(), MAX_COLLISION_SPARKS);
+        assert!(quads.iter().all(|q| q.alpha == 255));
+        for _ in 0..COLLISION_SPARK_TTL {
+            sparks.tick();
+        }
+        assert_eq!(sparks.active_count(), 0);
+        assert!(
+            sparks
+                .streaks([0x1_0000, 0, 0], [0, 0, 0x1_0000])
+                .is_empty()
+        );
     }
 }

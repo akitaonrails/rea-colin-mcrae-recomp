@@ -2103,13 +2103,18 @@
       "size": 512,
       "name": "FUN_0041a900",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [],
       "callers": [
         "0x0047a7f0"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/car_particles.rs"
+      ],
+      "test_files": [],
+      "notes": "Initializes 100-slot collision spark pool & RGBA (255,240,150,255) (CollisionSparkSystem::new).",
+      "manual_override": true
     },
     {
       "address": "0x0041ab00",
@@ -2117,7 +2122,7 @@
       "size": 1552,
       "name": "FUN_0041ab00",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "verified_1to1",
       "callees": [
         "0x00491d70",
         "0x004cfac0",
@@ -2126,8 +2131,13 @@
       "callers": [
         "0x0047a900"
       ],
-      "live_files": [],
-      "test_files": []
+      "live_files": [
+        "crates/cmr-app/src/lib.rs",
+        "crates/cmr-core/src/car_particles.rs"
+      ],
+      "test_files": [],
+      "notes": "Emits collision spark bursts on barrier/scenery/tumble impacts and advances 3D streaks (CollisionSparkSystem::emit/tick/streaks).",
+      "manual_override": true
     },
     {
       "address": "0x0041b110",
@@ -2575,7 +2585,7 @@
       "size": 1712,
       "name": "FUN_0041d790",
       "category": "core_game",
-      "status": "unmapped",
+      "status": "non_core_omitted",
       "callees": [
         "0x0048e100",
         "0x004cfb9c"
@@ -2584,7 +2594,9 @@
         "0x00407690"
       ],
       "live_files": [],
-      "test_files": []
+      "test_files": [],
+      "notes": "Jelly-car / bouncy mesh cheat (cfg[0x26] & 1) vertex spring wobbler.",
+      "manual_override": true
     },
     {
       "address": "0x0041de40",

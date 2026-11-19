@@ -185,6 +185,20 @@ CURATED_OVERRIDES: dict[str, dict[str, str]] = {
         "status": "verified_1to1",
         "notes": "Draws twinkling star sprites additively (SkyOverlaySpriteKind::Star + composite_sky_overlay).",
     },
+    # Collision sparks (100-slot pool, 8-tick TTL, RGBA 255,240,150,255)
+    "0x0041a900": {
+        "status": "verified_1to1",
+        "notes": "Initializes 100-slot collision spark pool & RGBA (255,240,150,255) (CollisionSparkSystem::new).",
+    },
+    "0x0041ab00": {
+        "status": "verified_1to1",
+        "notes": "Emits collision spark bursts on barrier/scenery/tumble impacts and advances 3D streaks (CollisionSparkSystem::emit/tick/streaks).",
+    },
+    "0x0041d790": {
+        "category": "core_game",
+        "status": "non_core_omitted",
+        "notes": "Jelly-car / bouncy mesh cheat (cfg[0x26] & 1) vertex spring wobbler.",
+    },
     "0x00433750": {
         "status": "implemented_unwired",
         "notes": "Force-feedback effect update reconstructed in cmr-core::force_feedback; SDL rumble approximates it.",

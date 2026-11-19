@@ -3201,6 +3201,41 @@ impl StageRenderResources {
                     stored_pixels: vec![1, 1, 0, 0, 1, 1, 0, 0],
                 },
             );
+            let mut spark_pal = vec![
+                cmr_formats::bitmap::BitmapPaletteEntry {
+                    blue: 0,
+                    green: 0,
+                    red: 0,
+                    reserved: 0,
+                };
+                256
+            ];
+            let [sr, sg, sb, _] = cmr_core::car_particles::COLLISION_SPARK_RGBA;
+            spark_pal[1] = cmr_formats::bitmap::BitmapPaletteEntry {
+                blue: sb,
+                green: sg,
+                red: sr,
+                reserved: 0,
+            };
+            textures.insert(
+                SPARK_TEXTURE_KEY,
+                cmr_formats::bitmap::IndexedBitmap {
+                    metadata: cmr_formats::bitmap::BitmapMetadata {
+                        reserved_1: 0,
+                        reserved_2: 0,
+                        x_pixels_per_meter: 0,
+                        y_pixels_per_meter: 0,
+                        important_colors: 0,
+                    },
+                    width: 2,
+                    height: 2,
+                    row_stride: 4,
+                    source_was_top_down: true,
+                    palette: spark_pal,
+                    pixels: vec![1, 1, 1, 1],
+                    stored_pixels: vec![1, 1, 0, 0, 1, 1, 0, 0],
+                },
+            );
         }
         let precipitation = cmr_core::weather::PrecipitationSystem::new(
             weather.weather_type,
@@ -3229,6 +3264,7 @@ impl StageRenderResources {
             textures,
             precipitation,
             sky_overlay,
+            sparks: cmr_core::car_particles::CollisionSparkSystem::new(),
         });
     }
 
@@ -3403,6 +3439,30 @@ impl StageRenderResources {
         };
         particles.system.spawn(&[car], &stage, rng, trig);
         particles.system.update(rng);
+        // `FUN_0041ab00` / `FUN_0041a960`: emit collision sparks on barrier/scenery
+        // or tumble impacts and advance active spark streaks.
+        let car_state = session.car();
+        let origin = [
+            car_state.position.x.raw(),
+            car_state.position.y.raw().wrapping_add(0x8000),
+            car_state.position.z.raw(),
+        ];
+        let vel = [
+            car_state.velocity.x.raw(),
+            car_state.velocity.y.raw(),
+            car_state.velocity.z.raw(),
+        ];
+        let mut max_sev = 0i32;
+        for impact in session.last_static_impacts() {
+            max_sev = max_sev.max(impact.severity.abs());
+        }
+        if session.last_tumble_impact().is_some() {
+            max_sev = max_sev.max(0xc000);
+        }
+        if max_sev > 0 && enabled {
+            particles.sparks.emit(origin, vel, max_sev, rng);
+        }
+        particles.sparks.tick();
     }
 
     /// One 25 Hz sim tick of falling rain/snow (`FUN_0048c080` + `FUN_0048c230`
@@ -3595,6 +3655,17 @@ impl StageRenderResources {
                 flip: false,
                 key,
             });
+        }
+        if particles.textures.contains_key(&SPARK_TEXTURE_KEY) {
+            for spark in particles.sparks.streaks(right, forward) {
+                self.sprite_draws.push(SpriteDraw {
+                    corners: spark.corners,
+                    alpha: spark.alpha,
+                    grey: 0xff,
+                    flip: false,
+                    key: SPARK_TEXTURE_KEY,
+                });
+            }
         }
     }
 
@@ -5957,6 +6028,9 @@ struct StageParticles {
     /// Sky sun, lens flare, moon, and starfield overlay (`FUN_00482d10`,
     /// `FUN_00483060`, `FUN_00484130`, `FUN_00484eb0`).
     sky_overlay: SkyOverlayAssets,
+    /// Barrier/scenery impact collision sparks (`FUN_0041a900` / `FUN_0041a960` /
+    /// `FUN_0041ab00`).
+    sparks: cmr_core::car_particles::CollisionSparkSystem,
 }
 
 struct SkyOverlayAssets {
@@ -6029,6 +6103,8 @@ const PRECIP_SNOW_TEXTURE_KEY: (cmr_core::car_particles::Sprites, usize) =
     (cmr_core::car_particles::Sprites::Dust, 100);
 const PRECIP_RAIN_TEXTURE_KEY: (cmr_core::car_particles::Sprites, usize) =
     (cmr_core::car_particles::Sprites::Dust, 101);
+const SPARK_TEXTURE_KEY: (cmr_core::car_particles::Sprites, usize) =
+    (cmr_core::car_particles::Sprites::Dust, 102);
 
 /// One planned sprite: its corners in world units and its texture key.
 struct SpriteDraw {
