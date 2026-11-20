@@ -32,12 +32,22 @@ This repository pursues two complementary goals across two official branches
 
 ## Highlights & Current Status
 
-- **Complete 119 / 119 Reconstruction Map (`docs/DECOMP_MAP.md`)**:
-  All 119 tracked reverse-engineering and reconstruction items across file
-  formats, fixed-point Q16.16 four-wheel vehicle physics, surface/weather
-  dynamics, collision & damage, front-end menus, Championship & Rally School
-  progression, replays, 3D rendering, and QMixer audio are implemented and
-  backed by **more than 2,980 source-owned automated tests**.
+- **Complete Single-Player 1:1 Reconstruction (`docs/DECOMP_MAP.md` & `docs/function-map.json`)**:
+  All **119 / 119** tracked reconstruction items are complete, backed by a
+  deterministic `Rally.exe` `.text` function completeness map covering all
+  **2,018** procedures (`verified_1to1=54`, `wired_live=690`, **`0` `partial`
+  gaps** across single-player gameplay) and **more than 3,000 source-owned
+  automated tests**. *(Legacy 2-player split-screen and DirectPlay LAN
+  multiplayer remain intentionally out of scope for the single-player baseline.)*
+- **Full Single-Player Gameplay, Weather, Replays & Effects**:
+  Includes progressive stage-loading progress bars, live looping post-stage
+  replays with mid-stage seek keyframes and interactive pause/seek controls,
+  Time-Trial translucent `.c3d` ghost car recording/persistence/playback,
+  in-race pacenote corner arrows, modern and classic analog dial HUDs with
+  `GAME DISPLAYS` (`OFF` / `MINIMAL` / `FULL`) modes, falling rain/snow,
+  storm lightning, sun/lens-flare/moon/stars sky overlays, 3D collision sparks,
+  progressive car-body mud/dust accumulation, cockpit-vs-exterior interior rain
+  audio, decaying force-feedback dual-motor rumble, and Jelly-Car cheat wobble.
 - **Native Hardware & Software Rendering**:
   Supports hardware-accelerated rendering via `wgpu` (`--renderer auto` or
   `--renderer gpu`) alongside a pure-Rust software C3D rasterizer
@@ -175,6 +185,7 @@ interchangeably in menus and on stage.
 | **Change Camera View** | `C` | `North` (`Y` / `Triangle`) |
 | **Look Behind** | `V` | — |
 | **Pause Race** | `Escape` | `Start` or `Back` / `Select` |
+| **Post-Stage Replay Controls** | `P` (Pause/Resume), `[` / `]` (±2 s Seek), `Home` (Restart) | — |
 
 ---
 
@@ -250,6 +261,7 @@ Run all source-owned unit, integration, lint, and portability checks with:
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ./scripts/check-portability.sh
+./scripts/check-function-map.py --verify
 ./scripts/check-legacy-backends.sh
 ```
 
@@ -299,6 +311,7 @@ CMR_RUNTIME_DATA="$PWD/runtime-data/installed-eu-derived-assets-v2" \
 - [docs/ROADMAP.md](docs/ROADMAP.md) — Execution plan and milestone history
 - [docs/EVIDENCE.md](docs/EVIDENCE.md) — Static and runtime evidence ledger
 - [docs/DECOMP_MAP.md](docs/DECOMP_MAP.md) — Live 119-item checklist and progress footer (`watch -n 2 'tail -n 10 docs/DECOMP_MAP.md'`)
+- [docs/function-map.json](docs/function-map.json) — Deterministic `Rally.exe` `.text` function & call-graph completeness map (`./scripts/check-function-map.py --report`)
 - [docs/SUBSYSTEMS.md](docs/SUBSYSTEMS.md) — Recovered subsystem boundaries
 - [docs/ANALYSIS.md](docs/ANALYSIS.md) — Reproducible reverse-engineering workflow
 - [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) — Asset verification and import boundary
