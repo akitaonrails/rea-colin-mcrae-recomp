@@ -82,6 +82,7 @@ pub enum RivalRecordsImportError {
         actual: String,
     },
     InvalidOutput(PathBuf),
+    OutputParentNotDirectory(PathBuf),
     OutputExists(PathBuf),
     StageExists(PathBuf),
     Format(RivalRecordsError),
@@ -122,6 +123,11 @@ impl fmt::Display for RivalRecordsImportError {
                 "extracted rival-records payload SHA-256 mismatch: expected {expected}, got {actual}"
             ),
             Self::InvalidOutput(p) => write!(f, "invalid output path: {}", p.display()),
+            Self::OutputParentNotDirectory(path) => write!(
+                f,
+                "output parent is not a real directory: {}",
+                path.display()
+            ),
             Self::OutputExists(p) => write!(f, "output already exists: {}", p.display()),
             Self::StageExists(p) => write!(f, "staging path already exists: {}", p.display()),
             Self::Format(e) => write!(f, "cannot extract rival records: {e}"),
@@ -273,7 +279,8 @@ fn validate_output(source: &Path, output: &Path) -> Result<PathBuf, RivalRecords
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    require_dir(parent)?;
+    require_real_directory(parent)
+        .map_err(|_| RivalRecordsImportError::OutputParentNotDirectory(parent.to_owned()))?;
     let source_root = source.to_owned();
     let source = fs::canonicalize(source).map_err(|error| RivalRecordsImportError::Io {
         path: source_root,
@@ -600,7 +607,7 @@ mod tests {
             extract_with(&src, &output_link.join("out"), &reviewed(bytes), |_, _| Ok(
                 map()
             )),
-            Err(RivalRecordsImportError::SourceNotDirectory(_))
+            Err(RivalRecordsImportError::OutputParentNotDirectory(_))
         ));
     }
 }

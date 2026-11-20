@@ -113,7 +113,7 @@ jobs:
           test -f "$VCRT"
           cp "$VCRT" "$STAGE/vcruntime140.dll"
           cp profiles/*.json "$STAGE/profiles/"
-          cp README.md CONTRIBUTING.md CHANGELOG.md packaging/RELEASE.md "$STAGE/docs/"
+          cp README.md CONTRIBUTING.md CHANGELOG.md packaging/RELEASE.md docs/HD_ART.md "$STAGE/docs/"
           python scripts/collect-third-party-licenses.py "$STAGE/docs/third-party-licenses"
           VERSION_OUTPUT=$("$STAGE/cmr-app-modern.exe" --version)
           test "$VERSION_OUTPUT" = "cmr-app $VERSION"

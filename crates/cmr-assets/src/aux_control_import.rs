@@ -72,6 +72,7 @@ pub enum AuxControlImportError {
         actual: String,
     },
     InvalidOutput(PathBuf),
+    OutputParentNotDirectory(PathBuf),
     OutputExists(PathBuf),
     StageExists(PathBuf),
     Format(AuxControlInitializerError),
@@ -119,6 +120,13 @@ impl fmt::Display for AuxControlImportError {
             ),
             Self::InvalidOutput(path) => {
                 write!(formatter, "invalid output path: {}", path.display())
+            }
+            Self::OutputParentNotDirectory(path) => {
+                write!(
+                    formatter,
+                    "output parent is not a real directory: {}",
+                    path.display()
+                )
             }
             Self::OutputExists(path) => {
                 write!(formatter, "output already exists: {}", path.display())
@@ -326,7 +334,7 @@ fn validate_output(
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     require_real_directory(parent)
-        .map_err(|_| AuxControlImportError::InvalidOutput(output.into()))?;
+        .map_err(|_| AuxControlImportError::OutputParentNotDirectory(parent.to_owned()))?;
     let source_root =
         fs::canonicalize(source).map_err(|source_error| AuxControlImportError::Io {
             path: source.to_owned(),
@@ -578,7 +586,7 @@ pub(crate) mod tests {
             extract_with(&source, &temp.0.join("missing/out"), &reviewed, |_, _| Ok(
                 constants()
             )),
-            Err(AuxControlImportError::InvalidOutput(_))
+            Err(AuxControlImportError::OutputParentNotDirectory(_))
         ));
 
         let special_source = temp.0.join("special-source");
@@ -697,7 +705,7 @@ pub(crate) mod tests {
             extract_with(&source, &linked_parent.join("out"), &direct, |_, _| Ok(
                 constants()
             )),
-            Err(AuxControlImportError::InvalidOutput(_))
+            Err(AuxControlImportError::OutputParentNotDirectory(_))
         ));
 
         let direct_link_source = temp.0.join("direct-link-source");
@@ -748,7 +756,7 @@ pub(crate) mod tests {
             extract_with(&source, &socket_parent.join("out"), &direct, |_, _| Ok(
                 constants()
             )),
-            Err(AuxControlImportError::InvalidOutput(_))
+            Err(AuxControlImportError::OutputParentNotDirectory(_))
         ));
     }
 }

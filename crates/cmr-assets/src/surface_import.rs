@@ -61,6 +61,7 @@ pub enum SurfaceImportError {
         actual: String,
     },
     InvalidOutput(PathBuf),
+    OutputParentNotDirectory(PathBuf),
     OutputExists(PathBuf),
     StageExists(PathBuf),
     Format(PeSurfaceError),
@@ -102,6 +103,11 @@ impl fmt::Display for SurfaceImportError {
                 )
             }
             Self::InvalidOutput(path) => write!(f, "invalid output path: {}", path.display()),
+            Self::OutputParentNotDirectory(path) => write!(
+                f,
+                "output parent is not a real directory: {}",
+                path.display()
+            ),
             Self::OutputExists(path) => write!(f, "output already exists: {}", path.display()),
             Self::StageExists(path) => write!(f, "staging path already exists: {}", path.display()),
             Self::Format(error) => write!(f, "cannot extract surface coefficients: {error}"),
@@ -302,7 +308,8 @@ fn validate_output(source: &Path, output: &Path) -> Result<PathBuf, SurfaceImpor
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    require_directory(parent)?;
+    require_real_directory(parent)
+        .map_err(|_| SurfaceImportError::OutputParentNotDirectory(parent.to_owned()))?;
     let source_root = fs::canonicalize(source).map_err(|error| SurfaceImportError::Io {
         path: source.to_owned(),
         source: error,

@@ -2,6 +2,21 @@
 
 All notable user-visible changes to this project are documented here.
 
+## [0.1.4] - 2026-11-20
+
+### Fixed
+
+- `cmr-assets`: when the parent directory of `--output` does not exist (or is
+  not a real directory), all 11 extract/import commands now report
+  `output parent is not a real directory: <path>` instead of misleadingly
+  calling it `source is not a real directory` (#2).
+- `cmr-app-modern --help` / `-h` now prints usage and exits 0 instead of
+  failing with `unknown argument "--help"` (#2).
+- Bundled `docs/HD_ART.md` into the Windows release ZIP and added a
+  self-contained "Quick Start (From a Release ZIP)" section to `README.md`
+  covering the clean EU v1.5 `Rally.exe` requirement, all 11 table extracts,
+  retry cleanup (`output already exists`), and the HD pack path (#2, #1).
+
 ## [0.1.3] - 2026-11-19
 
 ### Added

@@ -23,6 +23,7 @@ pub enum ImportError {
     Verification(VerificationError),
     TooManyFiles,
     InvalidOutput(PathBuf),
+    OutputParentNotDirectory(PathBuf),
     OutputExists(PathBuf),
     StageExists(PathBuf),
     Io {
@@ -39,6 +40,13 @@ impl fmt::Display for ImportError {
             Self::TooManyFiles => write!(formatter, "asset file count does not fit import state"),
             Self::InvalidOutput(path) => {
                 write!(formatter, "invalid output path: {}", path.display())
+            }
+            Self::OutputParentNotDirectory(path) => {
+                write!(
+                    formatter,
+                    "output parent is not a real directory: {}",
+                    path.display()
+                )
             }
             Self::OutputExists(path) => {
                 write!(formatter, "output already exists: {}", path.display())
@@ -87,7 +95,8 @@ pub fn import_source(
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    require_real_directory(parent)?;
+    require_real_directory(parent)
+        .map_err(|_| ImportError::OutputParentNotDirectory(parent.to_owned()))?;
     let source_root = fs::canonicalize(source).map_err(|error| ImportError::Io {
         path: source.to_owned(),
         source: error,

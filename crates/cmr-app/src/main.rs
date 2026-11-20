@@ -19,10 +19,35 @@ fn stage_inputs(config: &RuntimeConfig) -> (&Path, &str) {
     (media_root, stage)
 }
 
+const USAGE: &str = "\
+usage: cmr-app-modern [command] [options]
+
+Commands:
+  --windowed-root-frame     launch the full game (front-end menus and racing)
+  --windowed-game-session   jump straight into a stage (needs --stage and --car-code)
+  --windowed-stage-frame    render a single stage frame in a window (needs --stage)
+  --headless-root-frame     render one front-end frame headlessly
+  --headless-stage-frame    render one stage frame headlessly (needs --stage)
+  --headless-game-session   run one headless session check
+
+Options:
+  --runtime-data <dir>      imported runtime-data directory (or CMR_RUNTIME_DATA)
+  --source <dir>            original game folder (or CMR_SOURCE_DIR)
+  --stage <name>            stage identifier for direct-to-stage commands
+  --car-code <code>         car code for --windowed-game-session
+  --renderer <auto|gpu|software>
+  --language <english|french|german|italian|spanish>
+  --version                 print version and exit
+  --help, -h                print this help and exit";
+
 fn main() -> ExitCode {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     if arguments.as_slice() == ["--version"] {
         println!("cmr-app {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
+    if arguments.len() == 1 && (arguments[0] == "--help" || arguments[0] == "-h") {
+        println!("{USAGE}");
         return ExitCode::SUCCESS;
     }
     match runtime_config(

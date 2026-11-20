@@ -85,6 +85,45 @@ and verify `SHA256SUMS.txt`. Release archives never contain the original game,
 imported `runtime-data/`, save files, or the optional HD pack. See the bundled
 `RELEASE.md` and [`docs/RELEASING.md`](docs/RELEASING.md).
 
+### Quick Start (From a Release ZIP on Windows)
+
+Extract the Windows ZIP into a folder (for example `C:\Games\CMR-Modern`), open
+a terminal in that folder, and point `CMR_ORIGINAL_DIR` at your **clean,
+unpatched EU v1.5** `Rally.exe` folder (SHA-256 `0eb6ea9652...`, decoded from
+the official EU 1.5 patch `cmr_eu15_official.zip` — do not run the table
+extracts against a patched/modified `Rally.exe`).
+
+Create `runtime-data` first, then run the 1 media import and 11 table extracts
+using the bundled `cmr-assets.exe` (note: if an output folder already exists
+from an earlier run, remove that leaf folder before retrying):
+
+```bat
+mkdir runtime-data
+
+cmr-assets.exe import --source "%CMR_ORIGINAL_DIR%" --profile profiles\installed-eu-derived-assets-v2.json --output runtime-data\installed-eu-derived-assets-v2
+cmr-assets.exe extract-surface-tables --source "%CMR_ORIGINAL_DIR%" --profile profiles\official-eu-surface-tables-v1.json --output runtime-data\official-eu-surface-coefficients
+cmr-assets.exe extract-surface-capabilities --source "%CMR_ORIGINAL_DIR%" --profile profiles\official-eu-surface-capabilities-v1.json --output runtime-data\official-eu-surface-capabilities
+cmr-assets.exe extract-compiled-car-initializer --source "%CMR_ORIGINAL_DIR%" --profile profiles\official-eu-compiled-car-initializer-v1.json --output runtime-data\official-eu-compiled-car-initializer
+cmr-assets.exe extract-car-selectors --source "%CMR_ORIGINAL_DIR%" --profile profiles\official-eu-car-selector-map-v1.json --output runtime-data\official-eu-car-selector-map
+cmr-assets.exe extract-tyre-surface-tables --source "%CMR_ORIGINAL_DIR%" --profile profiles\official-eu-tyre-surface-tables-v1.json --output runtime-data\official-eu-tyre-surface-tables
+cmr-assets.exe extract-engine-audio-tables --source "%CMR_ORIGINAL_DIR%" --profile profiles\official-eu-engine-audio-tables-v1.json --output runtime-data\official-eu-engine-audio-tables
+cmr-assets.exe extract-surface-audio-tables --source "%CMR_ORIGINAL_DIR%" --profile profiles\official-eu-surface-audio-tables-v1.json --output runtime-data\official-eu-surface-audio-tables
+cmr-assets.exe extract-stage-weather-tables --source "%CMR_ORIGINAL_DIR%" --profile profiles\official-eu-stage-weather-tables-v1.json --output runtime-data\official-eu-stage-weather-tables
+cmr-assets.exe extract-rival-records --source "%CMR_ORIGINAL_DIR%" --profile profiles\official-eu-rival-records-v1.json --output runtime-data\official-eu-rival-records
+cmr-assets.exe extract-static-tables --source "%CMR_ORIGINAL_DIR%" --profile profiles\official-eu-static-tables-v1.json --output runtime-data\official-eu-static-tables
+cmr-assets.exe extract-aux-control-constants --source "%CMR_ORIGINAL_DIR%" --profile profiles\official-eu-aux-control-constants-v1.json --output runtime-data\official-eu-aux-control-constants
+```
+
+For optional HD art, place the unpacked HD pack at
+`runtime-data\installed-eu-derived-assets-v2\hd-pack` (see `docs\HD_ART.md`),
+then launch the game:
+
+```bat
+cmr-app-modern.exe --windowed-root-frame --runtime-data runtime-data --source "%CMR_ORIGINAL_DIR%"
+```
+
+Run `cmr-app-modern.exe --help` for all command-line options.
+
 ## Quick Start (How to Play from Source)
 
 ### 1. Prerequisites

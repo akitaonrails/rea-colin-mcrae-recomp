@@ -64,6 +64,7 @@ pub enum CompiledInitializerImportError {
         actual: String,
     },
     InvalidOutput(PathBuf),
+    OutputParentNotDirectory(PathBuf),
     OutputExists(PathBuf),
     StageExists(PathBuf),
     Format(CompiledInitializerError),
@@ -109,6 +110,13 @@ impl fmt::Display for CompiledInitializerImportError {
             ),
             Self::InvalidOutput(path) => {
                 write!(formatter, "invalid output path: {}", path.display())
+            }
+            Self::OutputParentNotDirectory(path) => {
+                write!(
+                    formatter,
+                    "output parent is not a real directory: {}",
+                    path.display()
+                )
             }
             Self::OutputExists(path) => {
                 write!(formatter, "output already exists: {}", path.display())
@@ -300,7 +308,8 @@ fn validate_output(
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    require_directory(parent)?;
+    require_real_directory(parent)
+        .map_err(|_| CompiledInitializerImportError::OutputParentNotDirectory(parent.to_owned()))?;
     let source_root =
         fs::canonicalize(source).map_err(|error| CompiledInitializerImportError::Io {
             path: source.to_owned(),
@@ -569,7 +578,7 @@ mod tests {
             extract_with(&source, &missing_parent_output, &reviewed, |_, _| Ok(
                 cases()
             )),
-            Err(CompiledInitializerImportError::SourceNotDirectory(_))
+            Err(CompiledInitializerImportError::OutputParentNotDirectory(_))
         ));
     }
 
