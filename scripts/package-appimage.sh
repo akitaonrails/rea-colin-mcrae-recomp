@@ -33,15 +33,15 @@ mkdir -p \
   "$appdir/usr/lib" \
   "$appdir/usr/share/cmr/profiles" \
   "$appdir/usr/share/cmr/docs" \
-  "$appdir/usr/share/icons/hicolor/scalable/apps"
+  "$appdir/usr/share/icons/hicolor/256x256/apps"
 
 install -m 0755 target/release/cmr-app "$appdir/usr/bin/cmr-app"
 install -m 0755 target/release/cmr-assets "$appdir/usr/bin/cmr-assets"
 install -m 0755 packaging/appimage/AppRun "$appdir/AppRun"
 install -m 0644 packaging/appimage/cmr-modern.desktop "$appdir/cmr-modern.desktop"
-install -m 0644 packaging/appimage/cmr-modern.svg "$appdir/cmr-modern.svg"
-install -m 0644 packaging/appimage/cmr-modern.svg \
-  "$appdir/usr/share/icons/hicolor/scalable/apps/cmr-modern.svg"
+install -m 0644 packaging/appimage/cmr-modern.png "$appdir/cmr-modern.png"
+install -m 0644 packaging/appimage/cmr-modern.png \
+  "$appdir/usr/share/icons/hicolor/256x256/apps/cmr-modern.png"
 install -m 0644 profiles/*.json "$appdir/usr/share/cmr/profiles/"
 install -m 0644 README.md CONTRIBUTING.md CHANGELOG.md packaging/RELEASE.md \
   "$appdir/usr/share/cmr/docs/"
