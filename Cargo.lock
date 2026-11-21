@@ -139,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "cmr-app"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "cmr-assets",
  "cmr-core",
