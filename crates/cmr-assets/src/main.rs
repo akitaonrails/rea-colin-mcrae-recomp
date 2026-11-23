@@ -14,7 +14,7 @@ use cmr_assets::{
     extract_car_selectors, extract_compiled_car_initializer, extract_engine_audio_tables,
     extract_rival_records, extract_stage_weather_tables, extract_static_tables,
     extract_surface_audio_tables, extract_surface_capabilities, extract_surface_tables,
-    extract_tyre_surface_tables, import_source, verify_source,
+    extract_tyre_surface_tables, find_profiles_dir, import_source, setup_all, verify_source,
 };
 
 fn main() -> ExitCode {
@@ -38,6 +38,12 @@ fn run(args: impl Iterator<Item = OsString>) -> Result<String, String> {
             return Err(usage());
         }
         return Ok(format!("cmr-assets {}", env!("CARGO_PKG_VERSION")));
+    }
+    if command == "--help" || command == "-h" {
+        return Ok(usage());
+    }
+    if command == "setup" {
+        return run_setup(args);
     }
     let options = parse_options(args)?;
     match command.to_str() {
@@ -330,8 +336,64 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
+fn run_setup(mut args: impl Iterator<Item = OsString>) -> Result<String, String> {
+    let mut source: Option<PathBuf> = None;
+    let mut profiles: Option<PathBuf> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut force = false;
+
+    while let Some(arg) = args.next() {
+        let flag = arg
+            .into_string()
+            .map_err(|_| "option name is not UTF-8".to_owned())?;
+        match flag.as_str() {
+            "--force" => force = true,
+            "--source" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "missing value for --source".to_owned())?;
+                source = Some(PathBuf::from(value));
+            }
+            "--profiles" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "missing value for --profiles".to_owned())?;
+                profiles = Some(PathBuf::from(value));
+            }
+            "--output" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| "missing value for --output".to_owned())?;
+                output = Some(PathBuf::from(value));
+            }
+            _ if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
+            _ => return Err(format!("unexpected positional argument {flag:?}")),
+        }
+    }
+
+    let source = source.ok_or_else(|| "missing required option --source".to_owned())?;
+    let exe = std::env::current_exe().ok();
+    let profiles_dir = match profiles {
+        Some(dir) => dir,
+        None => find_profiles_dir(exe.as_deref()).ok_or_else(|| {
+            "could not find profiles/ directory; pass --profiles <dir>".to_owned()
+        })?,
+    };
+    let output_dir = output.unwrap_or_else(|| PathBuf::from("runtime-data"));
+    let summary = setup_all(
+        &source,
+        &profiles_dir,
+        &output_dir,
+        force,
+        |step, total, label| {
+            eprintln!("[{step}/{total}] {label}");
+        },
+    )?;
+    serde_json::to_string(&summary).map_err(|error| error.to_string())
+}
+
 fn usage() -> String {
-    "usage: cmr-assets <catalog|verify|import|extract-surface-tables|extract-surface-capabilities|extract-compiled-car-initializer|extract-car-selectors|extract-tyre-surface-tables|extract-engine-audio-tables|extract-surface-audio-tables|extract-stage-weather-tables|extract-rival-records|extract-static-tables|extract-aux-control-constants> [options]".to_owned()
+    "usage: cmr-assets <setup|catalog|verify|import|extract-surface-tables|extract-surface-capabilities|extract-compiled-car-initializer|extract-car-selectors|extract-tyre-surface-tables|extract-engine-audio-tables|extract-surface-audio-tables|extract-stage-weather-tables|extract-rival-records|extract-static-tables|extract-aux-control-constants> [options]\n\nQuick setup:\n  cmr-assets setup --source <game-dir> [--output <runtime-data>] [--profiles <profiles-dir>] [--force]".to_owned()
 }
 
 #[cfg(test)]

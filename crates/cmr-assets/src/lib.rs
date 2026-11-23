@@ -22,6 +22,7 @@ mod rival_records_import;
 mod rival_records_profile;
 mod rival_records_store;
 mod schema;
+mod setup;
 mod stage_weather_tables_import;
 mod stage_weather_tables_profile;
 mod stage_weather_tables_store;
@@ -109,6 +110,10 @@ pub use rival_records_store::{RivalRecordsStore, RivalRecordsStoreError};
 pub use schema::{
     IMPORT_STATE_SCHEMA_VERSION, PROFILE_SCHEMA_VERSION, SchemaStatus, import_state_schema_status,
     profile_schema_status,
+};
+pub use setup::{
+    SAVED_SOURCE_FILE, SetupSummary, find_profiles_dir, is_runtime_data_ready, read_saved_source,
+    setup_all, write_saved_source,
 };
 pub use stage_weather_tables_import::{
     STAGE_WEATHER_TABLES_DATA_FILE, STAGE_WEATHER_TABLES_IMPORT_SCHEMA_VERSION,

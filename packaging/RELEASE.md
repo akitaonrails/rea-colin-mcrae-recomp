@@ -6,37 +6,37 @@ game assets. You must supply a legally owned European PC installation.
 
 ## Linux AppImage
 
-Make the file executable, then verify its version:
+Make the file executable and launch it directly:
 
 ```sh
 chmod +x Colin-McRae-Rally-Modern-x86_64.AppImage
-./Colin-McRae-Rally-Modern-x86_64.AppImage --version
+./Colin-McRae-Rally-Modern-x86_64.AppImage
 ```
 
-The importer is available through `--asset-tool`. Relative profile paths are
-resolved inside the AppImage; use absolute paths for your source and output:
+On first run, a native folder picker asks for your original Colin McRae Rally
+(1998, EU v1.5) game folder, imports all assets and lookup tables into
+`~/.local/share/cmr-recomp/runtime-data`, and starts the game automatically.
+To run setup from a terminal instead:
 
 ```sh
-./Colin-McRae-Rally-Modern-x86_64.AppImage --asset-tool verify \
+./Colin-McRae-Rally-Modern-x86_64.AppImage --asset-tool setup \
   --source /absolute/path/to/CMRally \
-  --profile profiles/installed-eu-derived-assets-v2.json
-
-./Colin-McRae-Rally-Modern-x86_64.AppImage --asset-tool import \
-  --source /absolute/path/to/CMRally \
-  --profile profiles/installed-eu-derived-assets-v2.json \
-  --output /absolute/path/to/runtime-data/installed-eu-derived-assets-v2
+  --output ~/.local/share/cmr-recomp/runtime-data
 ```
-
-The executable-backed table extraction commands listed in the project README
-must also be run once. Launch the game with the same arguments documented in
-the README, using absolute paths.
 
 ## Windows ZIP
 
-Extract the complete ZIP before running it; keep `SDL3.dll` and
-`vcruntime140.dll` beside the two executables. Run `cmr-assets.exe` from
-PowerShell or Command Prompt for the one-time import, then launch
-`cmr-app-modern.exe` with the documented game session arguments.
+Extract the complete ZIP before running it; keep `SDL3.dll`,
+`vcruntime140.dll`, and `profiles/` beside `cmr-app-modern.exe`. Double-click
+`cmr-app-modern.exe` — on first run, a native folder picker asks for your
+original Colin McRae Rally (1998, EU v1.5) game folder, imports all assets and
+lookup tables into `runtime-data/`, and starts the game automatically. To run
+setup from PowerShell or Command Prompt instead:
+
+```bat
+cmr-assets.exe setup --source "C:\path\to\CMRally"
+cmr-app-modern.exe
+```
 
 `--renderer auto` is the recommended default on both platforms. It discovers
 available native graphics APIs and compatible adapters at runtime, including

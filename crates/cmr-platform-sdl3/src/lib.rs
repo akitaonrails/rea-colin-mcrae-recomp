@@ -6,6 +6,7 @@
 //! upload to an SDL streaming texture.
 
 pub mod audio;
+pub mod dialog;
 pub mod input;
 
 pub use audio::{AudioHost, SharedSoftwareMixer};

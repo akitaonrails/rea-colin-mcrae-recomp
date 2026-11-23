@@ -2,6 +2,21 @@
 
 All notable user-visible changes to this project are documented here.
 
+## [0.1.8] - 2026-11-23
+
+### Added
+
+- **Guided double-click setup and launch (`cmr-app-modern`)**: launching
+  `cmr-app-modern` (Windows) or the Linux AppImage with no arguments now opens a
+  native OS folder picker on first run, automatically imports all 12 media and
+  executable-backed table directories into `runtime-data/`, remembers the game
+  folder, and launches straight into the game on this and every subsequent start
+  (use `--setup` to re-run the folder picker at any time) (#1).
+- **One-command CLI setup (`cmr-assets setup`)**:
+  `cmr-assets setup --source <game-dir> [--output <runtime-data>] [--force]`
+  replaces the 12 manual `cmr-assets` commands with a single idempotent command
+  (#1).
+
 ## [0.1.4] - 2026-11-20
 
 ### Fixed
