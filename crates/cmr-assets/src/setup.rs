@@ -165,7 +165,7 @@ pub fn write_saved_source(output_dir: &Path, source: &Path) -> Result<(), String
     let canonical = fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
     let text = format!("{}\n", canonical.display());
     fs::write(output_dir.join(SAVED_SOURCE_FILE), text)
-        .map_err(|error| format!("write {}: {error}", SAVED_SOURCE_FILE))
+        .map_err(|error| format!("write {SAVED_SOURCE_FILE}: {error}"))
 }
 
 /// Searches standard locations for the `profiles/` directory containing the
