@@ -7,6 +7,8 @@ use std::time::Duration;
 use sdl3::dialog::{DialogError, show_open_folder_dialog};
 use sdl3::messagebox::{MessageBoxFlag, show_simple_message_box};
 
+type FolderPickSlot = Arc<Mutex<Option<Result<Option<PathBuf>, String>>>>;
+
 /// Opens a native OS folder picker dialog and waits for the user to choose a
 /// folder or cancel.
 ///
@@ -21,7 +23,7 @@ pub fn pick_folder(default_location: Option<&Path>) -> Result<Option<PathBuf>, S
         .event_pump()
         .map_err(|error| format!("SDL3 event pump failed: {error}"))?;
 
-    let result: Arc<Mutex<Option<Result<Option<PathBuf>, String>>>> = Arc::new(Mutex::new(None));
+    let result: FolderPickSlot = Arc::new(Mutex::new(None));
     let slot = Arc::clone(&result);
 
     show_open_folder_dialog(
